@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 /* =========================================================
-   CONSTANTS / TYPES
+   TYPES / CONSTANTS
    ========================================================= */
 
 type Tab = "export" | "settings" | "about";
 type Row = Record<string, string>;
+
+type WorkspaceAPI = any;     // Tüübi saab soovi korral importida @trimble/workspace-api paketist
+type ViewerAPI = any;
 
 const LOCKED_ORDER = [
   "GUID",
@@ -46,9 +49,7 @@ function useSettings() {
     if (saved) {
       try {
         return JSON.parse(saved) as AppSettings;
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     return {
       scriptUrl: localStorage.getItem("sheet_webapp") || "",
@@ -82,7 +83,7 @@ function sanitizeKey(s: string) {
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
-  if (g === "reference_object") return 1;
+  if (g === "referenceobject") return 1;
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
@@ -97,9 +98,7 @@ function groupKeys(keys: string[]): Grouped {
     if (!g[grp]) g[grp] = [];
     g[grp].push(k);
   }
-  for (const arr of Object.values(g)) {
-    arr.sort((a, b) => a.localeCompare(b));
-  }
+  for (const arr of Object.values(g)) arr.sort((a, b) => a.localeCompare(b));
   return g;
 }
 
@@ -115,249 +114,132 @@ function normaliseNumberString(s: string) {
   return String(parseFloat(n.toFixed(4)));
 }
 
-/* =========================================================
-   PROPERTY SETS + GUIDS
-   ========================================================= */
-
-type TCProperty = { name: string; value: unknown };
-type TCPropertySet = { name: string; properties: TCProperty[] };
-
-function collectAllPropertySets(obj: any): TCPropertySet[] {
-  const official: TCPropertySet[] = [
-    ...(Array.isArray(obj?.propertySets) ? obj.propertySets : []),
-    ...(Array.isArray(obj?.propertySetLibraries)
-      ? obj.propertySetLibraries
-      : []),
-  ];
-  const fallbacks: TCPropertySet[] = [
-    ...(Array.isArray(obj?.properties) ? obj.properties : []),
-    ...(Array.isArray(obj?.psets) ? obj.psets : []),
-    ...(Array.isArray(obj?.libraries) ? obj.libraries : []),
-    ...(Array.isArray(obj?.customProperties) ? obj.customProperties : []),
-  ];
-  return [...official, ...fallbacks].filter(
-    (s): s is TCPropertySet => !!s && Array.isArray((s as any).properties)
-  );
-}
-
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
-  if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
+  if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC"; // IFC GlobalId (base64-ish 22)
   if (
     /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(
       s
-    )
-  )
-    return "MS";
-  if (/^[0-9A-Fa-f]{32}$/.test(s)) return "MS";
+    ) || /^[0-9A-Fa-f]{32}$/.test(s)
+  ) return "MS"; // UUID või 32hex
   return "UNKNOWN";
 }
 
-function deepScanForGuidAndMeta(
-  node: any,
-  acc: {
-    ifc?: string;
-    ms?: string;
-    any?: string;
-    file?: string;
-    commonType?: string;
-  } = {}
-) {
-  if (!node || typeof node !== "object") return acc;
-  for (const [k, v] of Object.entries(node)) {
-    if (/guid/i.test(k)) {
-      const s = v == null ? "" : String(v);
-      const cls = classifyGuid(s);
-      if (cls === "IFC" && !acc.ifc) acc.ifc = s;
-      else if (cls === "MS" && !acc.ms) acc.ms = s;
-      else if (!acc.any) acc.any = s;
-    }
-    if (!acc.file && /(file\s*name|filename)/i.test(k))
-      acc.file = v == null ? "" : String(v);
-    if (!acc.commonType && /(common.*type)/i.test(k))
-      acc.commonType = v == null ? "" : String(v);
-    if (v && typeof v === "object") deepScanForGuidAndMeta(v, acc);
-  }
-  return acc;
-}
+/* =========================================================
+   PROPERTY FLATTENING
+   ========================================================= */
 
-function flattenProps(obj: any, modelId: string, projectName: string): Row {
+function flattenProps(
+  obj: any,
+  modelId: string,
+  projectName: string,
+  modelNameById: Map<string, string>
+): Row {
+  // NB! tugineb Workspace API ametlikule struktuurile:
+  // ObjectProperties.properties?: PropertySet[] { set?: string, properties?: Property[] } :contentReference[oaicite:2]{index=2}
   const out: Row = {
     GUID: "",
     GUID_IFC: "",
     GUID_MS: "",
-    Project: String(projectName),
+    Project: String(projectName || ""),
     ModelId: String(modelId),
-    FileName: "",
+    FileName: modelNameById.get(modelId) || "",
     Name: "",
     Type: "Unknown",
     BLOCK: "",
   };
 
   const propMap = new Map<string, string>();
-  const rawNames: Array<{ group: string; name: string; value: unknown }> = [];
-
   const push = (group: string, name: string, val: unknown) => {
     const key = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
     let v: unknown = val;
-    if (Array.isArray(v))
-      v = (v as unknown[])
-        .map((x) => (x == null ? "" : String(x)))
-        .join(" | ");
+    if (Array.isArray(v)) v = v.map(x => (x == null ? "" : String(x))).join(" | ");
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
     const s = v == null ? "" : String(v);
     propMap.set(key, s);
     out[key] = s;
   };
 
-  const sets = collectAllPropertySets(obj);
+  const sets: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
   for (const set of sets) {
-    const g = set?.name || "Group";
+    const groupName = set?.set || "Group";
     for (const p of set?.properties ?? []) {
-      const nm = (p as any)?.name ?? "Prop";
-      const vv = (p as any)?.value;
-      rawNames.push({ group: g, name: nm, value: vv });
-      push(g, nm, vv);
-      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(nm)))
-        out.Name = String(vv ?? "");
-      if (out.Type === "Unknown" && /\btype\b/i.test(String(nm)))
-        out.Type = String(vv ?? "Unknown");
+      push(groupName, p?.name ?? "Prop", p?.value);
+      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(p?.name)))
+        out.Name = String(p?.value ?? "");
+      if (out.Type === "Unknown" && /\btype\b/i.test(String(p?.name)))
+        out.Type = String(p?.value ?? "Unknown");
     }
   }
 
-  const fileKeyCandidates = [
-    "Reference_Object.File_Name",
-    "Reference_Object.FileName",
-    "IFC.File_Name",
-  ];
-  for (const k of fileKeyCandidates) {
-    if (propMap.has(k)) {
-      out.FileName = propMap.get(k)!;
-      break;
-    }
-  }
-  if (!out.FileName) {
-    for (const r of rawNames) {
-      if (
-        /^file\s*name$/i.test(String(r.name)) &&
-        /reference/i.test(String(r.group))
-      ) {
-        out.FileName = r.value == null ? "" : String(r.value);
-        break;
-      }
-    }
-  }
-
-  const blockCandidates = [
+  // BLOCK kandidaadid (tekla/ifc)
+  for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
     "BLOCK.BLOCK_2",
     "Tekla_Assembly.AssemblyCast_unit_Mark",
-  ];
-  for (const k of blockCandidates) {
-    if (propMap.has(k)) {
-      out.BLOCK = propMap.get(k)!;
-      break;
-    }
-  }
+  ]) if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; }
 
+  // GUID tuvastus
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
-    if (!/guid/i.test(k)) continue;
+    if (!/guid|globalid/i.test(k)) continue;
     const cls = classifyGuid(v);
     if (cls === "IFC" && !guidIfc) guidIfc = v;
     if (cls === "MS" && !guidMs) guidMs = v;
-  }
-  if (!guidIfc || !guidMs) {
-    for (const r of rawNames) {
-      if (!/guid/i.test(String(r.name))) continue;
-      const val = r.value == null ? "" : String(r.value);
-      const cls = classifyGuid(val);
-      if (cls === "IFC" && !guidIfc) guidIfc = val;
-      if (cls === "MS" && !guidMs) guidMs = val;
-    }
   }
   out.GUID_IFC = guidIfc;
   out.GUID_MS = guidMs;
   out.GUID = guidIfc || guidMs || "";
 
-  if (!out.GUID || !out.GUID_IFC || !out.GUID_MS || !out.FileName) {
-    const found = deepScanForGuidAndMeta(obj);
-    if (!out.GUID_IFC && found.ifc) out.GUID_IFC = found.ifc;
-    if (!out.GUID_MS && found.ms) out.GUID_MS = found.ms;
-    if (!out.GUID) out.GUID = found.ifc || found.ms || found.any || out.GUID;
-    if (!out.FileName && found.file) out.FileName = found.file;
-  }
-
   return out;
 }
 
-async function getProjectName(api: any): Promise<string> {
+/* =========================================================
+   API HELPERS
+   ========================================================= */
+
+async function getProjectName(api: WorkspaceAPI): Promise<string> {
   try {
-    if (typeof api?.project?.getProject === "function") {
-      const proj = await api.project.getProject();
-      if (proj?.name) return String(proj.name);
-    }
-  } catch {
-    // ignore
-  }
-  return "";
+    const proj = await api?.project?.getProject?.(); // :contentReference[oaicite:3]{index=3}
+    return String(proj?.name || "");
+  } catch { return ""; }
 }
 
-async function getCurrentSelectionBlocks(
-  api: any
-): Promise<{ modelId: string; ids: number[] }[]> {
+async function getSelectedObjects(api: WorkspaceAPI): Promise<Array<{ modelId: string; objects: any[] }>> {
+  const viewer: ViewerAPI = api?.viewer;
+  // Lihtsaim viis on küsida otse valitud objektid koos omadustega
+  // viewer.getObjects({ selected: true }) → ModelObjects[] :contentReference[oaicite:4]{index=4}
+  const mos = await viewer?.getObjects?.({ selected: true });
+  if (!Array.isArray(mos) || !mos.length) return [];
+  return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
+}
+
+async function buildModelNameMap(api: WorkspaceAPI, modelIds: string[]) {
+  const map = new Map<string, string>();
   try {
-    const sel = await api?.viewer?.getSelection?.();
-    if (Array.isArray(sel) && sel.length) {
-      return sel
-        .map((m: any) => ({
-          modelId: String(m.modelId),
-          ids: (m.objectRuntimeIds || []).slice(),
-        }))
-        .filter((b: any) => b.ids.length);
-    }
-  } catch {
-    // ignore
-  }
-
-  const tryPP = async (host: any) => {
+    // Proovi esmalt getModels (kiire) :contentReference[oaicite:5]{index=5}
+    const list: any[] = await api?.viewer?.getModels?.();
+    for (const m of list || []) if (m?.id && m?.name) map.set(String(m.id), String(m.name));
+  } catch {}
+  // Täienda koormatud mudelite tegeliku nimega
+  for (const id of new Set(modelIds)) {
+    if (map.has(id)) continue;
     try {
-      const data = await host?.getPropertyPanelData?.();
-      const ents = data?.entities || data?.items || [];
-      if (Array.isArray(ents) && ents.length) {
-        return ents
-          .map((e: any) => ({
-            modelId: String(e.modelId),
-            ids: (e.objectRuntimeIds || e.selection || []).slice(),
-          }))
-          .filter((b: any) => b.ids.length);
-      }
-    } catch {
-      // ignore
-    }
-    return [];
-  };
-
-  for (const host of [
-    api,
-    (api as any)?.propertyPanel,
-    (api as any)?.detailsPanel,
-    (api as any)?.panel,
-  ]) {
-    const blocks = await tryPP(host);
-    if (blocks.length) return blocks;
+      const f = await api?.viewer?.getLoadedModel?.(id); // :contentReference[oaicite:6]{index=6}
+      const n = f?.name || f?.file?.name;
+      if (n) map.set(id, String(n));
+    } catch {}
   }
-
-  return [];
+  return map;
 }
 
 /* =========================================================
    COMPONENT
    ========================================================= */
 
-type Props = { api: any };
+type Props = { api: WorkspaceAPI };
 
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
@@ -368,44 +250,37 @@ export default function AssemblyExporter({ api }: Props) {
     new Set<string>(JSON.parse(localStorage.getItem("fieldSel") || "[]"))
   );
 
-  const [filter, setFilter] = useState<string>("");
-  const [debouncedFilter, setDebouncedFilter] = useState<string>("");
+  const [filter, setFilter] = useState("");
+  const [debouncedFilter, setDebouncedFilter] = useState("");
   useEffect(() => {
     const t = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [filter]);
 
   const [busy, setBusy] = useState(false);
-  const [exportMsg, setExportMsg] = useState<string>("");
-  const [settingsMsg, setSettingsMsg] = useState<string>("");
-  const [progress, setProgress] = useState<{ current: number; total: number }>(
-    { current: 0, total: 0 }
-  );
+  const [exportMsg, setExportMsg] = useState("");
+  const [settingsMsg, setSettingsMsg] = useState("");
+  const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
 
-  const [lastSelection, setLastSelection] = useState<
-    Array<{ modelId: string; ids: number[] }>
-  >([]);
+  // meelde jäetud viimane valik (värvimiseks)
+  const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
 
   const allKeys: string[] = useMemo(
-    () => Array.from(new Set(rows.flatMap((r: Row) => Object.keys(r)))).sort(),
+    () => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(),
     [rows]
   );
 
   const groupedUnsorted: Grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
-
   const groupedSortedEntries = useMemo(
-    () =>
-      (Object.entries(groupedUnsorted) as [string, string[]][]).sort(
-        (a, b) =>
-          groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])
-      ),
+    () => (Object.entries(groupedUnsorted) as [string, string[]][])
+      .sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])),
     [groupedUnsorted]
   );
 
   const filteredKeysSet = useMemo(() => {
     if (!debouncedFilter) return new Set(allKeys);
     const f = debouncedFilter.toLowerCase();
-    return new Set(allKeys.filter((k) => k.toLowerCase().includes(f)));
+    return new Set(allKeys.filter(k => k.toLowerCase().includes(f)));
   }, [allKeys, debouncedFilter]);
 
   useEffect(() => {
@@ -413,8 +288,7 @@ export default function AssemblyExporter({ api }: Props) {
   }, [selected]);
 
   useEffect(() => {
-    if (!rows.length) return;
-    if (selected.size) return;
+    if (!rows.length || selected.size) return;
     if (settings.defaultPreset === "tekla") presetTekla();
     else if (settings.defaultPreset === "ifc") presetIFC();
     else presetRecommended();
@@ -424,7 +298,7 @@ export default function AssemblyExporter({ api }: Props) {
   const matches = (k: string) => filteredKeysSet.has(k);
 
   function toggle(k: string) {
-    setSelected((s) => {
+    setSelected(s => {
       const n = new Set(s);
       n.has(k) ? n.delete(k) : n.add(k);
       return n;
@@ -432,7 +306,7 @@ export default function AssemblyExporter({ api }: Props) {
   }
 
   function toggleGroup(keys: string[], on: boolean) {
-    setSelected((s) => {
+    setSelected(s => {
       const n = new Set(s);
       for (const k of keys) on ? n.add(k) : n.delete(k);
       return n;
@@ -446,33 +320,25 @@ export default function AssemblyExporter({ api }: Props) {
   function presetRecommended() {
     const wanted = new Set<string>([
       ...LOCKED_ORDER,
-      "Reference_Object.Common_Type",
-      "Reference_Object.File_Name",
+      "ReferenceObject.Common_Type",
+      "ReferenceObject.File_Name",
     ]);
-    setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
+    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
-
   function presetTekla() {
-    setSelected(
-      new Set(
-        allKeys.filter(
-          (k) =>
-            k.startsWith("Tekla_Assembly.") ||
-            k === "BLOCK" ||
-            k === "Reference_Object.File_Name"
-        )
-      )
-    );
+    setSelected(new Set(allKeys.filter(k =>
+      k.startsWith("Tekla_Assembly.") ||
+      k === "BLOCK" ||
+      k === "ReferenceObject.File_Name"
+    )));
   }
-
   function presetIFC() {
     const wanted = new Set<string>([
-      "GUID_IFC",
-      "GUID_MS",
-      "Reference_Object.Common_Type",
-      "Reference_Object.File_Name",
+      "GUID_IFC", "GUID_MS",
+      "ReferenceObject.Common_Type",
+      "ReferenceObject.File_Name",
     ]);
-    setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
+    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
 
   async function discover() {
@@ -481,48 +347,42 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg("Reading current selection…");
       setProgress({ current: 0, total: 0 });
 
-      const blocks = await getCurrentSelectionBlocks(api);
-      if (!blocks.length) {
-        setExportMsg("⚠️ Please select objects in the models first.");
+      const selectedWithProps = await getSelectedObjects(api);
+      if (!selectedWithProps.length) {
+        setExportMsg("⚠️ Palun vali 3D vaates objektid.");
         setRows([]);
         return;
       }
 
-      const timeout = new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error("Discovery timeout after 30s")), 30000)
-      );
-
       const projectName = await getProjectName(api);
-      const perform = async () => {
-        const out: Row[] = [];
-        setProgress({ current: 0, total: blocks.length });
+      const modelIds = selectedWithProps.map(m => m.modelId);
+      const nameMap = await buildModelNameMap(api, modelIds);
 
-        for (let i = 0; i < blocks.length; i++) {
-          const b = blocks[i];
-          setExportMsg(`Processing model ${i + 1}/${blocks.length}…`);
-          const props: any[] = await (api as any).viewer.getObjectProperties(
-            b.modelId,
-            b.ids
-          );
-          out.push(
-            ...props.map((o: any) => flattenProps(o, b.modelId, projectName))
-          );
-          setProgress({ current: i + 1, total: blocks.length });
+      const out: Row[] = [];
+      const lastSel: Array<{ modelId: string; ids: number[] }> = [];
+      setProgress({ current: 0, total: selectedWithProps.length });
+
+      for (let i = 0; i < selectedWithProps.length; i++) {
+        const { modelId, objects } = selectedWithProps[i];
+        setExportMsg(`Processing model ${i + 1}/${selectedWithProps.length}…`);
+        lastSel.push({
+          modelId,
+          ids: (objects || []).map((o: any) => Number(o?.id)).filter((n: any) => Number.isFinite(n)),
+        });
+        for (const o of objects || []) {
+          out.push(flattenProps(o, modelId, projectName, nameMap));
         }
-        return out;
-      };
+        setProgress({ current: i + 1, total: selectedWithProps.length });
+      }
 
-      const collected = await Promise.race([perform(), timeout]);
-      setRows(collected);
-      setLastSelection(blocks);
+      setRows(out);
+      setLastSelection(lastSel);
       setExportMsg(
-        `Found ${collected.length} objects. Total keys: ${
-          Array.from(new Set(collected.flatMap((r) => Object.keys(r)))).length
-        }.`
+        `Leidsin ${out.length} objekti. Võtmeid kokku: ${Array.from(new Set(out.flatMap(r => Object.keys(r)))).length}.`
       );
     } catch (e: any) {
-      console.error("Discovery error:", e);
-      setExportMsg(`❌ Error: ${e?.message || "Unknown error during discovery"}`);
+      console.error(e);
+      setExportMsg(`❌ Viga: ${e?.message || "tundmatu viga avastamisel"}`);
     } finally {
       setBusy(false);
     }
@@ -532,9 +392,8 @@ export default function AssemblyExporter({ api }: Props) {
     const o: Row = {};
     for (const k of LOCKED_ORDER) if (k in r) o[k] = r[k];
     const rest = Array.from(chosen).filter(
-      (k) => !(LOCKED_ORDER as readonly string[]).includes(k as LockedKey)
-    );
-    rest.sort((a, b) => a.localeCompare(b));
+      k => !(LOCKED_ORDER as readonly string[]).includes(k as LockedKey)
+    ).sort((a, b) => a.localeCompare(b));
     for (const k of rest) if (k in r) o[k] = r[k];
     return o;
   }
@@ -547,8 +406,7 @@ export default function AssemblyExporter({ api }: Props) {
       if (!row.GUID && !row.GUID_IFC && !row.GUID_MS)
         rowErrors.push("Missing all GUID fields");
       if (!row.Name?.trim()) rowErrors.push("Missing Name");
-      if (rowErrors.length)
-        errors.push(`Row ${idx + 1}: ${rowErrors.join(", ")}`);
+      if (rowErrors.length) errors.push(`Row ${idx + 1}: ${rowErrors.join(", ")}`);
       else valid.push(row);
     });
     return { valid, errors };
@@ -559,20 +417,19 @@ export default function AssemblyExporter({ api }: Props) {
 
     if (!scriptUrl || !secret) {
       setTab("settings");
-      setSettingsMsg("Please fill Script URL and Shared Secret.");
+      setSettingsMsg("Täida Script URL ja Shared Secret.");
       return;
     }
     if (!rows.length) {
       setTab("export");
-      setExportMsg('Click "Discover fields" first.');
+      setExportMsg('Klõpsa kõigepealt "Discover fields".');
       return;
     }
 
     const { errors: validationErrors } = validateRows(rows);
-    if (validationErrors.length)
-      console.warn("Validation warnings:", validationErrors);
+    if (validationErrors.length) console.warn("Validation warnings:", validationErrors);
 
-    const warnRows = rows.map((r) => {
+    const warnRows = rows.map(r => {
       const warn: string[] = [];
       if (!r.GUID) warn.push("Missing GUID");
       const copy: Row = { ...r };
@@ -581,28 +438,14 @@ export default function AssemblyExporter({ api }: Props) {
     });
 
     const numericSkip = new Set<string>([
-      "GUID",
-      "GUID_IFC",
-      "GUID_MS",
-      "Project",
-      "Name",
-      "Type",
-      "FileName",
+      "GUID","GUID_IFC","GUID_MS","Project","Name","Type","FileName"
     ]);
-    const cleaned = warnRows.map((r) => {
+    const cleaned = warnRows.map(r => {
       const c: Row = {};
       for (const [k, v] of Object.entries(r) as [string, string][]) {
-        if (
-          FORCE_TEXT_KEYS.has(k) &&
-          typeof v === "string" &&
-          !v.startsWith("'")
-        ) {
+        if (FORCE_TEXT_KEYS.has(k) && typeof v === "string" && !v.startsWith("'")) {
           c[k] = `'${v}`;
-        } else if (
-          typeof v === "string" &&
-          !numericSkip.has(k) &&
-          isNumericString(v)
-        ) {
+        } else if (typeof v === "string" && !numericSkip.has(k) && isNumericString(v)) {
           c[k] = normaliseNumberString(v);
         } else {
           c[k] = v as string;
@@ -613,21 +456,20 @@ export default function AssemblyExporter({ api }: Props) {
 
     const chosen = new Set<string>(
       [...LOCKED_ORDER, ...Array.from(selected), "__warnings"].filter(
-        (k) =>
+        k =>
           allKeys.includes(k) ||
           (LOCKED_ORDER as readonly string[]).includes(k as any) ||
           k === "__warnings"
       )
     );
 
-    const payload = cleaned.map((r) => orderRowByLockedAndAlpha(r, chosen));
-    const missing = cleaned.filter((r) => !r.GUID).length;
-    if (missing)
-      setExportMsg(`⚠️ ${missing} row(s) without GUID – added __warnings.`);
+    const payload = cleaned.map(r => orderRowByLockedAndAlpha(r, chosen));
+    const missing = cleaned.filter(r => !r.GUID).length;
+    if (missing) setExportMsg(`⚠️ ${missing} rida ilma GUIDita – lisasin __warnings.`);
 
     try {
       setBusy(true);
-      setExportMsg("Sending rows to Google Sheet…");
+      setExportMsg("Saadan read Google Sheeti…");
       const res = await fetch(scriptUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -637,97 +479,39 @@ export default function AssemblyExporter({ api }: Props) {
       setTab("export");
       if (data?.ok) {
         const extra =
-          validationErrors.length > 0
-            ? ` (${validationErrors.length} validation warning(s))`
-            : "";
-        setExportMsg(
-          `✅ Added ${payload.length} row(s) to Google Sheet${extra}.` +
-            (autoColorize ? " Coloring selection dark red…" : "")
-        );
+          validationErrors.length > 0 ? ` (${validationErrors.length} hoiatus(t))` : "";
+        setExportMsg(`✅ Lisatud ${payload.length} rida Google Sheeti${extra}.` + (autoColorize ? " Värvin valiku tumepunaseks…" : ""));
         if (autoColorize) await colorLastSelectionDarkRed();
       } else {
-        setExportMsg(`❌ Error: ${data?.error || "unknown"}`);
+        setExportMsg(`❌ Viga: ${data?.error || "unknown"}`);
       }
     } catch (e: any) {
       setTab("export");
-      setExportMsg(`❌ Error: ${e?.message || e}`);
-    } finally {
-      setBusy(false);
-    }
+      setExportMsg(`❌ Viga: ${e?.message || e}`);
+    } finally { setBusy(false); }
   }
 
   async function colorLastSelectionDarkRed() {
-    const viewer: any = (api as any).viewer;
+    const viewer: ViewerAPI = api?.viewer;
     let blocks = lastSelection;
-    if (!blocks?.length) blocks = await getCurrentSelectionBlocks(api);
+    if (!blocks?.length) {
+      // kui Discoveri järel pole talletatud, võta otseselt valikust
+      const mos = await getSelectedObjects(api);
+      blocks = mos.map(m => ({ modelId: m.modelId, ids: (m.objects || []).map((o: any) => o?.id).filter(Boolean) }));
+    }
     if (!blocks?.length) return;
 
-    for (const b of blocks) await tryApplyStateAny(viewer, b.modelId, b.ids);
-  }
-
-  async function tryApplyStateAny(
-    viewer: any,
-    modelId: string,
-    ids: number[]
-  ) {
-    const c255 = { r: 140, g: 0, b: 0 };
-    const c01 = { r: 0.55, g: 0, b: 0 };
-    const trials = [
-      () =>
-        viewer?.setObjectState?.({
-          modelId,
-          objectRuntimeIds: ids,
-          state: { color: c255, opacity: 255 },
-        }),
-      () =>
-        viewer?.setObjectState?.({
-          modelId,
-          objectRuntimeIds: ids,
-          color: c255,
-          opacity: 255,
-        }),
-      () =>
-        viewer?.setObjectState?.({
-          modelId,
-          objectRuntimeIds: ids,
-          state: { color: c01, opacity: 1 },
-        }),
-      () =>
-        viewer?.setObjectState?.({
-          modelId,
-          objectRuntimeIds: ids,
-          color: c01,
-          opacity: 1,
-        }),
-      () =>
-        viewer?.applyObjectStates?.([
-          {
-            modelId,
-            objectRuntimeIds: ids,
-            state: { color: c255, opacity: 255 },
-          },
-        ]),
-      () => viewer?.colorizeObjects?.(modelId, ids, c255),
-    ];
-    for (const t of trials) {
-      try {
-        const r = await t();
-        if (r !== undefined) return;
-      } catch {
-        // ignore
-      }
+    // Õige viis: viewer.setObjectState(selector, state) + ColorRGBA 0..255 :contentReference[oaicite:7]{index=7}
+    for (const b of blocks) {
+      const selector = { modelObjectIds: [{ modelId: b.modelId, objectRuntimeIds: b.ids }] };
+      await viewer.setObjectState(selector, { color: { r: 140, g: 0, b: 0, a: 255 } });
     }
   }
 
   async function resetState() {
     try {
-      const viewer: any = (api as any).viewer;
-      if (typeof viewer?.resetObjectState === "function")
-        await viewer.resetObjectState();
-      else if (typeof viewer?.clearObjectStates === "function")
-        await viewer.clearObjectStates();
-      else if (typeof viewer?.clearColors === "function")
-        await viewer.clearColors();
+      // Rakenda kõigile objektidele "reset" (värv ja nähtavus) :contentReference[oaicite:8]{index=8}
+      await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
       setExportMsg("View state reset.");
     } catch (e: any) {
       setExportMsg(`Reset failed: ${e?.message || e}`);
@@ -736,19 +520,12 @@ export default function AssemblyExporter({ api }: Props) {
 
   function exportToCSV() {
     if (!rows.length) return;
-    const chosen = [...LOCKED_ORDER, ...Array.from(selected)].filter(
-      (k) =>
-        allKeys.includes(k) ||
-        (LOCKED_ORDER as readonly string[]).includes(k as any)
-    );
+    const chosen = [...LOCKED_ORDER, ...Array.from(selected)]
+      .filter(k => allKeys.includes(k) || (LOCKED_ORDER as readonly string[]).includes(k as any));
 
     const head = chosen.join(",");
     const body = rows
-      .map((r) =>
-        chosen
-          .map((k) => `"${((r[k] ?? "") as string).replace(/"/g, '""')}"`)
-          .join(",")
-      )
+      .map(r => chosen.map(k => `"${((r[k] ?? "") as string).replace(/"/g, '""')}"`).join(","))
       .join("\n");
 
     const blob = new Blob([head + "\n" + body], { type: "text/csv" });
@@ -765,24 +542,9 @@ export default function AssemblyExporter({ api }: Props) {
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
-        <button
-          style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }}
-          onClick={() => setTab("export")}
-        >
-          EXPORT
-        </button>
-        <button
-          style={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }}
-          onClick={() => setTab("settings")}
-        >
-          SETTINGS
-        </button>
-        <button
-          style={{ ...c.tab, ...(tab === "about" ? c.tabActive : {}) }}
-          onClick={() => setTab("about")}
-        >
-          ABOUT
-        </button>
+        <button style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }} onClick={() => setTab("export")}>EXPORT</button>
+        <button style={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }} onClick={() => setTab("settings")}>SETTINGS</button>
+        <button style={{ ...c.tab, ...(tab === "about" ? c.tabActive : {}) }} onClick={() => setTab("about")}>ABOUT</button>
       </div>
 
       <div style={c.page}>
@@ -811,20 +573,14 @@ export default function AssemblyExporter({ api }: Props) {
               <input
                 type="checkbox"
                 checked={settings.autoColorize}
-                onChange={(e) =>
-                  updateSettings({ autoColorize: e.target.checked })
-                }
+                onChange={(e) => updateSettings({ autoColorize: e.target.checked })}
               />
             </div>
             <div style={c.row}>
               <label style={c.label}>Default preset</label>
               <select
                 value={settings.defaultPreset}
-                onChange={(e) =>
-                  updateSettings({
-                    defaultPreset: e.target.value as DefaultPreset,
-                  })
-                }
+                onChange={(e) => updateSettings({ defaultPreset: e.target.value as DefaultPreset })}
                 style={c.input}
               >
                 <option value="recommended">Recommended</option>
@@ -833,12 +589,7 @@ export default function AssemblyExporter({ api }: Props) {
               </select>
             </div>
             <div style={{ ...c.row, justifyContent: "flex-end" }}>
-              <button
-                style={c.btn}
-                onClick={() => setSettingsMsg("Settings saved.")}
-              >
-                Save
-              </button>
+              <button style={c.btn} onClick={() => setSettingsMsg("Settings saved.")}>Save</button>
               <button
                 style={c.btnGhost}
                 onClick={() => {
@@ -851,9 +602,7 @@ export default function AssemblyExporter({ api }: Props) {
                   });
                   setSettingsMsg("Settings reset.");
                 }}
-              >
-                Reset
-              </button>
+              >Reset</button>
             </div>
             {!!settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
@@ -864,7 +613,7 @@ export default function AssemblyExporter({ api }: Props) {
             <div style={c.small}>
               Assembly Exporter – Trimble Connect → Google Sheet.
               <br />
-              • Multi-model • ProjectAPI.getProject() • PSL priority
+              • Multi-model • ProjectAPI.getProject() • getObjects(selected) • getModels/getLoadedModel
               <br />
               • GUID + GUID_IFC + GUID_MS • Number normalisation
               <br />• Dark-red colorize & Reset • Presets • Locked column order
@@ -875,59 +624,28 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "export" && (
           <div style={c.section}>
             <div style={c.controls}>
-              <button style={c.btn} onClick={discover} disabled={busy}>
-                {busy ? "…" : "Discover fields"}
-              </button>
+              <button style={c.btn} onClick={discover} disabled={busy}>{busy ? "…" : "Discover fields"}</button>
               <input
                 placeholder="Filter columns…"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 style={{ ...c.input, flex: 1, minWidth: 120 }}
               />
-              <button
-                style={c.btnGhost}
-                onClick={() => selectAll(true)}
-                disabled={!rows.length}
-              >
-                Select all
-              </button>
-              <button
-                style={c.btnGhost}
-                onClick={() => selectAll(false)}
-                disabled={!rows.length}
-              >
-                Clear
-              </button>
-              <button style={c.btnGhost} onClick={resetState}>
-                Reset state
-              </button>
-              <button
-                style={c.btnGhost}
-                onClick={exportToCSV}
-                disabled={!rows.length}
-              >
-                Download CSV
-              </button>
-              <button
-                style={c.btnPrimary}
-                onClick={send}
-                disabled={busy || !rows.length}
-              >
-                {busy
-                  ? "Sending…"
-                  : `Send to Google Sheet (${rows.length} rows)`}
+              <button style={c.btnGhost} onClick={() => selectAll(true)} disabled={!rows.length}>Select all</button>
+              <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>Clear</button>
+              <button style={c.btnGhost} onClick={resetState}>Reset state</button>
+              <button style={c.btnGhost} onClick={exportToCSV} disabled={!rows.length}>Download CSV</button>
+              <button style={c.btnPrimary} onClick={send} disabled={busy || !rows.length}>
+                {busy ? "Sending…" : `Send to Google Sheet (${rows.length} rows)`}
               </button>
             </div>
 
             {!!progress.total && progress.total > 1 && (
-              <div style={c.small}>
-                Progress: {progress.current}/{progress.total}
-              </div>
+              <div style={c.small}>Progress: {progress.current}/{progress.total}</div>
             )}
 
             <div style={c.meta}>
-              Locked order: {Array.from(LOCKED_ORDER).join(", ")}. Selected:{" "}
-              {selected.size}.
+              Locked order: {Array.from(LOCKED_ORDER).join(", ")}. Selected: {selected.size}.
             </div>
 
             <div style={c.list}>
@@ -944,31 +662,15 @@ export default function AssemblyExporter({ api }: Props) {
                       <div style={c.groupHeader}>
                         <b>{groupName}</b>
                         <div style={{ display: "flex", gap: 6 }}>
-                          <button
-                            style={c.mini}
-                            onClick={() => toggleGroup(keys, true)}
-                          >
-                            select
-                          </button>
-                          <button
-                            style={c.mini}
-                            onClick={() => toggleGroup(keys, false)}
-                          >
-                            clear
-                          </button>
+                          <button style={c.mini} onClick={() => toggleGroup(keys, true)}>select</button>
+                          <button style={c.mini} onClick={() => toggleGroup(keys, false)}>clear</button>
                         </div>
-                        <span style={c.faint}>
-                          {allOn ? "all" : noneOn ? "none" : "partial"}
-                        </span>
+                        <span style={c.faint}>{allOn ? "all" : noneOn ? "none" : "partial"}</span>
                       </div>
                       <div style={c.grid}>
                         {keysShown.map((k) => (
                           <label key={k} style={c.checkRow} title={k}>
-                            <input
-                              type="checkbox"
-                              checked={selected.has(k)}
-                              onChange={() => toggle(k)}
-                            />
+                            <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(k)} />
                             <span style={c.ellipsis}>{k}</span>
                           </label>
                         ))}
@@ -979,50 +681,19 @@ export default function AssemblyExporter({ api }: Props) {
               )}
             </div>
 
-            <div
-              style={{
-                marginTop: 8,
-                display: "flex",
-                gap: 6,
-                flexWrap: "wrap",
-              }}
-            >
-              <span style={{ alignSelf: "center", opacity: 0.7 }}>
-                Presets:
-              </span>
-              <button
-                style={c.btnGhost}
-                onClick={presetRecommended}
-                disabled={!rows.length}
-              >
-                Recommended
-              </button>
-              <button
-                style={c.btnGhost}
-                onClick={presetTekla}
-                disabled={!rows.length}
-              >
-                Tekla Assembly
-              </button>
-              <button
-                style={c.btnGhost}
-                onClick={presetIFC}
-                disabled={!rows.length}
-              >
-                IFC Reference
-              </button>
+            <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ alignSelf: "center", opacity: 0.7 }}>Presets:</span>
+              <button style={c.btnGhost} onClick={presetRecommended} disabled={!rows.length}>Recommended</button>
+              <button style={c.btnGhost} onClick={presetTekla} disabled={!rows.length}>Tekla Assembly</button>
+              <button style={c.btnGhost} onClick={presetIFC} disabled={!rows.length}>IFC Reference</button>
             </div>
 
-            {!!exportMsg && (
-              <div style={{ ...c.note, marginTop: 6 }}>{exportMsg}</div>
-            )}
+            {!!exportMsg && <div style={{ ...c.note, marginTop: 6 }}>{exportMsg}</div>}
           </div>
         )}
       </div>
 
-      <div style={c.footer}>
-        created by <b>Silver Vatsel</b> | Consiva OÜ
-      </div>
+      <div style={c.footer}>created by <b>Silver Vatsel</b> | Consiva OÜ</div>
     </div>
   );
 }
@@ -1059,50 +730,14 @@ const styles: Record<string, CSSProperties> = {
     color: "#fff",
     fontWeight: 600,
   },
-  page: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    padding: 10,
-    gap: 10,
-    minHeight: 0,
-  },
-  section: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    height: "100%",
-    minHeight: 0,
-  },
+  page: { flex: 1, display: "flex", flexDirection: "column", padding: 10, gap: 10, minHeight: 0 },
+  section: { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 },
   row: { display: "flex", alignItems: "center", gap: 8 },
   label: { width: 160, opacity: 0.8 },
-  input: {
-    flex: 1,
-    padding: "6px 8px",
-    border: "1px solid #cfd6df",
-    borderRadius: 8,
-    outline: "none",
-  },
-  controls: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    flexWrap: "wrap",
-  },
-  btn: {
-    padding: "6px 10px",
-    borderRadius: 8,
-    border: "1px solid #cfd6df",
-    background: "#f6f8fb",
-    cursor: "pointer",
-  },
-  btnGhost: {
-    padding: "6px 10px",
-    borderRadius: 8,
-    border: "1px solid #d7dde6",
-    background: "#fff",
-    cursor: "pointer",
-  },
+  input: { flex: 1, padding: "6px 8px", border: "1px solid #cfd6df", borderRadius: 8, outline: "none" },
+  controls: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  btn: { padding: "6px 10px", borderRadius: 8, border: "1px solid #cfd6df", background: "#f6f8fb", cursor: "pointer" },
+  btnGhost: { padding: "6px 10px", borderRadius: 8, border: "1px solid #d7dde6", background: "#fff", cursor: "pointer" },
   btnPrimary: {
     padding: "6px 12px",
     borderRadius: 8,
@@ -1113,52 +748,15 @@ const styles: Record<string, CSSProperties> = {
     marginLeft: "auto",
   },
   meta: { fontSize: 12, opacity: 0.75 },
-  list: {
-    flex: 1,
-    minHeight: 0,
-    overflow: "auto",
-    border: "1px solid #edf0f4",
-    borderRadius: 8,
-    padding: 8,
-    background: "#fafbfc",
-  },
-  group: {
-    marginBottom: 8,
-    paddingBottom: 6,
-    borderBottom: "1px dashed #e5e9f0",
-  },
-  groupHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 6,
-  },
-  mini: {
-    padding: "2px 6px",
-    borderRadius: 6,
-    border: "1px solid #d7dde6",
-    background: "#fff",
-    fontSize: 12,
-    cursor: "pointer",
-  },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 6,
-  },
+  list: { flex: 1, minHeight: 0, overflow: "auto", border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc" },
+  group: { marginBottom: 8, paddingBottom: 6, borderBottom: "1px dashed #e5e9f0" },
+  groupHeader: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
+  mini: { padding: "2px 6px", borderRadius: 6, border: "1px solid #d7dde6", background: "#fff", fontSize: 12, cursor: "pointer" },
+  grid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6 },
   checkRow: { display: "flex", alignItems: "center", gap: 6 },
-  ellipsis: {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
+  ellipsis: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   small: { fontSize: 12, opacity: 0.8 },
   faint: { fontSize: 12, opacity: 0.55, marginLeft: "auto" },
   note: { fontSize: 12, opacity: 0.9 },
-  footer: {
-    padding: "6px 10px",
-    borderTop: "1px solid #eef2f6",
-    fontSize: 12,
-    color: "#66758c",
-  },
+  footer: { padding: "6px 10px", borderTop: "1px solid #eef2f6", fontSize: 12, color: "#66758c" },
 };
