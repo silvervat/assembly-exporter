@@ -1392,5 +1392,3 @@ const styles: Record<string, CSSProperties> = {
     transform: "scale(1.02)",
   }
 };
-
-export { AssemblyExporter as default };
