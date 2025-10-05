@@ -1,14 +1,3 @@
-Vabandust! 😅 Sa kopeerisid faili ka minu markdown selgitused! 
-
-Fail peab algama `import` lausega, mitte tekstiga "Aha! Näen probleemi!"
-
-Siin on **ainult puhas kood ilma selgitusteta**:
-
----
-
-**KOPEERI AINULT ALATES SIIT:**
-
-```typescript
 import { useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
 import * as XLSX from "xlsx";
 
