@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceAPI } from "trimble-connect-workspace-api";
 
-/** Veerud, mis lisatakse alati (ka siis kui midagi ei märgi) */
 const MANDATORY_COLS = ["ObjectId", "ModelId", "GUID", "Name", "Type", "BLOCK"] as const;
 
 type Row = Record<string, string>;
 type Props = { api: WorkspaceAPI };
 
-/* ---- Utilid ---- */
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
 }
@@ -16,8 +14,6 @@ function flattenProps(obj: any, modelId: string): Row {
   const out: Row = {};
   out.ObjectId = String(obj?.id ?? "");
   out.ModelId = String(modelId);
-
-  // püüa leida GUID/Name/Type tüüpilistest kohtadest
   const find = (name: string) => {
     for (const set of obj?.properties ?? []) {
       const p = set?.properties?.find((x: any) => x?.name === name);
@@ -25,19 +21,12 @@ function flattenProps(obj: any, modelId: string): Row {
     }
     return "";
   };
-
   out.GUID = String(find("GUID") || find("Guid") || find("IFC_GUID") || "");
   out.Name = String(find("Name") || find("NAME") || "");
-  out.Type =
-    String(
-      find("IfcType") ||
-        find("IFC_TYPE") ||
-        find("Type") ||
-        find("Object Type") ||
-        ""
-    ) || "Unknown";
+  out.Type = String(
+    find("IfcType") || find("IFC_TYPE") || find("Type") || find("Object Type") || ""
+  ) || "Unknown";
 
-  // tasanda kõik omadused -> Group.Property
   for (const set of obj?.properties ?? []) {
     const g = sanitizeKey(set?.name || "Group");
     for (const p of set?.properties ?? []) {
@@ -63,7 +52,6 @@ function groupKeys(keys: string[]) {
   return g;
 }
 
-/* ---- Komponent ---- */
 export default function AssemblyExporter({ api }: Props) {
   const [scriptUrl, setScriptUrl] = useState(localStorage.getItem("scriptUrl") || "");
   const [secret, setSecret] = useState(localStorage.getItem("secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU");
@@ -74,7 +62,6 @@ export default function AssemblyExporter({ api }: Props) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // kõigi ridade võtmete unioon
   const allKeys = useMemo(() => Array.from(new Set(rows.flatMap((r) => Object.keys(r))).values()).sort(), [rows]);
   const grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
 
@@ -111,13 +98,24 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(true);
       setMsg("Loen valikut…");
       const selection = await api.viewer.getSelection();
-      if (!selection.length || !selection[0].objectRuntimeIds?.length) {
+
+      if (!selection?.length) {
         setMsg("Vali mudelist objektid.");
         setRows([]);
         return;
       }
+
       const model = selection[0];
-      const props = await api.viewer.getObjectProperties(model.modelId, model.objectRuntimeIds);
+
+      // ✅ FIX: tagame, et ids on alati number[]
+      const ids: number[] = (model.objectRuntimeIds ?? []).slice();
+      if (!ids.length) {
+        setMsg("Valik on tühi.");
+        setRows([]);
+        return;
+      }
+
+      const props = await api.viewer.getObjectProperties(model.modelId, ids); // ← nüüd ok
       const flat = props.map((o: any) => flattenProps(o, model.modelId));
       setRows(flat);
       setMsg(`Leidsin ${flat.length} objekti. Võtmeid kokku ${Array.from(new Set(flat.flatMap(Object.keys))).length}.`);
@@ -169,7 +167,6 @@ export default function AssemblyExporter({ api }: Props) {
     <div style={{ maxWidth: 720, padding: 16, fontFamily: "Inter, system-ui, Arial, sans-serif" }}>
       <h3 style={{ marginTop: 0 }}>Assembly Exporter</h3>
 
-      {/* Seaded */}
       <div style={{ display: "grid", gap: 8 }}>
         <label>
           <div style={{ fontSize: 12, opacity: 0.8 }}>Google Apps Script URL</div>
@@ -191,7 +188,6 @@ export default function AssemblyExporter({ api }: Props) {
         </label>
       </div>
 
-      {/* Avasta / otsing / globaalsed nupud */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
         <button onClick={discover} disabled={busy} style={{ padding: "8px 12px" }}>
           {busy ? "…" : "Avasta väljad"}
@@ -206,12 +202,10 @@ export default function AssemblyExporter({ api }: Props) {
         <button onClick={() => selectAll(false)} disabled={!rows.length}>Tühjenda</button>
       </div>
 
-      {/* Info */}
       <div style={{ fontSize: 12, marginTop: 6, opacity: 0.8 }}>
         Alati lisatakse: {Array.from(MANDATORY_COLS).join(", ")}. Valitud lisavälju: {selected.size}.
       </div>
 
-      {/* Grupeeritud väljad */}
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, padding: 10, maxHeight: 360, overflow: "auto" }}>
         {!rows.length ? (
           <div style={{ opacity: 0.6 }}>Vajuta “Avasta väljad”.</div>
@@ -251,16 +245,11 @@ export default function AssemblyExporter({ api }: Props) {
         )}
       </div>
 
-      {/* Saatmise nupp + staatus */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
         <button onClick={send} disabled={busy || !rows.length} style={{ padding: "8px 12px" }}>
           {busy ? "Saatmine…" : "Saada valik Google Sheeti"}
         </button>
-        {!!msg && (
-          <div style={{ fontSize: 13, opacity: 0.9 }}>
-            {msg}
-          </div>
-        )}
+        {!!msg && <div style={{ fontSize: 13, opacity: 0.9 }}>{msg}</div>}
       </div>
     </div>
   );
