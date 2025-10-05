@@ -326,10 +326,11 @@ export default function AssemblyExporter({ api }: Props) {
   const [libraryId, setLibraryId] = useState("");
   const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [searchInput, setSearchInput] = useState("");
-  const [searchField, setSearchField] = useState<string>("Tekla_Assembly.AssemblyCast_unit_Mark");  // Parandus: Default Tekla_Assembly.AssemblyCast_unit_Mark
+  const [searchField, setSearchField] = useState<string>("Tekla_Assembly.AssemblyCast_unit_Mark");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("excel");
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
   const [searchResults, setSearchResults] = useState<Array<{
+    originalValue: string;
     value: string;
     status: 'found' | 'notfound';
     modelId?: string;
@@ -567,15 +568,14 @@ export default function AssemblyExporter({ api }: Props) {
   async function searchAndSelect() {
     try {
       setBusy(true);
-      setSearchMsg("Palun oota, teostame otsingut...");  // Parandus: Ooteteade
+      setSearchMsg("Palun oota, teostame otsingut...");
       setSearchResults([]);
       setProgress({ current: 0, total: 0 });
      
-      const searchValues = new Set(
-        searchInput.split(/[\n,;\t]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
-      );
+      const searchValues = searchInput.split(/[\n,;\t]+/).map(s => s.trim()).filter(Boolean);
+      const searchLower = new Set(searchValues.map(v => v.toLowerCase()));
      
-      if (!searchValues.size) {
+      if (!searchValues.length) {
         setSearchMsg("⚠️ Sisesta vähemalt üks väärtus.");
         setBusy(false);
         return;
@@ -591,7 +591,7 @@ export default function AssemblyExporter({ api }: Props) {
       }
      
       const found: Array<{ modelId: string; ids: number[] }> = [];
-      const foundValues = new Map<string, { modelId: string; ids: number[] }>();
+      const foundValues = new Map<string, { original: string; modelId: string; ids: number[] }>();
       setProgress({ current: 0, total: mos.length });
      
       for (let mIdx = 0; mIdx < mos.length; mIdx++) {
@@ -621,7 +621,7 @@ export default function AssemblyExporter({ api }: Props) {
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 if (/assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(String(p?.name))) {
-                  matchValue = String(p?.value || p?.displayValue || "").trim().toLowerCase();
+                  matchValue = String(p?.value || p?.displayValue || "").trim();
                   break;
                 }
               }
@@ -636,7 +636,7 @@ export default function AssemblyExporter({ api }: Props) {
                   const cls = classifyGuid(val);
                   if ((searchField === "GUID_IFC" && cls === "IFC") ||
                       (searchField === "GUID_MS" && cls === "MS")) {
-                    matchValue = val.toLowerCase();
+                    matchValue = val;
                     break;
                   }
                 }
@@ -647,7 +647,7 @@ export default function AssemblyExporter({ api }: Props) {
             if (!matchValue && searchField === "GUID_IFC") {
               try {
                 const extIds = await api.viewer.convertToObjectIds(modelId, [objId]);
-                matchValue = (extIds[0] || "").toLowerCase();
+                matchValue = (extIds[0] || "");
               } catch {}
             }
           } else if (searchField === "Name") {
@@ -655,7 +655,7 @@ export default function AssemblyExporter({ api }: Props) {
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 if (/^name$/i.test(String(p?.name))) {
-                  matchValue = String(p?.value || p?.displayValue || "").trim().toLowerCase();
+                  matchValue = String(p?.value || p?.displayValue || "").trim();
                   break;
                 }
               }
@@ -683,7 +683,7 @@ export default function AssemblyExporter({ api }: Props) {
                
                 if (fullKeySanitized.toLowerCase() === searchField.toLowerCase() ||
                     propNameSanitized.toLowerCase().includes(propPart.toLowerCase())) {
-                  matchValue = String(p?.value || p?.displayValue || "").trim().toLowerCase();
+                  matchValue = String(p?.value || p?.displayValue || "").trim();
                   break;
                 }
               }
@@ -691,13 +691,15 @@ export default function AssemblyExporter({ api }: Props) {
             }
           }
          
-          if (matchValue && searchValues.has(matchValue)) {
+          const matchLower = matchValue.toLowerCase();
+          const originalMatch = searchValues.find(v => v.toLowerCase() === matchLower);
+          if (originalMatch && searchLower.has(matchLower)) {
             matchIds.push(objId);
            
-            if (!foundValues.has(matchValue)) {
-              foundValues.set(matchValue, { modelId, ids: [] });
+            if (!foundValues.has(matchLower)) {
+              foundValues.set(matchLower, { original: originalMatch, modelId, ids: [] });
             }
-            foundValues.get(matchValue)!.ids.push(objId);
+            foundValues.get(matchLower)!.ids.push(objId);
           }
         }
        
@@ -707,17 +709,18 @@ export default function AssemblyExporter({ api }: Props) {
      
       if (searchField === "GUID_IFC" && found.length === 0) {
         const allModels = await api.viewer.getModels();
-        for (const value of searchValues) {
+        for (const originalValue of searchValues) {
+          const value = originalValue.toLowerCase();
           for (const model of allModels || []) {
             const modelId = String(model.id);
             try {
-              const runtimeIds = await api.viewer.convertToObjectRuntimeIds(modelId, [value]);
+              const runtimeIds = await api.viewer.convertToObjectRuntimeIds(modelId, [originalValue]);
               if (runtimeIds.length > 0) {
                 found.push({
                   modelId,
                   ids: runtimeIds.map((id: any) => Number(id))
                 });
-                foundValues.set(value, { modelId, ids: runtimeIds.map((id: any) => Number(id)) });
+                foundValues.set(value, { original: originalValue, modelId, ids: runtimeIds.map((id: any) => Number(id)) });
               }
             } catch {}
           }
@@ -725,24 +728,28 @@ export default function AssemblyExporter({ api }: Props) {
       }
      
       const results: Array<{
+        originalValue: string;
         value: string;
         status: 'found' | 'notfound';
         modelId?: string;
         ids?: number[];
       }> = [];
      
-      for (const value of searchValues) {
-        if (foundValues.has(value)) {
-          const data = foundValues.get(value)!;
+      for (const originalValue of searchValues) {
+        const lower = originalValue.toLowerCase();
+        if (foundValues.has(lower)) {
+          const data = foundValues.get(lower)!;
           results.push({
-            value,
+            originalValue: data.original,
+            value: lower,
             status: 'found',
             modelId: data.modelId,
             ids: data.ids
           });
         } else {
           results.push({
-            value,
+            originalValue,
+            value: lower,
             status: 'notfound'
           });
         }
@@ -760,20 +767,61 @@ export default function AssemblyExporter({ api }: Props) {
         await viewer?.setSelection?.(selector);
         setLastSelection(found);
        
-        const notFound = results.filter(r => r.status === 'notfound').map(r => r.value);
+        const notFound = results.filter(r => r.status === 'notfound').map(r => r.originalValue);
         if (notFound.length) {
-          setSearchMsg(`✅ Leidsin ${foundValues.size}/${searchValues.size} väärtust. Ei leidnud: ${notFound.join(", ")}`);
+          setSearchMsg(`✅ Leidsin ${foundValues.size}/${searchValues.length} väärtust. Ei leidnud: ${notFound.join(", ")}`);
         } else {
-          setSearchMsg(`✅ Leidsin kõik ${searchValues.size} väärtust ja valisin need.`);
+          setSearchMsg(`✅ Leidsin kõik ${searchValues.length} väärtust ja valisin need.`);
         }
       } else {
-        setSearchMsg(`❌ Ei leidnud ühtegi väärtust: ${Array.from(searchValues).join(", ")}`);
+        setSearchMsg(`❌ Ei leidnud ühtegi väärtust: ${searchValues.join(", ")}`);
       }
     } catch (e: any) {
       console.error(e);
       setSearchMsg(`❌ Viga: ${e?.message || "tundmatu viga"}`);
     } finally {
       setBusy(false);
+    }
+  }
+ 
+  async function selectAllFound() {
+    try {
+      const allFound = searchResults
+        .filter(r => r.status === 'found' && r.modelId && r.ids)
+        .map(r => ({
+          modelId: r.modelId!,
+          ids: r.ids!
+        }));
+      
+      if (allFound.length) {
+        const selector = {
+          modelObjectIds: allFound.map(f => ({
+            modelId: f.modelId,
+            objectRuntimeIds: f.ids
+          }))
+        };
+        await api?.viewer?.setSelection?.(selector);
+        setLastSelection(allFound);
+        setSearchMsg("✅ Valisime kõik leitud objektid.");
+      }
+    } catch (e: any) {
+      console.error("Select all error:", e);
+      setSearchMsg("❌ Viga kõikide valimisel.");
+    }
+  }
+ 
+  async function closeAndZoom(modelId: string, ids: number[]) {
+    try {
+      await selectAndZoom(modelId, ids);
+      // Proovi sulgeda paneel
+      if (api?.extension) {
+        await api.extension.broadcast({ action: "closePanel" });
+      } else {
+        // Alternatiiv iframe'i jaoks
+        window.parent.postMessage({ type: "closeExtension" }, "*");
+      }
+    } catch (e: any) {
+      console.error("Close & zoom error:", e);
     }
   }
  
@@ -1051,6 +1099,8 @@ export default function AssemblyExporter({ api }: Props) {
  
   const exportableColumns = columnOrder.filter(k => allKeys.includes(k));
  
+  const totalFoundCount = searchResults.reduce((sum, r) => sum + (r.status === 'found' ? r.ids?.length || 0 : 0), 0);
+ 
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
@@ -1146,8 +1196,8 @@ export default function AssemblyExporter({ api }: Props) {
                       <span style={c.resultStatus}>
                         {result.status === 'found' ? '✅' : '❌'}
                       </span>
-                      <span style={c.resultValue} title={result.value}>
-                        {result.value}
+                      <span style={c.resultValue} title={result.originalValue}>
+                        {result.originalValue}
                       </span>
                       <span style={c.resultCount}>
                         {result.status === 'found' ? `${result.ids?.length || 0}x` : '-'}
@@ -1156,15 +1206,24 @@ export default function AssemblyExporter({ api }: Props) {
                         {result.status === 'found' && result.modelId && result.ids && (
                           <button
                             style={c.miniBtn}
-                            onClick={() => selectAndZoom(result.modelId!, result.ids!)}
-                            title="Vali ja zoomi"
+                            onClick={() => closeAndZoom(result.modelId!, result.ids!)}
+                            title="Sulge paneel ja zoomi"
                           >
-                            🔍 Zoom
+                            🔍 Sulge & zoom
                           </button>
                         )}
                       </div>
                     </div>
                   ))}
+                </div>
+                <div style={{ ...c.controls, marginTop: 8, justifyContent: "flex-end" }}>
+                  <button 
+                    style={c.btn} 
+                    onClick={selectAllFound} 
+                    disabled={totalFoundCount === 0}
+                  >
+                    Vali kõik ({totalFoundCount}x)
+                  </button>
                 </div>
               </div>
             )}
@@ -1237,7 +1296,7 @@ export default function AssemblyExporter({ api }: Props) {
           <div style={c.section}>
             <h3 style={c.heading}>Export Data</h3>
            
-            <div style={c.small}>Export toimub {rows.length} toote kohta</div>  // Parandus: Näita toodete arvu
+            <div style={c.small}>Export toimub {rows.length} toote kohta</div>
            
             <div style={c.helpBox}>
               <strong>💡 Juhised:</strong> Lohista ridu hiirega ümber VÕI kasuta ↑ ↓ nuppe. Märgi linnukesega ekspordiks valitavad veerud.
@@ -1449,7 +1508,7 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              <b>Assembly Exporter v4.9</b> – Trimble Connect<br />
+              <b>Assembly Exporter v4.10</b> – Trimble Connect<br />
               • Auto-discover on selection change<br />
               • Searchable dropdown<br />
               • Search results table with zoom<br />
