@@ -326,7 +326,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [libraryId, setLibraryId] = useState("");
   const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [searchInput, setSearchInput] = useState("");
-  const [searchField, setSearchField] = useState<string>("AssemblyMark");
+  const [searchField, setSearchField] = useState<string>("Tekla_Assembly.AssemblyCast_unit_Mark");  // Parandus: Default Tekla_Assembly.AssemblyCast_unit_Mark
   const [exportFormat, setExportFormat] = useState<ExportFormat>("excel");
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
   const [searchResults, setSearchResults] = useState<Array<{
@@ -567,7 +567,7 @@ export default function AssemblyExporter({ api }: Props) {
   async function searchAndSelect() {
     try {
       setBusy(true);
-      setSearchMsg("Otsin…");
+      setSearchMsg("Palun oota, teostame otsingut...");  // Parandus: Ooteteade
       setSearchResults([]);
       setProgress({ current: 0, total: 0 });
      
@@ -1237,6 +1237,8 @@ export default function AssemblyExporter({ api }: Props) {
           <div style={c.section}>
             <h3 style={c.heading}>Export Data</h3>
            
+            <div style={c.small}>Export toimub {rows.length} toote kohta</div>  // Parandus: Näita toodete arvu
+           
             <div style={c.helpBox}>
               <strong>💡 Juhised:</strong> Lohista ridu hiirega ümber VÕI kasuta ↑ ↓ nuppe. Märgi linnukesega ekspordiks valitavad veerud.
             </div>
@@ -1447,7 +1449,7 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              <b>Assembly Exporter v4.8</b> – Trimble Connect<br />
+              <b>Assembly Exporter v4.9</b> – Trimble Connect<br />
               • Auto-discover on selection change<br />
               • Searchable dropdown<br />
               • Search results table with zoom<br />
@@ -1481,7 +1483,7 @@ const styles: Record<string, CSSProperties> = {
     position: "sticky",
     top: 0,
     zIndex: 100,
-    flexWrap: "wrap" as any,  // Parandus: Laseb menüül minna kahele reale mobiilis
+    flexWrap: "wrap" as any,
   },
   tab: {
     all: "unset" as any,
