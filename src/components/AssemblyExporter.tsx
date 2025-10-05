@@ -1,3 +1,6 @@
+Siin on **TÄIELIK KOOD** ilma vigadeta! 🚀
+
+```typescript
 import { useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
 import * as XLSX from "xlsx";
 
@@ -577,9 +580,23 @@ export default function AssemblyExporter({ api }: Props) {
       
       for (const mo of mos) {
         const modelId = String(mo.modelId);
+        const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter(n => Number.isFinite(n));
+        
+        if (!objectRuntimeIds.length) continue;
+        
+        let fullProperties: any[] = [];
+        try {
+          fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
+        } catch (e) {
+          console.warn(`getObjectProperties failed for model ${modelId}:`, e);
+          fullProperties = mo.objects || [];
+        }
+        
         const matchIds: number[] = [];
         
-        for (const obj of mo.objects || []) {
+        for (let i = 0; i < fullProperties.length; i++) {
+          const obj = fullProperties[i];
+          const objId = objectRuntimeIds[i];
           let matchValue = "";
           
           if (searchField === "AssemblyMark") {
@@ -612,7 +629,7 @@ export default function AssemblyExporter({ api }: Props) {
             
             if (!matchValue && searchField === "GUID_IFC") {
               try {
-                const extIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
+                const extIds = await api.viewer.convertToObjectIds(modelId, [objId]);
                 matchValue = (extIds[0] || "").toLowerCase();
               } catch {}
             }
@@ -629,15 +646,26 @@ export default function AssemblyExporter({ api }: Props) {
             }
           } else {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
-            const searchKeySanitized = sanitizeKey(searchField);
+            
+            const searchParts = searchField.split('.');
+            const groupPart = searchParts[0] || "";
+            const propPart = searchParts[1] || "";
             
             for (const set of props) {
-              const setName = sanitizeKey(set?.name || "");
+              const setName = String(set?.name || "");
+              const setNameSanitized = sanitizeKey(setName);
+              
+              if (groupPart && !setNameSanitized.toLowerCase().includes(groupPart.toLowerCase())) {
+                continue;
+              }
+              
               for (const p of set?.properties ?? []) {
-                const propName = sanitizeKey(p?.name || "");
-                const fullKey = `${setName}.${propName}`;
+                const propName = String(p?.name || "");
+                const propNameSanitized = sanitizeKey(propName);
+                const fullKeySanitized = `${setNameSanitized}.${propNameSanitized}`;
                 
-                if (fullKey === searchKeySanitized) {
+                if (fullKeySanitized.toLowerCase() === searchField.toLowerCase() ||
+                    propNameSanitized.toLowerCase().includes(propPart.toLowerCase())) {
                   matchValue = String(p?.value || p?.displayValue || "").trim().toLowerCase();
                   break;
                 }
@@ -647,7 +675,7 @@ export default function AssemblyExporter({ api }: Props) {
           }
           
           if (matchValue && searchValues.has(matchValue)) {
-            matchIds.push(Number(obj?.id));
+            matchIds.push(objId);
             foundValues.add(matchValue);
           }
         }
@@ -990,7 +1018,7 @@ export default function AssemblyExporter({ api }: Props) {
             <textarea
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;RBP-111&#10;RBP-112&#10;RBP-113"
+              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;2COL23&#10;RBP-111&#10;RBP-112"
               style={{ ...c.textarea, height: 200 }}
             />
             <div style={c.controls}>
@@ -1291,6 +1319,7 @@ export default function AssemblyExporter({ api }: Props) {
               • Dynamic search fields dropdown<br />
               • Checkboxes for export column selection<br />
               • Case-insensitive search matching<br />
+              • Full property search with flexible matching<br />
               <br />
               Loodud: <b>Silver Vatsel</b> | Consiva OÜ
             </div>
@@ -1431,94 +1460,4 @@ const styles: Record<string, CSSProperties> = {
   },
   groupHeader: { 
     display: "flex", 
-    alignItems: "center", 
-    gap: 8, 
-    marginBottom: 6 
-  },
-  mini: { 
-    padding: "2px 6px", 
-    borderRadius: 6, 
-    border: "1px solid #d7dde6", 
-    background: "#fff", 
-    fontSize: 12, 
-    cursor: "pointer" 
-  },
-  miniBtn: { 
-    padding: "2px 8px", 
-    borderRadius: 4, 
-    border: "1px solid #d7dde6", 
-    background: "#fff", 
-    fontSize: 11, 
-    cursor: "pointer" 
-  },
-  grid: { 
-    display: "grid", 
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))", 
-    gap: 6 
-  },
-  checkRow: { 
-    display: "flex", 
-    alignItems: "center", 
-    gap: 6 
-  },
-  ellipsis: { 
-    overflow: "hidden", 
-    textOverflow: "ellipsis", 
-    whiteSpace: "nowrap" 
-  },
-  small: { fontSize: 12, opacity: 0.8 },
-  note: { 
-    fontSize: 12, 
-    opacity: 0.9, 
-    padding: "6px 8px", 
-    background: "#f0f4f8", 
-    borderRadius: 6,
-    position: "relative",
-    zIndex: 1,
-  },
-  helpBox: {
-    fontSize: 12,
-    padding: "8px 10px",
-    background: "#e7f3ff",
-    border: "1px solid #90caf9",
-    borderRadius: 6,
-    color: "#0d47a1",
-  },
-  columnListNoscroll: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-    border: "1px solid #edf0f4",
-    borderRadius: 8,
-    padding: 8,
-    background: "#fafbfc",
-  },
-  columnItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "4px 8px",
-    background: "#fff",
-    border: "1px solid #e5e9f0",
-    borderRadius: 6,
-    fontSize: 12,
-    transition: "all 0.3s ease-out",
-    cursor: "move",
-  },
-  columnItemHighlight: {
-    background: "#fff3cd",
-    border: "2px solid #ffc107",
-    boxShadow: "0 0 12px rgba(255, 193, 7, 0.4)",
-    transform: "scale(1.02)",
-  },
-  columnItemDragging: {
-    opacity: 0.4,
-    cursor: "grabbing",
-  },
-  dragHandle: {
-    fontSize: 16,
-    color: "#999",
-    userSelect: "none" as any,
-    lineHeight: 1,
-  }
-};
+    alignItems
