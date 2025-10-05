@@ -1,43 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceAPI } from "trimble-connect-workspace-api";
 
-const MANDATORY_COLS = ["ObjectId", "ModelId", "GUID", "Name", "Type", "BLOCK"] as const;
+/** Ainsad automaatsed veerud */
+const MANDATORY_COLS = ["GUID", "Project"] as const;
 
 type Row = Record<string, string>;
 type Props = { api: WorkspaceAPI };
 
+/* ------------ Abi ------------- */
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
-}
-
-function flattenProps(obj: any, modelId: string): Row {
-  const out: Row = {};
-  out.ObjectId = String(obj?.id ?? "");
-  out.ModelId = String(modelId);
-  const find = (name: string) => {
-    for (const set of obj?.properties ?? []) {
-      const p = set?.properties?.find((x: any) => x?.name === name);
-      if (p) return p.value;
-    }
-    return "";
-  };
-  out.GUID = String(find("GUID") || find("Guid") || find("IFC_GUID") || "");
-  out.Name = String(find("Name") || find("NAME") || "");
-  out.Type = String(
-    find("IfcType") || find("IFC_TYPE") || find("Type") || find("Object Type") || ""
-  ) || "Unknown";
-
-  for (const set of obj?.properties ?? []) {
-    const g = sanitizeKey(set?.name || "Group");
-    for (const p of set?.properties ?? []) {
-      const key = `${g}.${sanitizeKey(p?.name || "Prop")}`;
-      let v: any = p?.value;
-      if (Array.isArray(v)) v = v.map((x) => (x == null ? "" : String(x))).join(" | ");
-      else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
-      out[key] = v == null ? "" : String(v);
-    }
-  }
-  return out;
 }
 
 function groupKeys(keys: string[]) {
@@ -52,6 +24,76 @@ function groupKeys(keys: string[]) {
   return g;
 }
 
+/** Tasandab ühe objekti omadused + leiab GUID-i; kõik võtmed lisatakse ritta valikuliseks */
+function flattenProps(obj: any, modelId: string, projectName: string): Row {
+  const out: Row = {
+    GUID: "",
+    Project: String(projectName),
+    ObjectId: String(obj?.id ?? ""), // valikuline (kuvatakse nimekirjas)
+    ModelId: String(modelId),        // valikuline
+    Name: "",
+    Type: "Unknown",
+    BLOCK: "",
+  };
+
+  // Kogume kõik omadused kaardiks (Group.Property -> value)
+  const propMap = new Map<string, string>();
+  const push = (group: string, name: string, val: any) => {
+    const key = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
+    let v = val;
+    if (Array.isArray(v)) v = v.map((x) => (x == null ? "" : String(x))).join(" | ");
+    else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
+    const s = v == null ? "" : String(v);
+    propMap.set(key, s);
+    (out as any)[key] = s; // jätame dünaamilise veeru alles, et saaks valikus näidata
+  };
+
+  // Standard + PropertySet + Property Set Libraries (nt "DATA")
+  const allGroups = [
+    ...(obj?.properties ?? []),
+    ...(obj?.propertySets ?? []),
+    ...(obj?.propertySetLibraries ?? []),
+  ] as Array<{ name: string; properties: Array<{ name: string; value: any }> }>;
+
+  for (const set of allGroups) {
+    const g = set?.name || "Group";
+    for (const p of set?.properties ?? []) {
+      push(g, p?.name || "Prop", p?.value);
+
+      if (!out.Name && /^(name|object[_\s]?name)$/i.test(p?.name || "")) out.Name = String(p?.value ?? "");
+      if (out.Type === "Unknown" && /\btype\b/i.test(p?.name || "")) out.Type = String(p?.value ?? "Unknown");
+    }
+  }
+
+  // --- GUID (Reference Object → GUID (IFC/MS) + fallback 'guid') ---
+  const guidCandidates = [
+    "Reference_Object.GUID_IFC",
+    "Reference_Object.GUID_(IFC)",
+    "Reference_Object.GUID_(Ifc)",
+    "Reference_Object.GUID_MS",
+    "Reference_Object.GUID_(MS)",
+    "IFC.GUID",
+    "GUID",
+    "Reference_Object.Guid",
+  ];
+  let guid = "";
+  for (const k of guidCandidates) { if (propMap.has(k)) { guid = propMap.get(k)!; break; } }
+  if (!guid) for (const [k, v] of propMap) { if (/guid/i.test(k)) { guid = v; break; } }
+  out.GUID = guid;
+
+  // --- BLOCK (valikuline; kui leidub, kuvame valikus võtmena) ---
+  const blockCandidates = [
+    "DATA.BLOCK",
+    "BLOCK.BLOCK",
+    "BLOCK.BLOCK_2",
+    "Tekla_Assembly.AssemblyCast_unit_Mark",
+  ];
+  for (const k of blockCandidates) { if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; } }
+
+  return out;
+}
+
+/* ============ Komponent ============ */
 export default function AssemblyExporter({ api }: Props) {
   const [scriptUrl, setScriptUrl] = useState(localStorage.getItem("scriptUrl") || "");
   const [secret, setSecret] = useState(localStorage.getItem("secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU");
@@ -62,7 +104,10 @@ export default function AssemblyExporter({ api }: Props) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const allKeys = useMemo(() => Array.from(new Set(rows.flatMap((r) => Object.keys(r))).values()).sort(), [rows]);
+  const allKeys = useMemo(
+    () => Array.from(new Set(rows.flatMap((r) => Object.keys(r)))).sort(),
+    [rows]
+  );
   const grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
 
   useEffect(() => {
@@ -88,6 +133,7 @@ export default function AssemblyExporter({ api }: Props) {
   function selectAll(on: boolean) {
     setSelected(() => {
       if (!on) return new Set();
+      // vali kõik peale automaatsete
       const base = allKeys.filter((k) => !(MANDATORY_COLS as readonly string[]).includes(k));
       return new Set(base);
     });
@@ -97,26 +143,19 @@ export default function AssemblyExporter({ api }: Props) {
     try {
       setBusy(true);
       setMsg("Loen valikut…");
-      const selection = await api.viewer.getSelection();
 
-      if (!selection?.length) {
-        setMsg("Vali mudelist objektid.");
-        setRows([]);
-        return;
-      }
+      const selection = await api.viewer.getSelection();
+      if (!selection?.length) { setMsg("Vali mudelist objektid."); setRows([]); return; }
 
       const model = selection[0];
-
-      // ✅ FIX: tagame, et ids on alati number[]
       const ids: number[] = (model.objectRuntimeIds ?? []).slice();
-      if (!ids.length) {
-        setMsg("Valik on tühi.");
-        setRows([]);
-        return;
-      }
+      if (!ids.length) { setMsg("Valik on tühi."); setRows([]); return; }
 
-      const props = await api.viewer.getObjectProperties(model.modelId, ids); // ← nüüd ok
-      const flat = props.map((o: any) => flattenProps(o, model.modelId));
+      const projectName: string = (api as any)?.project?.name ?? "";
+
+      const props = await api.viewer.getObjectProperties(model.modelId, ids);
+      const flat = props.map((o: any) => flattenProps(o, model.modelId, projectName));
+
       setRows(flat);
       setMsg(`Leidsin ${flat.length} objekti. Võtmeid kokku ${Array.from(new Set(flat.flatMap(Object.keys))).length}.`);
     } catch (e: any) {
@@ -127,14 +166,9 @@ export default function AssemblyExporter({ api }: Props) {
   }
 
   async function send() {
-    if (!scriptUrl || !secret) {
-      setMsg("Täida URL ja Secret.");
-      return;
-    }
-    if (!rows.length) {
-      setMsg("Enne vajuta “Avasta väljad”.");
-      return;
-    }
+    if (!scriptUrl || !secret) { setMsg("Täida URL ja Secret."); return; }
+    if (!rows.length) { setMsg("Enne vajuta “Avasta väljad”."); return; }
+
     try {
       setBusy(true);
       setMsg("Saadan…");
@@ -164,16 +198,17 @@ export default function AssemblyExporter({ api }: Props) {
   }
 
   return (
-    <div style={{ maxWidth: 720, padding: 16, fontFamily: "Inter, system-ui, Arial, sans-serif" }}>
+    <div style={{ maxWidth: 760, padding: 16, fontFamily: "Inter, system-ui, Arial, sans-serif" }}>
       <h3 style={{ marginTop: 0 }}>Assembly Exporter</h3>
 
+      {/* Seaded */}
       <div style={{ display: "grid", gap: 8 }}>
         <label>
           <div style={{ fontSize: 12, opacity: 0.8 }}>Google Apps Script URL</div>
           <input
             value={scriptUrl}
             onChange={(e) => setScriptUrl(e.target.value)}
-            placeholder="https://.../exec"
+            placeholder="https://…/exec"
             style={{ width: "100%", padding: 8, border: "1px solid #ccc", borderRadius: 8 }}
           />
         </label>
@@ -188,6 +223,7 @@ export default function AssemblyExporter({ api }: Props) {
         </label>
       </div>
 
+      {/* Avasta / otsing / globaalsed nupud */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
         <button onClick={discover} disabled={busy} style={{ padding: "8px 12px" }}>
           {busy ? "…" : "Avasta väljad"}
@@ -202,11 +238,13 @@ export default function AssemblyExporter({ api }: Props) {
         <button onClick={() => selectAll(false)} disabled={!rows.length}>Tühjenda</button>
       </div>
 
+      {/* Info */}
       <div style={{ fontSize: 12, marginTop: 6, opacity: 0.8 }}>
         Alati lisatakse: {Array.from(MANDATORY_COLS).join(", ")}. Valitud lisavälju: {selected.size}.
       </div>
 
-      <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, padding: 10, maxHeight: 360, overflow: "auto" }}>
+      {/* Väljade nimekiri */}
+      <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, padding: 10, maxHeight: 380, overflow: "auto" }}>
         {!rows.length ? (
           <div style={{ opacity: 0.6 }}>Vajuta “Avasta väljad”.</div>
         ) : (
@@ -245,6 +283,7 @@ export default function AssemblyExporter({ api }: Props) {
         )}
       </div>
 
+      {/* Saatmine */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
         <button onClick={send} disabled={busy || !rows.length} style={{ padding: "8px 12px" }}>
           {busy ? "Saatmine…" : "Saada valik Google Sheeti"}
