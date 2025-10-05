@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import * as XLSX from "xlsx";
 
 /* =========================================================
    TYPES / CONSTANTS
@@ -152,19 +153,16 @@ async function flattenProps(
   };
 
   const propMap = new Map<string, string>();
-  const keyCounts = new Map<string, number>(); // Loe duplikaate
+  const keyCounts = new Map<string, number>();
 
   const push = (group: string, name: string, val: unknown) => {
     const baseKey = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
-    
-    // Lisa indeks kui duplikaat
+
     let key = baseKey;
     const count = keyCounts.get(baseKey) || 0;
-    if (count > 0) {
-      key = `${baseKey}_${count}`;
-    }
+    if (count > 0) key = `${baseKey}_${count}`;
     keyCounts.set(baseKey, count + 1);
-    
+
     let v: unknown = val;
     if (Array.isArray(v)) v = v.map(x => (x == null ? "" : String(x))).join(" | ");
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
@@ -185,20 +183,15 @@ async function flattenProps(
     }
   }
 
-  // BLOCK otsing (esmalt kontrollime base key-sid)
   for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
     "BLOCK.BLOCK_2",
     "Tekla_Assembly.AssemblyCast_unit_Mark",
   ]) {
-    if (propMap.has(k)) { 
-      out.BLOCK = propMap.get(k)!; 
-      break; 
-    }
+    if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; }
   }
 
-  // Otsi GUID-e omadustest
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
@@ -208,14 +201,11 @@ async function flattenProps(
     if (cls === "MS" && !guidMs) guidMs = v;
   }
 
-  // FALLBACK: Kasuta convertToObjectIds IFC GUID jaoks
   if (!guidIfc && obj.id) {
     try {
       const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
       const externalId = externalIds[0];
-      if (externalId && classifyGuid(externalId) === "IFC") {
-        guidIfc = externalId;
-      }
+      if (externalId && classifyGuid(externalId) === "IFC") guidIfc = externalId;
     } catch (e) {
       console.warn(`convertToObjectIds failed for ${obj.id}:`, e);
     }
@@ -582,9 +572,28 @@ export default function AssemblyExporter({ api }: Props) {
         URL.revokeObjectURL(url);
         setExportMsg(`✅ Salvestatud ${rows.length} rida CSV-na.`);
       } else if (exportFormat === "excel") {
-        const tsvContent = content;
-        await navigator.clipboard.writeText(tsvContent);
-        setExportMsg(`✅ Kopeeritud ${rows.length} rida (${exportCols.length} veergu). Kleebi Excelisse!`);
+        // Tee päris .xlsx fail xlsx paketiga
+        const aoa: any[][] = [];
+        aoa.push(exportCols); // header
+
+        for (const r of rows) {
+          aoa.push(
+            exportCols.map((k) => {
+              const v = r[k] ?? "";
+              if (FORCE_TEXT_KEYS.has(k)) return `'${String(v)}`; // sunni tekstiks
+              return v;
+            })
+          );
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Export");
+
+        const filename = `assembly-export-${new Date().toISOString().slice(0,10)}.xlsx`;
+        XLSX.writeFile(wb, filename);
+
+        setExportMsg(`✅ Salvestatud ${rows.length} rida .xlsx failina.`);
       }
     } catch (e: any) {
       setExportMsg(`❌ Viga: ${e?.message || e}`);
@@ -773,7 +782,7 @@ export default function AssemblyExporter({ api }: Props) {
               <label style={c.label}>Formaat:</label>
               <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value as ExportFormat)} style={c.input}>
                 <option value="clipboard">Clipboard (TSV)</option>
-                <option value="excel">Excel (clipboard)</option>
+                <option value="excel">Excel (.xlsx)</option>
                 <option value="csv">CSV (download)</option>
               </select>
             </div>
@@ -797,7 +806,7 @@ export default function AssemblyExporter({ api }: Props) {
 
             <div style={c.controls}>
               <button style={c.btnPrimary} onClick={exportData} disabled={!rows.length || !selected.size}>
-                {exportFormat === "clipboard" ? "Kopeeri lõikelauale" : exportFormat === "excel" ? "Kopeeri Excelile" : "Lae alla CSV"}
+                {exportFormat === "clipboard" ? "Kopeeri lõikelauale" : exportFormat === "excel" ? "Lae alla .xlsx" : "Lae alla CSV"}
               </button>
               <button style={c.btn} onClick={sendToGoogleSheet} disabled={busy || !rows.length}>
                 {busy ? "Saadan…" : "Saada Google Sheeti"}
