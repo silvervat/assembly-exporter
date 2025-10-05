@@ -1,6 +1,3 @@
-Siin on **TÄIELIK KOOD** ilma vigadeta! 🚀
-
-```typescript
 import { useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
 import * as XLSX from "xlsx";
 
