@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 /* =========================================================
    CONSTANTS / TYPES
@@ -564,7 +564,7 @@ export default function AssemblyExporter({ api }: Props) {
     }
     if (!rows.length) {
       setTab("export");
-      setExportMsg('Click "Discover fields" first.');
+      setExportMsg("Click "Discover fields" first.");
       return;
     }
 
@@ -576,7 +576,7 @@ export default function AssemblyExporter({ api }: Props) {
       const warn: string[] = [];
       if (!r.GUID) warn.push("Missing GUID");
       const copy: Row = { ...r };
-      if (warn.length) (copy as any)["__warnings"] = warn.join("; ");
+      if (warn.length) copy["__warnings"] = warn.join("; ");
       return copy;
     });
 
@@ -605,7 +605,7 @@ export default function AssemblyExporter({ api }: Props) {
         ) {
           c[k] = normaliseNumberString(v);
         } else {
-          c[k] = v as string;
+          c[k] = v;
         }
       }
       return c;
@@ -615,7 +615,7 @@ export default function AssemblyExporter({ api }: Props) {
       [...LOCKED_ORDER, ...Array.from(selected), "__warnings"].filter(
         (k) =>
           allKeys.includes(k) ||
-          (LOCKED_ORDER as readonly string[]).includes(k as any) ||
+          LOCKED_ORDER.includes(k as any) ||
           k === "__warnings"
       )
     );
@@ -737,9 +737,7 @@ export default function AssemblyExporter({ api }: Props) {
   function exportToCSV() {
     if (!rows.length) return;
     const chosen = [...LOCKED_ORDER, ...Array.from(selected)].filter(
-      (k) =>
-        allKeys.includes(k) ||
-        (LOCKED_ORDER as readonly string[]).includes(k as any)
+      (k) => allKeys.includes(k) || LOCKED_ORDER.includes(k as any)
     );
 
     const head = chosen.join(",");
@@ -1027,7 +1025,7 @@ export default function AssemblyExporter({ api }: Props) {
   );
 }
 
-const styles: Record<string, CSSProperties> = {
+const styles: Record<string, any> = {
   shell: {
     height: "100vh",
     display: "flex",
@@ -1048,7 +1046,7 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 2,
   },
   tab: {
-    all: "unset" as any,
+    all: "unset",
     color: "rgba(255,255,255,.85)",
     padding: "6px 10px",
     borderRadius: 6,
