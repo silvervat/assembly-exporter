@@ -7,14 +7,26 @@ const MANDATORY_COLS = ["GUID", "Project"] as const;
 type Row = Record<string, string>;
 type Props = { api: WorkspaceAPI };
 type Tab = "export" | "settings" | "about";
+type Grouped = Record<string, string[]>;
 
 /* ----------------- Utils ----------------- */
 function sanitizeKey(s: string) {
-  // asenda tühikud alakriipsuga, eemalda muud märgid (sulgude sisu jääb ära)
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
 }
 
-/** ühendab kõik võimalikud "property containerid" üheks massiiviks */
+function groupKeys(keys: string[]): Grouped {
+  const g: Grouped = {};
+  for (const k of keys) {
+    if ((MANDATORY_COLS as readonly string[]).includes(k)) continue;
+    const dot = k.indexOf(".");
+    const grp = dot > 0 ? k.slice(0, dot) : "Other";
+    (g[grp] ||= []).push(k);
+  }
+  for (const arr of Object.values(g)) arr.sort((a, b) => a.localeCompare(b));
+  return g;
+}
+
+/** ühenda kõik võimalikud property-konteinerid üheks massiiviks */
 function collectAllPropertySets(obj: any) {
   const candidates = [
     "properties",
@@ -24,13 +36,13 @@ function collectAllPropertySets(obj: any) {
     "libraries",
     "customProperties",
   ];
-  const all: Array<{ name: string; properties: Array<{ name: string; value: any }> }> = [];
+  const all: Array<{ name: string; properties: Array<{ name: string; value: unknown }> }> = [];
   for (const key of candidates) {
-    const arr = obj?.[key];
+    const arr: unknown = obj?.[key];
     if (Array.isArray(arr)) {
       for (const set of arr) {
-        if (set && Array.isArray(set.properties)) {
-          all.push(set);
+        if (set && Array.isArray((set as any).properties)) {
+          all.push(set as any);
         }
       }
     }
@@ -53,10 +65,10 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
   // Kogume kõik omadused kaardiks (sanitiseeritud võti -> väärtus)
   const propMap = new Map<string, string>();
 
-  const push = (group: string, name: string, val: any) => {
+  const push = (group: string, name: string, val: unknown) => {
     const key = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
-    let v = val;
-    if (Array.isArray(v)) v = v.map(x => (x == null ? "" : String(x))).join(" | ");
+    let v: unknown = val;
+    if (Array.isArray(v)) v = (v as unknown[]).map((x: unknown) => (x == null ? "" : String(x))).join(" | ");
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
     const s = v == null ? "" : String(v);
     propMap.set(key, s);
@@ -65,34 +77,37 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
 
   // Standard + PropertySet + Property Set Libraries (nt "DATA") + muud kandidaadid
   const allGroups = collectAllPropertySets(obj);
-  // Tagavara: kui ülal ei leidnud midagi, kasuta siiski "properties"
   if (!allGroups.length && Array.isArray(obj?.properties)) {
-    allGroups.push(...obj.properties);
+    allGroups.push(...(obj.properties as any));
   }
 
-  // Käi kõik grupid läbi, lisa valikusse ja püüa name/type tuletada
-  const rawNames: Array<{ group: string; name: string; value: any }> = [];
+  // toores nimeloetelu GUIDi heuristikaks
+  const rawNames: Array<{ group: string; name: string; value: unknown }> = [];
   for (const set of allGroups) {
     const g = set?.name || "Group";
     for (const p of set?.properties ?? []) {
-      rawNames.push({ group: g, name: p?.name || "Prop", value: p?.value });
-      push(g, p?.name || "Prop", p?.value);
+      const nm = (p as any)?.name ?? "Prop";
+      const vv = (p as any)?.value;
+      rawNames.push({ group: g, name: nm, value: vv });
+      push(g, nm, vv);
 
-      if (!out.Name && /^(name|object[_\s]?name)$/i.test(p?.name || "")) {
-        out.Name = String(p?.value ?? "");
+      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(nm))) {
+        out.Name = String(vv ?? "");
       }
-      if (out.Type === "Unknown" && /\btype\b/i.test(p?.name || "")) {
-        out.Type = String(p?.value ?? "Unknown");
+      if (out.Type === "Unknown" && /\btype\b/i.test(String(nm))) {
+        out.Type = String(vv ?? "Unknown");
       }
     }
   }
 
-  // --- GUID: tugev preference IFC -> MS -> muu "guid" nimega omadus ---
+  // --- GUID: eelistus IFC -> MS -> muu "guid" nimega omadus ---
   let guid = "";
-  // 1) eelistused sanitiseeritud võtmete järgi (kui tulid tuttavate nimedega)
   const guidCandidatesSanitized = [
     "Reference_Object.GUID_IFC",
+    "Reference_Object.GUID_(IFC)",
+    "Reference_Object.GUID_(Ifc)",
     "Reference_Object.GUID_MS",
+    "Reference_Object.GUID_(MS)",
     "IFC.GUID",
     "GUID",
     "Reference_Object.Guid",
@@ -100,7 +115,6 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
   for (const k of guidCandidatesSanitized) {
     if (propMap.has(k)) { guid = propMap.get(k)!; break; }
   }
-  // 2) kui ikka tühi, käi toored nimed läbi ja püüa "GUID" väärtus kätte saada
   if (!guid) {
     let ifcFirst = "";
     let anyGuid = "";
@@ -143,7 +157,7 @@ async function getProjectName(api: any): Promise<string> {
       const p = await api.projects.getCurrent();
       if (p?.name) return String(p.name);
     }
-  } catch {/* ignore */}
+  } catch { /* ignore */ }
   return "";
 }
 
@@ -152,18 +166,21 @@ export default function AssemblyExporter({ api }: Props) {
   const [tab, setTab] = useState<Tab>("export");
 
   // settings
-  const [scriptUrl, setScriptUrl] = useState(localStorage.getItem("sheet_webapp") || "");
-  const [secret, setSecret] = useState(localStorage.getItem("sheet_secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU");
+  const [scriptUrl, setScriptUrl] = useState<string>(localStorage.getItem("sheet_webapp") || "");
+  const [secret, setSecret] = useState<string>(localStorage.getItem("sheet_secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU");
 
   // export state
   const [rows, setRows] = useState<Row[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set(JSON.parse(localStorage.getItem("fieldSel") || "[]")));
-  const [filter, setFilter] = useState("");
-  const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set<string>(JSON.parse(localStorage.getItem("fieldSel") || "[]")));
+  const [filter, setFilter] = useState<string>("");
+  const [msg, setMsg] = useState<string>("");
+  const [busy, setBusy] = useState<boolean>(false);
 
-  const allKeys = useMemo(() => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(), [rows]);
-  const grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
+  const allKeys: string[] = useMemo(
+    () => Array.from(new Set(rows.flatMap((r: Row) => Object.keys(r)))).sort(),
+    [rows]
+  );
+  const grouped: Grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
 
   useEffect(() => {
     localStorage.setItem("fieldSel", JSON.stringify(Array.from(selected)));
@@ -172,14 +189,14 @@ export default function AssemblyExporter({ api }: Props) {
   const matches = (k: string) => !filter || k.toLowerCase().includes(filter.toLowerCase());
 
   function toggle(k: string) {
-    setSelected(s => {
+    setSelected((s) => {
       const n = new Set(s);
       n.has(k) ? n.delete(k) : n.add(k);
       return n;
     });
   }
   function toggleGroup(keys: string[], on: boolean) {
-    setSelected(s => {
+    setSelected((s) => {
       const n = new Set(s);
       for (const k of keys) on ? n.add(k) : n.delete(k);
       return n;
@@ -188,7 +205,7 @@ export default function AssemblyExporter({ api }: Props) {
   function selectAll(on: boolean) {
     setSelected(() => {
       if (!on) return new Set();
-      const base = allKeys.filter(k => !(MANDATORY_COLS as readonly string[]).includes(k));
+      const base = allKeys.filter((k) => !(MANDATORY_COLS as readonly string[]).includes(k));
       return new Set(base);
     });
   }
@@ -197,7 +214,7 @@ export default function AssemblyExporter({ api }: Props) {
     try {
       setBusy(true);
       setMsg("Loen valikut…");
-      const selection = await (api as any).viewer.getSelection();
+      const selection: any[] = await (api as any).viewer.getSelection();
       if (!selection?.length) { setMsg("Vali mudelist objektid."); setRows([]); return; }
 
       const model = selection[0];
@@ -206,11 +223,11 @@ export default function AssemblyExporter({ api }: Props) {
 
       const projectName = await getProjectName(api);
 
-      const props = await (api as any).viewer.getObjectProperties(model.modelId, ids);
-      const flat = props.map((o: any) => flattenProps(o, model.modelId, projectName));
+      const props: any[] = await (api as any).viewer.getObjectProperties(model.modelId, ids);
+      const flat: Row[] = props.map((o: any) => flattenProps(o, model.modelId, projectName));
 
       setRows(flat);
-      setMsg(`Leidsin ${flat.length} objekti. Võtmeid kokku ${Array.from(new Set(flat.flatMap(Object.keys))).length}.`);
+      setMsg(`Leidsin ${flat.length} objekti. Võtmeid kokku ${Array.from(new Set(flat.flatMap((r) => Object.keys(r)))).length}.`);
     } catch (e: any) {
       setMsg(`Viga: ${e?.message || e}`);
     } finally {
@@ -228,13 +245,13 @@ export default function AssemblyExporter({ api }: Props) {
       localStorage.setItem("sheet_webapp", scriptUrl);
       localStorage.setItem("sheet_secret", secret);
 
-      const pick = (r: Row) => {
+      const pick = (r: Row): Row => {
         const out: Row = {};
         for (const k of MANDATORY_COLS) out[k] = r[k] ?? "";
         for (const k of selected) if (k in r) out[k] = r[k];
         return out;
       };
-      const payload = rows.map(pick);
+      const payload: Row[] = rows.map(pick);
 
       const res = await fetch(scriptUrl, {
         method: "POST",
@@ -347,38 +364,40 @@ export default function AssemblyExporter({ api }: Props) {
               Always included: {Array.from(MANDATORY_COLS).join(", ")}. Selected: {selected.size}.
             </div>
 
+            {/* Väikese sisemise kerimisega list */}
             <div style={c.list}>
               {!rows.length ? (
                 <div style={c.small}>Click “Discover fields”.</div>
               ) : (
-                Object.entries(grouped).map(([groupName, keys]) => {
-                  const keysShown = keys.filter(matches);
-                  if (!keysShown.length) return null;
-                  const allOn = keys.every(k => selected.has(k));
-                  const noneOn = keys.every(k => !selected.has(k));
-                  return (
-                    <div key={groupName} style={c.group}>
-                      <div style={c.groupHeader}>
-                        <b>{groupName}</b>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button style={c.mini} onClick={() => toggleGroup(keys, true)}>select</button>
-                          <button style={c.mini} onClick={() => toggleGroup(keys, false)}>clear</button>
+                (Object.entries(grouped) as [string, string[]][]) // <-- TÄHTIS: tipita entries!
+                  .map(([groupName, keys]) => {
+                    const keysShown = keys.filter(matches);
+                    if (!keysShown.length) return null;
+                    const allOn = keys.every((k: string) => selected.has(k));
+                    const noneOn = keys.every((k: string) => !selected.has(k));
+                    return (
+                      <div key={groupName} style={c.group}>
+                        <div style={c.groupHeader}>
+                          <b>{groupName}</b>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button style={c.mini} onClick={() => toggleGroup(keys, true)}>select</button>
+                            <button style={c.mini} onClick={() => toggleGroup(keys, false)}>clear</button>
+                          </div>
+                          <span style={c.faint}>
+                            {allOn ? "all" : noneOn ? "none" : "partial"}
+                          </span>
                         </div>
-                        <span style={c.faint}>
-                          {allOn ? "all" : noneOn ? "none" : "partial"}
-                        </span>
+                        <div style={c.grid}>
+                          {keysShown.map((k: string) => (
+                            <label key={k} style={c.checkRow} title={k}>
+                              <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(k)} />
+                              <span style={c.ellipsis}>{k}</span>
+                            </label>
+                          ))}
+                        </div>
                       </div>
-                      <div style={c.grid}>
-                        {keysShown.map(k => (
-                          <label key={k} style={c.checkRow} title={k}>
-                            <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(k)} />
-                            <span style={c.ellipsis}>{k}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })
+                    );
+                  })
               )}
             </div>
 
@@ -392,45 +411,12 @@ export default function AssemblyExporter({ api }: Props) {
 
 /* ----------------- Minimal, compact styles ----------------- */
 const styles: Record<string, React.CSSProperties> = {
-  shell: {
-    height: "100vh",
-    display: "flex",
-    flexDirection: "column",
-    background: "#fff",
-    color: "#111",
-    fontFamily: "Inter, system-ui, Arial, sans-serif",
-    fontSize: 13,
-    lineHeight: 1.25,
-  },
-  topbar: {
-    display: "flex",
-    gap: 2,
-    background: "#0a3a67",
-    padding: "8px 10px",
-    position: "sticky",
-    top: 0,
-    zIndex: 2,
-  },
-  tab: {
-    all: "unset" as any,
-    color: "rgba(255,255,255,.85)",
-    padding: "6px 10px",
-    borderRadius: 6,
-    cursor: "pointer",
-  },
-  tabActive: {
-    background: "rgba(255,255,255,.14)",
-    color: "#fff",
-    fontWeight: 600,
-  },
-  page: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    padding: 10,
-    gap: 10,
-    minHeight: 0,
-  },
+  shell: { height: "100vh", display: "flex", flexDirection: "column", background: "#fff", color: "#111",
+    fontFamily: "Inter, system-ui, Arial, sans-serif", fontSize: 13, lineHeight: 1.25 },
+  topbar: { display: "flex", gap: 2, background: "#0a3a67", padding: "8px 10px", position: "sticky", top: 0, zIndex: 2 },
+  tab: { all: "unset" as any, color: "rgba(255,255,255,.85)", padding: "6px 10px", borderRadius: 6, cursor: "pointer" },
+  tabActive: { background: "rgba(255,255,255,.14)", color: "#fff", fontWeight: 600 },
+  page: { flex: 1, display: "flex", flexDirection: "column", padding: 10, gap: 10, minHeight: 0 },
   section: { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 },
   row: { display: "flex", alignItems: "center", gap: 8 },
   label: { width: 160, opacity: 0.8 },
@@ -438,20 +424,10 @@ const styles: Record<string, React.CSSProperties> = {
   controls: { display: "flex", alignItems: "center", gap: 6 },
   btn: { padding: "6px 10px", borderRadius: 8, border: "1px solid #cfd6df", background: "#f6f8fb", cursor: "pointer" },
   btnGhost: { padding: "6px 10px", borderRadius: 8, border: "1px solid #d7dde6", background: "#fff", cursor: "pointer" },
-  btnPrimary: {
-    padding: "6px 12px",
-    borderRadius: 8,
-    border: "1px solid #0a3a67",
-    background: "#0a3a67",
-    color: "#fff",
-    cursor: "pointer",
-    marginLeft: "auto",
-  },
+  btnPrimary: { padding: "6px 12px", borderRadius: 8, border: "1px solid #0a3a67", background: "#0a3a67",
+    color: "#fff", cursor: "pointer", marginLeft: "auto" },
   meta: { fontSize: 12, opacity: 0.75 },
-  list: {
-    flex: 1, minHeight: 0, overflow: "auto",
-    border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc",
-  },
+  list: { flex: 1, minHeight: 0, overflow: "auto", border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc" },
   group: { marginBottom: 8, paddingBottom: 6, borderBottom: "1px dashed #e5e9f0" },
   groupHeader: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
   mini: { padding: "2px 6px", borderRadius: 6, border: "1px solid #d7dde6", background: "#fff", fontSize: 12, cursor: "pointer" },
