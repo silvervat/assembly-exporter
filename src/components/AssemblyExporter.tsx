@@ -382,7 +382,7 @@ export default function AssemblyExporter({ api }: Props) {
     { current: 0, total: 0 }
   );
 
-  const [lastSelection, setLastSelection] = useState
+  const [lastSelection, setLastSelection] = useState<
     Array<{ modelId: string; ids: number[] }>
   >([]);
 
@@ -837,7 +837,8 @@ export default function AssemblyExporter({ api }: Props) {
               >
                 Save
               </button>
-              <button style={c.btnGhost}
+              <button
+                style={c.btnGhost}
                 onClick={() => {
                   localStorage.removeItem("assemblyExporterSettings");
                   updateSettings({
