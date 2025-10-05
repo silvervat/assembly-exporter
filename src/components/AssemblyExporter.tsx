@@ -28,7 +28,8 @@ const FORCE_TEXT_KEYS = new Set<string>([
 ]);
 
 const DEBOUNCE_MS = 300;
-const HIGHLIGHT_DURATION_MS = 2000; // 2 sekundit
+const HIGHLIGHT_DURATION_MS = 2000;
+const MESSAGE_DURATION_MS = 3000; // 3 sekundit
 
 /* =========================================================
    SETTINGS
@@ -181,7 +182,6 @@ async function flattenProps(
     out[key] = s;
   };
   
-  // Handle PropertySet[] structure from getObjectProperties
   if (Array.isArray(obj?.properties)) {
     obj.properties.forEach((propSet: any) => {
       const setName = propSet?.name || "Unknown";
@@ -196,18 +196,15 @@ async function flattenProps(
       }
     });
   } else if (typeof obj?.properties === "object" && obj.properties !== null) {
-    // Fallback: flat object
     Object.entries(obj.properties).forEach(([key, val]) => {
       push("Properties", key, val);
     });
   }
   
-  // Process top-level object properties
   if (obj?.id) out.ObjectId = String(obj.id);
   if (obj?.name) out.Name = String(obj.name);
   if (obj?.type) out.Type = String(obj.type);
   
-  // Find BLOCK
   for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
@@ -219,7 +216,6 @@ async function flattenProps(
     }
   }
   
-  // Find GUIDs
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
@@ -414,6 +410,28 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }, [allKeys, columnOrder]);
   
+  // ✅ AUTO-CLEAR MESSAGES
+  useEffect(() => {
+    if (discoverMsg) {
+      const timer = setTimeout(() => setDiscoverMsg(""), MESSAGE_DURATION_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [discoverMsg]);
+  
+  useEffect(() => {
+    if (exportMsg) {
+      const timer = setTimeout(() => setExportMsg(""), MESSAGE_DURATION_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [exportMsg]);
+  
+  useEffect(() => {
+    if (searchMsg) {
+      const timer = setTimeout(() => setSearchMsg(""), MESSAGE_DURATION_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [searchMsg]);
+  
   const matches = (k: string) => filteredKeysSet.has(k);
   
   function toggle(k: string) {
@@ -494,7 +512,6 @@ export default function AssemblyExporter({ api }: Props) {
         
         let fullObjects = objects;
         try {
-          // ✅ GET FULL PROPERTIES
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
           
           fullObjects = objects.map((obj: any, idx: number) => ({
@@ -608,6 +625,19 @@ export default function AssemblyExporter({ api }: Props) {
               }
               if (matchValue) break;
             }
+          } else {
+            // ✅ DYNAMIC SEARCH - otsi kõigi avastatud väljade järgi
+            const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
+            for (const set of props) {
+              for (const p of set?.properties ?? []) {
+                const propKey = `${set.name}.${p.name}`;
+                if (propKey === searchField) {
+                  matchValue = String(p?.value || "").trim().toLowerCase();
+                  break;
+                }
+              }
+              if (matchValue) break;
+            }
           }
           
           if (matchValue && searchValues.has(matchValue)) {
@@ -671,7 +701,6 @@ export default function AssemblyExporter({ api }: Props) {
     newOrder.splice(to, 0, moved);
     setColumnOrder(newOrder);
     
-    // ✅ HIGHLIGHT EFFECT
     setHighlightedColumn(moved);
     setTimeout(() => setHighlightedColumn(null), HIGHLIGHT_DURATION_MS);
   }
@@ -910,6 +939,10 @@ export default function AssemblyExporter({ api }: Props) {
                 <option value="GUID_IFC">IFC GUID</option>
                 <option value="GUID_MS">MS/Tekla GUID</option>
                 <option value="Name">Nimi</option>
+                {allKeys.length > 0 && <option disabled>─────────</option>}
+                {allKeys.filter(k => !['GUID', 'GUID_IFC', 'GUID_MS', 'Name', 'Type', 'BLOCK', 'Project', 'ModelId', 'FileName', 'ObjectId'].includes(k)).map(k => (
+                  <option key={k} value={k}>{k}</option>
+                ))}
               </select>
             </div>
             <textarea
@@ -944,7 +977,7 @@ export default function AssemblyExporter({ api }: Props) {
               placeholder="Filter veerge…"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              style={c.input}
+              style={c.inputFilter}
             />
             <div style={c.controls}>
               <button style={c.btnGhost} onClick={() => selectAll(true)} disabled={!rows.length}>Vali kõik</button>
@@ -980,7 +1013,7 @@ export default function AssemblyExporter({ api }: Props) {
                 })
               )}
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", position: "relative", zIndex: 10 }}>
+            <div style={c.presetsRow}>
               <span style={{ alignSelf: "center", opacity: 0.7 }}>Presets:</span>
               <button style={c.btnGhost} onClick={presetRecommended} disabled={!rows.length}>Recommended</button>
               <button style={c.btnGhost} onClick={presetTekla} disabled={!rows.length}>Tekla</button>
@@ -1001,7 +1034,9 @@ export default function AssemblyExporter({ api }: Props) {
                 <option value="csv">CSV (download)</option>
               </select>
             </div>
-            <div style={c.small}>Veergude järjestus (lohista ümber):</div>
+            <div style={c.helpBox}>
+              <strong>💡 Veergude järjestus:</strong> Kasuta ↑ ↓ nuppe ridade liigutamiseks
+            </div>
             <div style={c.columnList}>
               {columnOrder.filter(k => selected.has(k) && allKeys.includes(k)).map((col, idx, arr) => (
                 <div 
@@ -1014,10 +1049,10 @@ export default function AssemblyExporter({ api }: Props) {
                   <span style={c.ellipsis}>{col}</span>
                   <div style={{ display: "flex", gap: 4 }}>
                     {idx > 0 && (
-                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx - 1)}>↑</button>
+                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx - 1)} title="Liiguta üles">↑</button>
                     )}
                     {idx < arr.length - 1 && (
-                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx + 1)}>↓</button>
+                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx + 1)} title="Liiguta alla">↓</button>
                     )}
                   </div>
                 </div>
@@ -1182,7 +1217,7 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              <b>Assembly Exporter v4.3</b> – Trimble Connect → Google Sheet + Excel<br />
+              <b>Assembly Exporter v4.4</b> – Trimble Connect → Google Sheet + Excel<br />
               • GUID otsing ja värvimine (IFC + MS/Tekla)<br />
               • Assembly mark otsing<br />
               • Kohandatav export (Clipboard/Excel/CSV)<br />
@@ -1192,6 +1227,8 @@ export default function AssemblyExporter({ api }: Props) {
               • Property Set Libraries hankimine<br />
               • Täielik ObjectProperties tugi (getObjectProperties)<br />
               • Drag & drop highlight efekt<br />
+              • Auto-clear success messages (3s)<br />
+              • Dynamic search fields dropdown<br />
               <br />
               Loodud: <b>Silver Vatsel</b> | Consiva OÜ
             </div>
@@ -1202,9 +1239,6 @@ export default function AssemblyExporter({ api }: Props) {
   );
 }
 
-/* =========================================================
-   STYLES WITH HIGHLIGHT ANIMATION
-   ========================================================= */
 const styles: Record<string, CSSProperties> = {
   shell: {
     height: "100vh",
@@ -1257,6 +1291,15 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 8, 
     outline: "none" 
   },
+  inputFilter: {
+    width: "100%",
+    maxHeight: "150px",
+    padding: "6px 8px",
+    border: "1px solid #cfd6df",
+    borderRadius: 8,
+    outline: "none",
+    resize: "vertical" as any,
+  },
   textarea: { 
     width: "100%", 
     padding: "8px", 
@@ -1273,6 +1316,14 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     position: "relative",
     zIndex: 10,
+  },
+  presetsRow: {
+    display: "flex",
+    gap: 6,
+    flexWrap: "wrap",
+    position: "relative",
+    zIndex: 50,
+    marginTop: 4,
   },
   btn: { 
     padding: "6px 10px", 
@@ -1362,6 +1413,14 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 6,
     position: "relative",
     zIndex: 1,
+  },
+  helpBox: {
+    fontSize: 12,
+    padding: "8px 10px",
+    background: "#e7f3ff",
+    border: "1px solid #90caf9",
+    borderRadius: 6,
+    color: "#0d47a1",
   },
   columnList: {
     maxHeight: 300,
