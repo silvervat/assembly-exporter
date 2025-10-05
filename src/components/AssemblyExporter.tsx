@@ -299,6 +299,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [searchFieldFilter, setSearchFieldFilter] = useState("Assembly Mark (BLOCK)");
   const [isSearchFieldDropdownOpen, setIsSearchFieldDropdownOpen] = useState(false);
+  const [searchScope, setSearchScope] = useState<"available" | "visible" | "selected">("available"); // Uus state filtreerimiseks
   useEffect(() => {
     const t = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(t);
@@ -564,7 +565,22 @@ export default function AssemblyExporter({ api }: Props) {
       }
     
       const viewer = api?.viewer;
-      const mos = await viewer?.getObjects?.({ signal: abortController.signal });
+      let mos;
+      if (searchScope === "selected") {
+        mos = await viewer?.getObjects({ selected: true });
+      } else if (searchScope === "visible") {
+        const allMos = await viewer?.getObjects();
+        const visibleMos = [];
+        for (const mo of allMos || []) {
+          const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter(n => Number.isFinite(n));
+          const states = await viewer.getObjectState(mo.modelId, objectRuntimeIds);
+          const visibleObjects = mo.objects.filter((_, idx) => states[idx]?.visible !== false);
+          if (visibleObjects.length) visibleMos.push({ ...mo, objects: visibleObjects });
+        }
+        mos = visibleMos;
+      } else {
+        mos = await viewer?.getObjects();
+      }
     
       if (!Array.isArray(mos)) {
         if (abortController.signal.aborted) return;
@@ -587,7 +603,7 @@ export default function AssemblyExporter({ api }: Props) {
       
         let fullProperties: any[] = [];
         try {
-          fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { signal: abortController.signal });
+          fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
         } catch (e) {
           if (abortController.signal.aborted) return;
           console.warn(`getObjectProperties failed for model ${modelId}:`, e);
@@ -1145,6 +1161,19 @@ export default function AssemblyExporter({ api }: Props) {
                   </div>
                 )}
               </div>
+            </div>
+          
+            <div style={c.row}>
+              <label style={c.label}>Otsi ulatus:</label>
+              <select
+                value={searchScope}
+                onChange={(e) => setSearchScope(e.target.value as "available" | "visible" | "selected")}
+                style={c.input}
+              >
+                <option value="available">Kõik saadaval</option>
+                <option value="visible">Nähtaval</option>
+                <option value="selected">Valitud</option>
+              </select>
             </div>
           
             <textarea
