@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceAPI } from "trimble-connect-workspace-api";
 
-/** Alati kaasas + lukus järjekorras */
+/** Locked column order (after Timestamp) */
 const LOCKED_ORDER = [
   "GUID",
   "GUID_IFC",
@@ -20,12 +20,12 @@ type Props = { api: WorkspaceAPI };
 type Tab = "export" | "settings" | "about";
 type Grouped = Record<string, string[]>;
 
-/* ----------------- Utils ----------------- */
+/* ----------------- Utilities ----------------- */
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
 }
 
-/** Gruppide järjestus – “DATA” ja “Reference_Object” ettepoole */
+/** Put DATA and Reference_Object groups first, Tekla_Assembly next */
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
@@ -34,7 +34,7 @@ function groupSortKey(group: string) {
   return 10;
 }
 
-/** rühmitame väljad (LOCKED_ORDER ei peitu ühegi punkti sees ja jäävad “Other” alla) */
+/** Group keys by prefix before first dot (fallback "Other") */
 function groupKeys(keys: string[]): Grouped {
   const g: Grouped = {};
   for (const k of keys) {
@@ -49,11 +49,11 @@ function groupKeys(keys: string[]): Grouped {
   return g;
 }
 
-/** Trimble PropertySet kuju (docs: PropertySet) */
+/** Trimble PropertySet (docs: PropertySet) */
 type TCProperty = { name: string; value: unknown };
 type TCPropertySet = { name: string; properties: TCProperty[] };
 
-/** Koonda PropertySet’id nii PS kui PSL (ja jäta fallbackid alles ühilduvuseks) */
+/** Collect Property Sets from both PS and PSL (keep fallbacks for compatibility) */
 function collectAllPropertySets(obj: any): TCPropertySet[] {
   const official: TCPropertySet[] = [
     ...(Array.isArray(obj?.propertySets) ? obj.propertySets : []),
@@ -70,11 +70,10 @@ function collectAllPropertySets(obj: any): TCPropertySet[] {
   );
 }
 
-/** kas string on “puhas number” (vältides nt 77/J-K) */
+/** Only normalise pure numeric strings (not 77/J-K etc) */
 function isNumericString(s: string) {
   return /^[-+]?(\d+|\d*\.\d+)(e[-+]?\d+)?$/i.test(s.trim());
 }
-/** normaliseeri arv: 350.00000000000006 -> 350 ; muidu kuni 4 kohta (trimmitud) */
 function normaliseNumberString(s: string) {
   const n = Number(s);
   if (!Number.isFinite(n)) return s;
@@ -83,7 +82,31 @@ function normaliseNumberString(s: string) {
   return String(parseFloat(n.toFixed(4)));
 }
 
-/** tasanda omadused + leia GUIDid; lisa FileName, BLOCK jms */
+/** Deep-scan entire object to find GUIDs / FileName / CommonType even if outside PS/PSL */
+function deepScanForGuidAndMeta(
+  node: any,
+  path: string[] = [],
+  acc: { ifc?: string; ms?: string; any?: string; file?: string; commonType?: string } = {}
+) {
+  if (!node || typeof node !== "object") return acc;
+  for (const [rawK, v] of Object.entries(node)) {
+    const k = String(rawK);
+
+    if (/guid/i.test(k)) {
+      const val = v == null ? "" : String(v);
+      if (/\bifc\b/i.test(k) && !acc.ifc) acc.ifc = val;
+      else if (/\bms\b/i.test(k) && !acc.ms) acc.ms = val;
+      else if (!acc.any) acc.any = val;
+    }
+    if (!acc.file && /(file\s*name|filename)/i.test(k)) acc.file = v == null ? "" : String(v);
+    if (!acc.commonType && /(common.*type)/i.test(k)) acc.commonType = v == null ? "" : String(v);
+
+    if (v && typeof v === "object") deepScanForGuidAndMeta(v, [...path, k], acc);
+  }
+  return acc;
+}
+
+/** Flatten to row + heuristics for Name/Type/BLOCK/FileName/GUIDs */
 function flattenProps(obj: any, modelId: string, projectName: string): Row {
   const out: Row = {
     GUID: "",
@@ -119,13 +142,12 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
       rawNames.push({ group: g, name: nm, value: vv });
       push(g, nm, vv);
 
-      // Name/Type heuristika
       if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(nm))) out.Name = String(vv ?? "");
       if (out.Type === "Unknown" && /\btype\b/i.test(String(nm))) out.Type = String(vv ?? "Unknown");
     }
   }
 
-  // --- FileName (“Reference Object” → “File Name”)
+  // File name
   const fileKeyCandidates = [
     "Reference_Object.File_Name",
     "Reference_Object.FileName",
@@ -135,7 +157,6 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     if (propMap.has(k)) { out.FileName = propMap.get(k)!; break; }
   }
   if (!out.FileName) {
-    // kui leiad toor-nimest
     for (const r of rawNames) {
       if (/^file\s*name$/i.test(String(r.name || "")) && /reference/i.test(String(r.group || ""))) {
         out.FileName = r.value == null ? "" : String(r.value);
@@ -144,7 +165,7 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     }
   }
 
-  // --- BLOCK (nt “DATA.BLOCK” vms alias)
+  // BLOCK
   const blockCandidates = [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
@@ -153,7 +174,7 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
   ];
   for (const k of blockCandidates) { if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; } }
 
-  // --- GUIDid (IFC ja MS eraldi, lisaks peamine GUID eelistusega IFC > MS > muu “guid”)
+  // GUIDs from property sets
   const candsSan = [
     { t: "IFC", k: "Reference_Object.GUID_IFC" },
     { t: "IFC", k: "Reference_Object.GUID_(IFC)" },
@@ -182,11 +203,9 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
       }
     }
   }
-
   out.GUID_IFC = guidIfc;
   out.GUID_MS  = guidMs;
   out.GUID     = guidIfc || guidMs || (() => {
-    // viimane fallback – esimene “guid” mis iganes rühmast
     for (const r of rawNames) {
       const n = String(r.name || "");
       if (/guid/i.test(n)) return r.value == null ? "" : String(r.value);
@@ -194,10 +213,21 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     return "";
   })();
 
+  // Fallback deep-scan if still missing
+  if (!out.GUID || !out.GUID_IFC || !out.GUID_MS || !out.FileName) {
+    const found = deepScanForGuidAndMeta(obj);
+    if (!out.GUID_IFC && found.ifc) out.GUID_IFC = found.ifc;
+    if (!out.GUID_MS  && found.ms)  out.GUID_MS  = found.ms;
+    if (!out.GUID     && (found.ifc || found.ms || found.any)) {
+      out.GUID = found.ifc || found.ms || found.any || out.GUID;
+    }
+    if (!out.FileName && found.file) out.FileName = found.file;
+  }
+
   return out;
 }
 
-/** projekti nimi ainult ProjectAPI.getProject() kaudu (nagu soovisid) */
+/** Project name strictly via ProjectAPI.getProject() */
 async function getProjectName(api: any): Promise<string> {
   if (typeof api?.project?.getProject === "function") {
     const proj = await api.project.getProject();
@@ -218,10 +248,14 @@ export default function AssemblyExporter({ api }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set<string>(JSON.parse(localStorage.getItem("fieldSel") || "[]")));
   const [filter, setFilter] = useState<string>("");
-  const [msg, setMsg] = useState<string>("");
+
+  // messages
+  const [exportMsg, setExportMsg] = useState<string>("");
+  const [settingsMsg, setSettingsMsg] = useState<string>("");
+
   const [busy, setBusy] = useState<boolean>(false);
 
-  // viimane edukalt saadetud valik – kasutame tumepunaseks värvimiseks
+  // last selection (for colorizing)
   const [lastSelection, setLastSelection] = useState<{ modelId: string; ids: number[] }[]>([]);
 
   const allKeys: string[] = useMemo(
@@ -241,7 +275,6 @@ export default function AssemblyExporter({ api }: Props) {
   }, [selected]);
 
   const matches = (k: string) => !filter || k.toLowerCase().includes(filter.toLowerCase());
-
   function toggle(k: string) {
     setSelected((s) => {
       const n = new Set(s);
@@ -263,9 +296,8 @@ export default function AssemblyExporter({ api }: Props) {
     });
   }
 
-  // ----- Presetid -----
+  // Presets (shown below the list)
   function presetRecommended() {
-    // “Soovitused”: GUIDid, Project, FileName, Common Type, BLOCK, Name/Type
     const wanted = new Set<string>([
       ...LOCKED_ORDER,
       "Reference_Object.Common_Type",
@@ -286,13 +318,13 @@ export default function AssemblyExporter({ api }: Props) {
     setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
   }
 
-  // ----- Avasta valik (KÕIK mudelid) -----
+  // Discover (all models)
   async function discover() {
     try {
       setBusy(true);
-      setMsg("Loen valikut…");
+      setExportMsg("Reading current selection…");
       const selection: any[] = await (api as any).viewer.getSelection();
-      if (!selection?.length) { setMsg("Vali mudelist objektid."); setRows([]); return; }
+      if (!selection?.length) { setExportMsg("Select objects in the models first."); setRows([]); return; }
 
       const projectName = await getProjectName(api);
 
@@ -312,22 +344,20 @@ export default function AssemblyExporter({ api }: Props) {
 
       setRows(collectedRows);
       setLastSelection(selForColor);
-      setMsg(`Leidsin ${collectedRows.length} objekti. Võtmeid kokku ${Array.from(new Set(collectedRows.flatMap((r) => Object.keys(r)))).length}.`);
+      setExportMsg(`Found ${collectedRows.length} objects. Total keys: ${Array.from(new Set(collectedRows.flatMap((r) => Object.keys(r)))).length}.`);
     } catch (e: any) {
-      setMsg(`Viga: ${e?.message || e}`);
+      setExportMsg(`Error: ${e?.message || e}`);
     } finally {
       setBusy(false);
     }
   }
 
-  // ----- Saatmine -----
+  // Row ordering (locked + selected alphabetically)
   function orderRowByLockedAndAlpha(r: Row, chosen: Set<string>): Row {
     const o: Row = {};
-    // lukus järjestus
     for (const k of LOCKED_ORDER) {
       if (k in r) (o as any)[k] = r[k];
     }
-    // ülejäänud valitud alfabeetiliselt
     const rest = Array.from(chosen).filter((k) => !(LOCKED_ORDER as readonly string[]).includes(k as LockedKey));
     rest.sort((a, b) => a.localeCompare(b));
     for (const k of rest) if (k in r) (o as any)[k] = r[k];
@@ -335,10 +365,10 @@ export default function AssemblyExporter({ api }: Props) {
   }
 
   async function send() {
-    if (!scriptUrl || !secret) { setMsg("Täida Settings all URL ja Secret."); setTab("settings"); return; }
-    if (!rows.length) { setMsg("Enne vajuta “Discover fields”."); setTab("export"); return; }
+    if (!scriptUrl || !secret) { setTab("settings"); setSettingsMsg("Please fill Script URL and Shared Secret."); return; }
+    if (!rows.length) { setTab("export"); setExportMsg("Click “Discover fields” first."); return; }
 
-    // hoiatame kui mõnel real pole GUID – ja lisame __warnings välja
+    // Add __warnings if GUID is missing
     const rowsWithWarn = rows.map((r) => {
       const warn: string[] = [];
       if (!r.GUID) warn.push("Missing GUID");
@@ -347,7 +377,7 @@ export default function AssemblyExporter({ api }: Props) {
       return copy;
     });
 
-    // normaliseeri kõik numeric-stringid (v.a GUID/Project/Name/Type/…)
+    // Normalise numeric-only strings (skip these keys)
     const numericSkip = new Set<string>(["GUID", "GUID_IFC", "GUID_MS", "Project", "Name", "Type", "FileName"]);
     const cleaned = rowsWithWarn.map((r) => {
       const c: Row = {};
@@ -361,19 +391,17 @@ export default function AssemblyExporter({ api }: Props) {
       return c;
     });
 
-    // kasutame kasutaja valikuid + lukus järjekorda
+    // Build payload with chosen keys and locked order
     const chosen = new Set<string>([
       ...LOCKED_ORDER,
       ...Array.from(selected),
       "__warnings",
     ].filter((k) => allKeys.includes(k) || LOCKED_ORDER.includes(k as any) || k === "__warnings"));
 
-    // ehitame objektid kindla võtmete lisamisjärjekorraga
     const payload = cleaned.map((r) => orderRowByLockedAndAlpha(r, chosen));
 
-    // Kui leidus puuduvaid GUIDe, kuvame hoiatuse, aga saadame siiski (__warnings väljadega)
     const missing = cleaned.filter((r) => !r.GUID).length;
-    if (missing) setMsg(`⚠️ ${missing} rida ilma GUIDita – lisasin __warnings veeru ja saadan edasi.`);
+    if (missing) setExportMsg(`⚠️ ${missing} row(s) without GUID – added __warnings and will send anyway.`);
 
     try {
       setBusy(true);
@@ -386,42 +414,70 @@ export default function AssemblyExporter({ api }: Props) {
         body: JSON.stringify({ secret, rows: payload }),
       });
       const data = await res.json();
+      setTab("export"); // show message on EXPORT
       if (data?.ok) {
-        setMsg(`✅ Edukalt lisatud ${data.inserted} rida Google Sheeti! Märgistan valiku tumepunaseks…`);
-        // märgista tumepunaseks
+        setExportMsg(`✅ Added ${payload.length} row(s) to Google Sheet. Coloring selection dark red…`);
         await colorLastSelectionDarkRed();
       } else {
-        setMsg(`❌ Viga: ${data?.error || "tundmatu"}`);
+        setExportMsg(`❌ Error: ${data?.error || "unknown"}`);
       }
     } catch (e: any) {
-      setMsg(`❌ Viga: ${e?.message || e}`);
+      setTab("export");
+      setExportMsg(`❌ Error: ${e?.message || e}`);
     } finally {
       setBusy(false);
     }
   }
 
+  // Colorize selection (proper state shape; fallbacks for older APIs)
   async function colorLastSelectionDarkRed() {
     try {
       const viewer: any = (api as any).viewer;
-      for (const blk of lastSelection) {
-        // Kasutan “any”, et vältida tüübi murde – tegelik signatuur vt ViewerAPI#setObjectState
-        await viewer?.setObjectState?.({
-          modelId: blk.modelId,
-          objectRuntimeIds: blk.ids,
-          color: { r: 140, g: 0, b: 0 }, // tumepunane
-          opacity: 255,
-        });
+
+      let blocks = lastSelection;
+      if (!blocks?.length && typeof viewer?.getSelection === "function") {
+        const sel: any[] = await viewer.getSelection();
+        blocks = (sel || [])
+          .filter(Boolean)
+          .map(m => ({ modelId: String(m.modelId), ids: (m.objectRuntimeIds || []).slice() }))
+          .filter(b => b.ids.length);
       }
-    } catch { /* ignore */ }
+      if (!blocks?.length) return;
+
+      const color = { r: 140, g: 0, b: 0 };
+      const statePayload = (b: {modelId: string; ids: number[]}) => ({
+        modelId: b.modelId,
+        objectRuntimeIds: b.ids,
+        state: { color, opacity: 255 },   // correct API shape
+      });
+
+      for (const b of blocks) {
+        if (typeof viewer?.setObjectState === "function") {
+          await viewer.setObjectState(statePayload(b));
+        } else if (typeof viewer?.applyObjectStates === "function") {
+          await viewer.applyObjectStates([statePayload(b)]);
+        } else if (typeof viewer?.colorizeObjects === "function") {
+          await viewer.colorizeObjects(b.modelId, b.ids, color);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   async function resetState() {
     try {
       const viewer: any = (api as any).viewer;
-      await viewer?.resetObjectState?.();
-      setMsg("Vaate olek taastatud (reset).");
+      if (typeof viewer?.resetObjectState === "function") {
+        await viewer.resetObjectState();
+      } else if (typeof viewer?.clearObjectStates === "function") {
+        await viewer.clearObjectStates();
+      } else if (typeof viewer?.clearColors === "function") {
+        await viewer.clearColors();
+      }
+      setExportMsg("View state reset.");
     } catch (e: any) {
-      setMsg(`Reset ebaõnnestus: ${e?.message || e}`);
+      setExportMsg(`Reset failed: ${e?.message || e}`);
     }
   }
 
@@ -430,7 +486,7 @@ export default function AssemblyExporter({ api }: Props) {
 
   return (
     <div style={c.shell}>
-      {/* Top bar / tabs */}
+      {/* Tabs */}
       <div style={c.topbar}>
         <button style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }} onClick={() => setTab("export")}>
           EXPORT
@@ -470,7 +526,7 @@ export default function AssemblyExporter({ api }: Props) {
                 onClick={() => {
                   localStorage.setItem("sheet_webapp", scriptUrl);
                   localStorage.setItem("sheet_secret", secret);
-                  setMsg("Seaded salvestatud.");
+                  setSettingsMsg("Settings saved.");
                 }}
               >
                 Save
@@ -482,22 +538,23 @@ export default function AssemblyExporter({ api }: Props) {
                   localStorage.removeItem("sheet_secret");
                   setScriptUrl("");
                   setSecret("");
+                  setSettingsMsg("Settings cleared.");
                 }}
               >
                 Clear
               </button>
             </div>
-            {!!msg && <div style={c.note}>{msg}</div>}
+            {!!settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
         )}
 
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              Assembly Exporter – Trimble Connect → Google Sheet. <br />
-              • Multi-model selection • ProjectAPI.getProject() • PSL/“DATA” prioriteet <br />
-              • GUID + GUID_IFC + GUID_MS • numbrite normaliseerimine • tumepunane märgistus + reset <br />
-              • Presetid: Soovitused, Tekla Assembly, IFC Reference • Lukus veerujärjestus.
+              Assembly Exporter – Trimble Connect → Google Sheet.<br />
+              • Multi-model selection • ProjectAPI.getProject() • PSL priority<br />
+              • GUID + GUID_IFC + GUID_MS • Number normalisation<br />
+              • Dark-red colorize & Reset • Presets • Locked column order
             </div>
           </div>
         )}
@@ -514,12 +571,9 @@ export default function AssemblyExporter({ api }: Props) {
               />
               <button style={c.btnGhost} onClick={() => selectAll(true)} disabled={!rows.length}>Select all</button>
               <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>Clear</button>
-              <button style={c.btnGhost} onClick={presetRecommended} disabled={!rows.length}>Soovitused</button>
-              <button style={c.btnGhost} onClick={presetTeklaAssembly} disabled={!rows.length}>Tekla Assembly</button>
-              <button style={c.btnGhost} onClick={presetIFCReference} disabled={!rows.length}>IFC Reference</button>
               <button style={c.btnGhost} onClick={resetState}>Reset state</button>
               <button style={c.btnPrimary} onClick={send} disabled={busy || !rows.length}>
-                {busy ? "Sending…" : "Send to Google Sheet"}
+                {busy ? "Sending…" : `Send to Google Sheet (${rows.length} rows)`}
               </button>
             </div>
 
@@ -527,7 +581,6 @@ export default function AssemblyExporter({ api }: Props) {
               Locked order: {Array.from(LOCKED_ORDER).join(", ")}. Selected: {selected.size}.
             </div>
 
-            {/* Väikese sisemise kerimisega list */}
             <div style={c.list}>
               {!rows.length ? (
                 <div style={c.small}>Click “Discover fields”.</div>
@@ -563,10 +616,21 @@ export default function AssemblyExporter({ api }: Props) {
               )}
             </div>
 
-            {!!msg && <div style={{ ...c.note, marginTop: 6 }}>{msg}</div>}
+            {/* Presets area (below the list) */}
+            <div style={{marginTop:8, display:"flex", gap:6, flexWrap:"wrap"}}>
+              <span style={{alignSelf:"center", opacity:.7}}>Presets:</span>
+              <button style={c.btnGhost} onClick={presetRecommended} disabled={!rows.length}>Recommended</button>
+              <button style={c.btnGhost} onClick={presetTeklaAssembly} disabled={!rows.length}>Tekla Assembly</button>
+              <button style={c.btnGhost} onClick={presetIFCReference} disabled={!rows.length}>IFC Reference</button>
+            </div>
+
+            {!!exportMsg && <div style={{ ...c.note, marginTop: 6 }}>{exportMsg}</div>}
           </div>
         )}
       </div>
+
+      {/* Footer credit */}
+      <div style={c.footer}>created by <b>Silver Vatsel</b> | Consiva OÜ</div>
     </div>
   );
 }
@@ -599,4 +663,5 @@ const styles: Record<string, React.CSSProperties> = {
   small: { fontSize: 12, opacity: 0.8 },
   faint: { fontSize: 12, opacity: 0.55, marginLeft: "auto" },
   note: { fontSize: 12, opacity: 0.9 },
+  footer: { padding: "6px 10px", borderTop: "1px solid #eef2f6", fontSize: 12, color: "#66758c" }
 };
