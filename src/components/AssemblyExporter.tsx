@@ -88,7 +88,7 @@ function sanitizeKey(s: string) {
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
-  if (g === "referenceobject") return 1;
+  if (g === "referenceobject" || g === "reference_object") return 1;
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
@@ -130,7 +130,7 @@ function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
 }
 
 /* =========================================================
-   PROPERTY FLATTENING
+   PROPERTY FLATTENING (WITH DUPLICATE HANDLING)
    ========================================================= */
 async function flattenProps(
   obj: any,
@@ -152,8 +152,19 @@ async function flattenProps(
   };
 
   const propMap = new Map<string, string>();
+  const keyCounts = new Map<string, number>(); // Loe duplikaate
+
   const push = (group: string, name: string, val: unknown) => {
-    const key = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
+    const baseKey = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
+    
+    // Lisa indeks kui duplikaat
+    let key = baseKey;
+    const count = keyCounts.get(baseKey) || 0;
+    if (count > 0) {
+      key = `${baseKey}_${count}`;
+    }
+    keyCounts.set(baseKey, count + 1);
+    
     let v: unknown = val;
     if (Array.isArray(v)) v = v.map(x => (x == null ? "" : String(x))).join(" | ");
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
@@ -174,12 +185,18 @@ async function flattenProps(
     }
   }
 
+  // BLOCK otsing (esmalt kontrollime base key-sid)
   for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
     "BLOCK.BLOCK_2",
     "Tekla_Assembly.AssemblyCast_unit_Mark",
-  ]) if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; }
+  ]) {
+    if (propMap.has(k)) { 
+      out.BLOCK = propMap.get(k)!; 
+      break; 
+    }
+  }
 
   // Otsi GUID-e omadustest
   let guidIfc = "";
@@ -383,7 +400,6 @@ export default function AssemblyExporter({ api }: Props) {
         const { modelId, objects } = selectedWithProps[i];
         setDiscoverMsg(`Töötlen mudelit ${i + 1}/${selectedWithProps.length}…`);
 
-        // Kasuta Promise.all paralleelseks töötluseks
         const flattened = await Promise.all(
           objects.map(o => flattenProps(o, modelId, projectName, nameMap, api))
         );
@@ -445,7 +461,7 @@ export default function AssemblyExporter({ api }: Props) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                if (/assemblycast_unit_mark|block/i.test(String(p?.name))) {
+                if (/assemblycast_unit_mark|^mark$|block/i.test(String(p?.name))) {
                   matchValue = String(p?.value || "").trim().toLowerCase();
                   break;
                 }
@@ -469,7 +485,6 @@ export default function AssemblyExporter({ api }: Props) {
               if (matchValue) break;
             }
 
-            // Fallback: IFC GUID jaoks kasuta convertToObjectIds
             if (!matchValue && searchField === "GUID_IFC") {
               try {
                 const extIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
@@ -675,11 +690,7 @@ export default function AssemblyExporter({ api }: Props) {
             <textarea
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)
-Näiteks:
-2ERP11
-2ERP12
-2ERP13"
+              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;2COL25&#10;2COL26&#10;2COL27"
               style={{ ...c.textarea, height: 200 }}
             />
             <div style={c.controls}>
@@ -769,14 +780,14 @@ Näiteks:
 
             <div style={c.small}>Veergude järjestus (lohista ümber):</div>
             <div style={c.columnList}>
-              {columnOrder.filter(k => selected.has(k) && allKeys.includes(k)).map((col, idx) => (
+              {columnOrder.filter(k => selected.has(k) && allKeys.includes(k)).map((col, idx, arr) => (
                 <div key={col} style={c.columnItem}>
                   <span style={c.ellipsis}>{col}</span>
                   <div style={{ display: "flex", gap: 4 }}>
                     {idx > 0 && (
                       <button style={c.miniBtn} onClick={() => moveColumn(idx, idx - 1)}>↑</button>
                     )}
-                    {idx < columnOrder.filter(k => selected.has(k)).length - 1 && (
+                    {idx < arr.length - 1 && (
                       <button style={c.miniBtn} onClick={() => moveColumn(idx, idx + 1)}>↓</button>
                     )}
                   </div>
@@ -827,10 +838,14 @@ Näiteks:
             <div style={c.row}>
               <label style={c.label}>Värv</label>
               <select
-                value={Object.keys(DEFAULT_COLORS).find(k => {
-                  const col = DEFAULT_COLORS[k as keyof typeof DEFAULT_COLORS];
-                  return col.r === settings.colorizeColor.r && col.g === settings.colorizeColor.g && col.b === settings.colorizeColor.b;
-                })}
+                value={
+                  Object.keys(DEFAULT_COLORS).find(k => {
+                    const col = DEFAULT_COLORS[k as keyof typeof DEFAULT_COLORS];
+                    return col.r === settings.colorizeColor.r && 
+                           col.g === settings.colorizeColor.g && 
+                           col.b === settings.colorizeColor.b;
+                  }) || "darkRed"
+                }
                 onChange={(e) => {
                   const colorKey = e.target.value as keyof typeof DEFAULT_COLORS;
                   updateSettings({ colorizeColor: DEFAULT_COLORS[colorKey] });
@@ -868,12 +883,13 @@ Näiteks:
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              <b>Assembly Exporter v4</b> – Trimble Connect → Google Sheet + Excel<br />
+              <b>Assembly Exporter v4.1</b> – Trimble Connect → Google Sheet + Excel<br />
               • GUID otsing ja värvimine (IFC + MS/Tekla)<br />
               • Assembly mark otsing<br />
               • Kohandatav export (Clipboard/Excel/CSV)<br />
               • Värvi valik settings<br />
               • convertToObjectIds fallback GUID-idele<br />
+              • Duplikaatsete property nimede tugi (_1, _2 jne)<br />
               <br />
               Loodud: <b>Silver Vatsel</b> | Consiva OÜ
             </div>
