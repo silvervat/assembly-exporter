@@ -46,30 +46,45 @@ const DEFAULT_COLORS = {
   purple: { r: 160, g: 0, b: 200 },
 };
 function useSettings() {
+  const DEFAULTS: AppSettings = {
+    scriptUrl: localStorage.getItem("sheet_webapp") || "",
+    secret: localStorage.getItem("sheet_secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU",
+    autoColorize: true,
+    defaultPreset: "recommended",
+    colorizeColor: DEFAULT_COLORS.darkRed,
+    trimbleClientId: "",
+    trimbleClientSecret: "",
+  };
+
   const [settings, setSettings] = useState<AppSettings>(() => {
-    const saved = localStorage.getItem("assemblyExporterSettings");
-    if (saved) {
-      try {
-        return JSON.parse(saved) as AppSettings;
-      } catch {}
+    const raw = localStorage.getItem("assemblyExporterSettings");
+    if (!raw) return DEFAULTS;
+    try {
+      const parsed = JSON.parse(raw) as Partial<AppSettings>;
+      return {
+        ...DEFAULTS,
+        ...parsed,
+        colorizeColor: parsed?.colorizeColor ?? DEFAULT_COLORS.darkRed,
+        trimbleClientId: parsed?.trimbleClientId ?? "",
+        trimbleClientSecret: parsed?.trimbleClientSecret ?? "",
+      };
+    } catch {
+      return DEFAULTS;
     }
-    return {
-      scriptUrl: localStorage.getItem("sheet_webapp") || "",
-      secret: localStorage.getItem("sheet_secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU",
-      autoColorize: true,
-      defaultPreset: "recommended",
-      colorizeColor: DEFAULT_COLORS.darkRed,
-      trimbleClientId: "",
-      trimbleClientSecret: "",
-    };
   });
+
   const update = (patch: Partial<AppSettings>) => {
-    const next = { ...settings, ...patch };
+    const next: AppSettings = {
+      ...settings,
+      ...patch,
+      colorizeColor: patch.colorizeColor ?? settings.colorizeColor ?? DEFAULT_COLORS.darkRed,
+    };
     setSettings(next);
     localStorage.setItem("assemblyExporterSettings", JSON.stringify(next));
     localStorage.setItem("sheet_webapp", next.scriptUrl || "");
     localStorage.setItem("sheet_secret", next.secret || "");
   };
+
   return [settings, update] as const;
 }
 /* =========================================================
@@ -154,12 +169,13 @@ async function flattenProps(
   };
   const sets: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
   for (const set of sets) {
-    const groupName = set?.set || "Group";
+    const groupName = set?.set ?? set?.setName ?? set?.name ?? set?.displayName ?? "Group";
     for (const p of set?.properties ?? []) {
-      push(groupName, p?.name ?? "Prop", p?.value);
-      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(p?.name)))
+      const propName = p?.name ?? p?.displayName ?? "Prop";
+      push(groupName, propName, p?.value);
+      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(propName)))
         out.Name = String(p?.value ?? "");
-      if (out.Type === "Unknown" && /\btype\b/i.test(String(p?.name)))
+      if (out.Type === "Unknown" && /\btype\b/i.test(String(propName)))
         out.Type = String(p?.value ?? "Unknown");
     }
   }
@@ -303,7 +319,7 @@ export default function AssemblyExporter({ api }: Props) {
  
   const [searchInput, setSearchInput] = useState("");
   const [searchField, setSearchField] = useState<string>("AssemblyMark");
-  const [exportFormat, setExportFormat] = useState<ExportFormat>("clipboard");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("excel");
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
   const allKeys: string[] = useMemo(
     () => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(),
@@ -374,6 +390,10 @@ export default function AssemblyExporter({ api }: Props) {
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
   async function discover() {
+    if (!api?.viewer) {
+      setDiscoverMsg("❌ Viewer API pole saadaval (iframe?).");
+      return;
+    }
     try {
       setBusy(true);
       setDiscoverMsg("Loen valitud objekte…");
@@ -443,7 +463,7 @@ export default function AssemblyExporter({ api }: Props) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                if (/assemblycast_unit_mark|^mark$|block/i.test(String(p?.name))) {
+                if (/assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(String(p?.name))) {
                   matchValue = String(p?.value || "").trim().toLowerCase();
                   break;
                 }
@@ -561,7 +581,7 @@ export default function AssemblyExporter({ api }: Props) {
           aoa.push(
             exportCols.map((k) => {
               const v = r[k] ?? "";
-              if (FORCE_TEXT_KEYS.has(k)) return `'${String(v)}`; // sunni tekstiks
+              if (FORCE_TEXT_KEYS.has(k) || /^(GUID|GUID_IFC|GUID_MS)$/i.test(k)) return `'${String(v)}`; // sunni tekstiks
               return v;
             })
           );
@@ -626,7 +646,8 @@ export default function AssemblyExporter({ api }: Props) {
       }));
     }
     if (!blocks?.length) return;
-    const { r, g, b } = settings.colorizeColor;
+    const safeColor = settings.colorizeColor ?? DEFAULT_COLORS.darkRed;
+    const { r, g, b } = safeColor;
     for (const bl of blocks) {
       const selector = {
         modelObjectIds: [{ modelId: bl.modelId, objectRuntimeIds: bl.ids }]
@@ -834,6 +855,7 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "pset" && (
           <div style={c.section}>
             <h3 style={c.heading}>Property Set Libraries</h3>
+            <div style={c.small}>⚠️ Experimental: Client Secret lekib localStorages – soovitus: backend proxy!</div>
             <div style={c.row}>
               <label style={c.label}>Project ID:</label>
               <input
@@ -925,10 +947,9 @@ export default function AssemblyExporter({ api }: Props) {
               <select
                 value={
                   Object.keys(DEFAULT_COLORS).find(k => {
+                    const current = settings.colorizeColor ?? DEFAULT_COLORS.darkRed;
                     const col = DEFAULT_COLORS[k as keyof typeof DEFAULT_COLORS];
-                    return col.r === settings.colorizeColor.r &&
-                           col.g === settings.colorizeColor.g &&
-                           col.b === settings.colorizeColor.b;
+                    return col.r === current.r && col.g === current.g && col.b === current.b;
                   }) || "darkRed"
                 }
                 onChange={(e) => {
@@ -960,6 +981,15 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
             <div style={{ ...c.row, justifyContent: "flex-end" }}>
               <button style={c.btn} onClick={() => setSettingsMsg("✅ Salvestatud.")}>Salvesta</button>
+              <button
+                style={c.btnGhost}
+                onClick={() => {
+                  localStorage.removeItem("assemblyExporterSettings");
+                  window.location.reload();
+                }}
+              >
+                Reset settings
+              </button>
             </div>
             {settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
