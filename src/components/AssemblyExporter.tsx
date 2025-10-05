@@ -61,11 +61,13 @@ function useSettings() {
   });
 
   const update = (patch: Partial<AppSettings>) => {
-    const next = { ...settings, ...patch };
-    setSettings(next);
-    localStorage.setItem("assemblyExporterSettings", JSON.stringify(next));
-    localStorage.setItem("sheet_webapp", next.scriptUrl || "");
-    localStorage.setItem("sheet_secret", next.secret || "");
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      localStorage.setItem("assemblyExporterSettings", JSON.stringify(next));
+      localStorage.setItem("sheet_webapp", next.scriptUrl || "");
+      localStorage.setItem("sheet_secret", next.secret || "");
+      return next;
+    });
   };
 
   return [settings, update] as const;
