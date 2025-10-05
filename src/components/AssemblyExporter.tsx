@@ -1,4 +1,3 @@
-```javascript
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import * as XLSX from "xlsx";
 /* =========================================================
@@ -49,7 +48,7 @@ const DEFAULT_COLORS = {
 function useSettings() {
   const DEFAULTS: AppSettings = {
     scriptUrl: localStorage.getItem("sheet_webapp") || "",
-    secret: localStorage.getItem("sheet_secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU",
+    secret: localStorage.getItem("sheet_secret") || "",
     autoColorize: true,
     defaultPreset: "recommended",
     colorizeColor: DEFAULT_COLORS.darkRed,
@@ -182,7 +181,7 @@ async function flattenProps(
     }
   };
   recurseProps(obj?.properties);
-  recurseProps(obj, "Object"); // Lisa ka objekt ise, kui on nested
+  recurseProps(obj, "Object");
   for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
@@ -317,7 +316,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [settingsMsg, setSettingsMsg] = useState("");
   const [psetMsg, setPsetMsg] = useState("");
   const [psetLibraries, setPsetLibraries] = useState<any[]>([]);
-  const [projectId, setProjectId] = useState(""); // Sisesta oma projectId siia või lisa input
+  const [projectId, setProjectId] = useState("");
   const [libraryId, setLibraryId] = useState("");
   const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
  
@@ -516,7 +515,6 @@ export default function AssemblyExporter({ api }: Props) {
         if (matchIds.length) found.push({ modelId, ids: matchIds });
       }
       if (searchField === "GUID_IFC" && found.length === 0) {
-        // Fallback: Otsi GUID-i järgi kõigi mudelite external ID-dega
         const allModels = await api.viewer.getModels();
         for (const value of searchValues) {
           for (const model of allModels || []) {
@@ -524,7 +522,7 @@ export default function AssemblyExporter({ api }: Props) {
             try {
               const runtimeIds = await api.viewer.convertToObjectRuntimeIds(modelId, [value]);
               if (runtimeIds.length > 0) {
-                found.push({ modelId, ids: runtimeIds.map(id => Number(id)) });
+                found.push({ modelId, ids: runtimeIds.map((id: any) => Number(id)) });
                 foundValues.add(value);
               }
             } catch {}
@@ -591,17 +589,16 @@ export default function AssemblyExporter({ api }: Props) {
         a.href = url;
         a.download = `assembly-export-${new Date().toISOString().slice(0, 10)}.csv`;
         a.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 100);
         setExportMsg(`✅ Salvestatud ${rows.length} rida CSV-na.`);
       } else if (exportFormat === "excel") {
-        // Tee päris .xlsx fail xlsx paketiga
         const aoa: any[][] = [];
-        aoa.push(exportCols); // header
+        aoa.push(exportCols);
         for (const r of rows) {
           aoa.push(
             exportCols.map((k) => {
               const v = r[k] ?? "";
-              if (FORCE_TEXT_KEYS.has(k) || /^(GUID|GUID_IFC|GUID_MS)$/i.test(k)) return `'${String(v)}`; // sunni tekstiks
+              if (FORCE_TEXT_KEYS.has(k) || /^(GUID|GUID_IFC|GUID_MS)$/i.test(k)) return `'${String(v)}`;
               return v;
             })
           );
@@ -663,7 +660,7 @@ export default function AssemblyExporter({ api }: Props) {
       blocks = mos.map(m => ({
         modelId: m.modelId,
         ids: (m.objects || []).map((o: any) => o?.id).filter(Boolean)
-      });
+      }));
     }
     if (!blocks?.length) return;
     const safeColor = settings.colorizeColor ?? DEFAULT_COLORS.darkRed;
@@ -726,7 +723,7 @@ export default function AssemblyExporter({ api }: Props) {
     }
     const details = await getLibraryDetails(token, libraryId);
     if (details) {
-      console.log(details); // Siin saad kuvada detailid UI-s
+      console.log(details);
       setPsetMsg(`✅ Library detailid: ${JSON.stringify(details, null, 2)}`);
     } else {
       setPsetMsg("❌ Viga detailide hankimisel.");
@@ -1116,4 +1113,3 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12
   }
 };
-```
