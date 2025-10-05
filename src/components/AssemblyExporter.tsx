@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
 import * as XLSX from "xlsx";
 
-/* =========================================================
-   TYPES / CONSTANTS
-   ========================================================= */
 type Tab = "search" | "discover" | "export" | "settings" | "about" | "pset";
 type Row = Record<string, string>;
 type ExportFormat = "clipboard" | "excel" | "csv";
@@ -31,9 +28,6 @@ const DEBOUNCE_MS = 300;
 const HIGHLIGHT_DURATION_MS = 2000;
 const MESSAGE_DURATION_MS = 3000;
 
-/* =========================================================
-   SETTINGS
-   ========================================================= */
 type DefaultPreset = "recommended" | "tekla" | "ifc";
 
 interface AppSettings {
@@ -99,9 +93,6 @@ function useSettings() {
   return [settings, update] as const;
 }
 
-/* =========================================================
-   UTILS
-   ========================================================= */
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
 }
@@ -138,9 +129,6 @@ function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   return "UNKNOWN";
 }
 
-/* =========================================================
-   PROPERTY FLATTENING (WITH DEEP NESTED SUPPORT)
-   ========================================================= */
 async function flattenProps(
   obj: any,
   modelId: string,
@@ -241,9 +229,6 @@ async function flattenProps(
   return out;
 }
 
-/* =========================================================
-   API HELPERS
-   ========================================================= */
 async function getProjectName(api: any): Promise<string> {
   try {
     const proj = typeof api?.project?.getProject === "function"
@@ -285,9 +270,6 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   return map;
 }
 
-/* =========================================================
-   PSET API HELPERS
-   ========================================================= */
 async function getAccessToken(clientId: string, clientSecret: string) {
   try {
     const response = await fetch('https://id.trimble.com/oauth/token', {
@@ -336,9 +318,6 @@ async function getLibraryDetails(token: string, libraryId: string) {
   }
 }
 
-/* =========================================================
-   COMPONENT
-   ========================================================= */
 type Props = { api: any };
 
 export default function AssemblyExporter({ api }: Props) {
@@ -353,6 +332,9 @@ export default function AssemblyExporter({ api }: Props) {
   const [debouncedFilter, setDebouncedFilter] = useState("");
   const [highlightedColumn, setHighlightedColumn] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  
+  const [searchFieldFilter, setSearchFieldFilter] = useState("");
+  const [isSearchFieldDropdownOpen, setIsSearchFieldDropdownOpen] = useState(false);
   
   useEffect(() => {
     const t = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
@@ -373,11 +355,40 @@ export default function AssemblyExporter({ api }: Props) {
   const [searchField, setSearchField] = useState<string>("AssemblyMark");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("excel");
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
+  const [searchResults, setSearchResults] = useState<Array<{
+    value: string;
+    status: 'found' | 'notfound';
+    modelId?: string;
+    ids?: number[];
+  }>>([]);
   
   const allKeys: string[] = useMemo(
     () => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(),
     [rows]
   );
+  
+  const searchFieldOptions = useMemo(() => {
+    const baseOptions = [
+      { value: "AssemblyMark", label: "Assembly Mark (BLOCK)" },
+      { value: "GUID_IFC", label: "IFC GUID" },
+      { value: "GUID_MS", label: "MS/Tekla GUID" },
+      { value: "Name", label: "Nimi" },
+    ];
+    
+    const customOptions = allKeys
+      .filter(k => !['GUID', 'GUID_IFC', 'GUID_MS', 'Name', 'Type', 'BLOCK', 'Project', 'ModelId', 'FileName', 'ObjectId'].includes(k))
+      .map(k => ({ value: k, label: k }));
+    
+    const allOptions = [...baseOptions, ...customOptions];
+    
+    if (!searchFieldFilter) return allOptions;
+    
+    const filterLower = searchFieldFilter.toLowerCase();
+    return allOptions.filter(opt => 
+      opt.label.toLowerCase().includes(filterLower) || 
+      opt.value.toLowerCase().includes(filterLower)
+    );
+  }, [allKeys, searchFieldFilter]);
   
   const groupedUnsorted: Grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
   
@@ -402,7 +413,6 @@ export default function AssemblyExporter({ api }: Props) {
     if (settings.defaultPreset === "tekla") presetTekla();
     else if (settings.defaultPreset === "ifc") presetIFC();
     else presetRecommended();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
   
   useEffect(() => {
@@ -432,7 +442,33 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }, [searchMsg]);
   
-  const matches = (k: string) => filteredKeysSet.has(k);
+  useEffect(() => {
+    if (!api?.viewer) return;
+    
+    let selectionTimeout: NodeJS.Timeout;
+    
+    const handleSelectionChange = () => {
+      clearTimeout(selectionTimeout);
+      selectionTimeout = setTimeout(() => {
+        if (!busy) {
+          discover();
+        }
+      }, 800);
+    };
+    
+    try {
+      api.viewer.on?.('selectionChanged', handleSelectionChange);
+    } catch (e) {
+      console.warn("Selection listener setup failed:", e);
+    }
+    
+    return () => {
+      clearTimeout(selectionTimeout);
+      try {
+        api.viewer.off?.('selectionChanged', handleSelectionChange);
+      } catch {}
+    };
+  }, [api, busy]);  const matches = (k: string) => filteredKeysSet.has(k);
   
   function toggle(k: string) {
     setSelected(s => {
@@ -552,6 +588,7 @@ export default function AssemblyExporter({ api }: Props) {
     try {
       setBusy(true);
       setSearchMsg("Otsin…");
+      setSearchResults([]);
       
       const searchValues = new Set(
         searchInput.split(/[\n,;\t]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
@@ -573,7 +610,7 @@ export default function AssemblyExporter({ api }: Props) {
       }
       
       const found: Array<{ modelId: string; ids: number[] }> = [];
-      const foundValues = new Set<string>();
+      const foundValues = new Map<string, { modelId: string; ids: number[] }>();
       
       for (const mo of mos) {
         const modelId = String(mo.modelId);
@@ -673,7 +710,11 @@ export default function AssemblyExporter({ api }: Props) {
           
           if (matchValue && searchValues.has(matchValue)) {
             matchIds.push(objId);
-            foundValues.add(matchValue);
+            
+            if (!foundValues.has(matchValue)) {
+              foundValues.set(matchValue, { modelId, ids: [] });
+            }
+            foundValues.get(matchValue)!.ids.push(objId);
           }
         }
         
@@ -692,12 +733,38 @@ export default function AssemblyExporter({ api }: Props) {
                   modelId, 
                   ids: runtimeIds.map((id: any) => Number(id)) 
                 });
-                foundValues.add(value);
+                foundValues.set(value, { modelId, ids: runtimeIds.map((id: any) => Number(id)) });
               }
             } catch {}
           }
         }
       }
+      
+      const results: Array<{
+        value: string;
+        status: 'found' | 'notfound';
+        modelId?: string;
+        ids?: number[];
+      }> = [];
+      
+      for (const value of searchValues) {
+        if (foundValues.has(value)) {
+          const data = foundValues.get(value)!;
+          results.push({
+            value,
+            status: 'found',
+            modelId: data.modelId,
+            ids: data.ids
+          });
+        } else {
+          results.push({
+            value,
+            status: 'notfound'
+          });
+        }
+      }
+      
+      setSearchResults(results);
       
       if (found.length) {
         const selector = {
@@ -709,7 +776,7 @@ export default function AssemblyExporter({ api }: Props) {
         await viewer?.setSelection?.(selector);
         setLastSelection(found);
         
-        const notFound = Array.from(searchValues).filter(v => !foundValues.has(v));
+        const notFound = results.filter(r => r.status === 'notfound').map(r => r.value);
         if (notFound.length) {
           setSearchMsg(`✅ Leidsin ${foundValues.size}/${searchValues.size} väärtust. Ei leidnud: ${notFound.join(", ")}`);
         } else {
@@ -723,6 +790,22 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(`❌ Viga: ${e?.message || "tundmatu viga"}`);
     } finally {
       setBusy(false);
+    }
+  }
+  
+  async function selectAndZoom(modelId: string, ids: number[]) {
+    try {
+      const viewer = api?.viewer;
+      const selector = {
+        modelObjectIds: [{
+          modelId,
+          objectRuntimeIds: ids
+        }]
+      };
+      await viewer?.setSelection?.(selector);
+      await viewer?.setCamera?.(selector, { animationTime: 500 });
+    } catch (e: any) {
+      console.error("Zoom error:", e);
     }
   }
   
@@ -772,7 +855,7 @@ export default function AssemblyExporter({ api }: Props) {
   
   async function exportData() {
     if (!rows.length) {
-      setExportMsg("⚠️ Pole andmeid eksportimiseks. Mine 'Discover' lehele.");
+      setExportMsg("⚠️ Pole andmeid eksportimiseks.");
       return;
     }
     
@@ -791,7 +874,7 @@ export default function AssemblyExporter({ api }: Props) {
         const content = header + "\n" + body;
         
         await navigator.clipboard.writeText(content);
-        setExportMsg(`✅ Kopeeritud ${rows.length} rida (${exportCols.length} veergu) lõikelauale.`);
+        setExportMsg(`✅ Kopeeritud ${rows.length} rida lõikelauale.`);
         
       } else if (exportFormat === "csv") {
         const csvHead = exportCols.join(",");
@@ -845,7 +928,7 @@ export default function AssemblyExporter({ api }: Props) {
     }
     
     if (!rows.length) {
-      setExportMsg('Klõpsa kõigepealt "Discover fields".');
+      setExportMsg('Pole andmeid eksportimiseks.');
       return;
     }
     
@@ -999,32 +1082,105 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "search" && (
           <div style={c.section}>
             <h3 style={c.heading}>Otsi ja vali</h3>
+            
             <div style={c.row}>
               <label style={c.label}>Otsi mille järgi:</label>
-              <select value={searchField} onChange={(e) => setSearchField(e.target.value)} style={c.input}>
-                <option value="AssemblyMark">Assembly Mark (BLOCK)</option>
-                <option value="GUID_IFC">IFC GUID</option>
-                <option value="GUID_MS">MS/Tekla GUID</option>
-                <option value="Name">Nimi</option>
-                {allKeys.length > 0 && <option disabled>─────────</option>}
-                {allKeys.filter(k => !['GUID', 'GUID_IFC', 'GUID_MS', 'Name', 'Type', 'BLOCK', 'Project', 'ModelId', 'FileName', 'ObjectId'].includes(k)).map(k => (
-                  <option key={k} value={k}>{k}</option>
-                ))}
-              </select>
+              <div style={{ flex: 1, position: "relative" }} onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) {
+                  setTimeout(() => setIsSearchFieldDropdownOpen(false), 200);
+                }
+              }}>
+                <input
+                  type="text"
+                  value={searchFieldFilter}
+                  onChange={(e) => setSearchFieldFilter(e.target.value)}
+                  onFocus={() => setIsSearchFieldDropdownOpen(true)}
+                  placeholder="Tippige filtriks või valige..."
+                  style={c.input}
+                />
+                {isSearchFieldDropdownOpen && (
+                  <div style={c.dropdown}>
+                    {searchFieldOptions.length === 0 ? (
+                      <div style={c.dropdownItem}>Tulemusi ei leitud</div>
+                    ) : (
+                      searchFieldOptions.map(opt => (
+                        <div
+                          key={opt.value}
+                          style={{
+                            ...c.dropdownItem,
+                            ...(searchField === opt.value ? c.dropdownItemSelected : {})
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "#f5f5f5";
+                          }}
+                          onMouseLeave={(e) => {
+                            if (searchField !== opt.value) {
+                              e.currentTarget.style.background = "transparent";
+                            }
+                          }}
+                          onClick={() => {
+                            setSearchField(opt.value);
+                            setSearchFieldFilter(opt.label);
+                            setIsSearchFieldDropdownOpen(false);
+                          }}
+                        >
+                          {opt.label}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
+            
             <textarea
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;2COL23&#10;RBP-111&#10;RBP-112"
+              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;BM-3&#10;2COL23&#10;RBP-111"
               style={{ ...c.textarea, height: 200 }}
             />
             <div style={c.controls}>
               <button style={c.btn} onClick={searchAndSelect} disabled={busy || !searchInput.trim()}>
                 {busy ? "Otsin…" : "Otsi ja vali"}
               </button>
-              <button style={c.btnGhost} onClick={() => setSearchInput("")}>Tühjenda</button>
+              <button style={c.btnGhost} onClick={() => { setSearchInput(""); setSearchResults([]); }}>Tühjenda</button>
             </div>
             {searchMsg && <div style={c.note}>{searchMsg}</div>}
+            
+            {searchResults.length > 0 && (
+              <div style={c.resultsBox}>
+                <h4 style={c.resultsHeading}>Tulemused ({searchResults.length})</h4>
+                <div style={c.resultsTable}>
+                  {searchResults.map((result, idx) => (
+                    <div key={idx} style={{
+                      ...c.resultRow,
+                      ...(result.status === 'found' ? c.resultRowFound : c.resultRowNotFound)
+                    }}>
+                      <span style={c.resultStatus}>
+                        {result.status === 'found' ? '✅' : '❌'}
+                      </span>
+                      <span style={c.resultValue} title={result.value}>
+                        {result.value}
+                      </span>
+                      <span style={c.resultCount}>
+                        {result.status === 'found' ? `${result.ids?.length || 0}x` : '-'}
+                      </span>
+                      <div style={c.resultActions}>
+                        {result.status === 'found' && result.modelId && result.ids && (
+                          <button 
+                            style={c.miniBtn} 
+                            onClick={() => selectAndZoom(result.modelId!, result.ids!)}
+                            title="Vali ja zoomi"
+                          >
+                            🔍 Zoom
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
         
@@ -1053,7 +1209,7 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
             <div style={{...c.list, maxHeight: "none", overflow: "visible"}}>
               {!rows.length ? (
-                <div style={c.small}>Klõpsa "Discover fields".</div>
+                <div style={c.small}>Vali objektid 3D vaates (auto-discover).</div>
               ) : (
                 groupedSortedEntries.map(([groupName, keys]) => {
                   const keysShown = keys.filter(matches);
@@ -1093,19 +1249,13 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "export" && (
           <div style={c.section}>
             <h3 style={c.heading}>Export Data</h3>
-            <div style={c.row}>
-              <label style={c.label}>Formaat:</label>
-              <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value as ExportFormat)} style={c.input}>
-                <option value="clipboard">Clipboard (TSV)</option>
-                <option value="excel">Excel (.xlsx)</option>
-                <option value="csv">CSV (download)</option>
-              </select>
-            </div>
+            
             <div style={c.helpBox}>
               <strong>💡 Juhised:</strong> Lohista ridu hiirega ümber VÕI kasuta ↑ ↓ nuppe. Märgi linnukesega ekspordiks valitavad veerud.
             </div>
+            
             <div style={c.columnListNoscroll}>
-              {exportableColumns.map((col, idx) => {
+              {exportableColumns.map((col) => {
                 const actualIdx = columnOrder.indexOf(col);
                 return (
                   <div 
@@ -1143,14 +1293,22 @@ export default function AssemblyExporter({ api }: Props) {
                 );
               })}
             </div>
+            
             <div style={c.controls}>
-              <button style={c.btnPrimary} onClick={exportData} disabled={!rows.length || !selected.size}>
-                {exportFormat === "clipboard" ? "Kopeeri lõikelauale" : exportFormat === "excel" ? "Lae alla .xlsx" : "Lae alla CSV"}
+              <button style={c.btn} onClick={() => { setExportFormat("clipboard"); exportData(); }} disabled={!rows.length || !selected.size}>
+                📋 Clipboard
               </button>
-              <button style={c.btn} onClick={sendToGoogleSheet} disabled={busy || !rows.length}>
-                {busy ? "Saadan…" : "Saada Google Sheeti"}
+              <button style={c.btn} onClick={() => { setExportFormat("excel"); exportData(); }} disabled={!rows.length || !selected.size}>
+                📊 Excel
+              </button>
+              <button style={c.btn} onClick={() => { setExportFormat("csv"); exportData(); }} disabled={!rows.length || !selected.size}>
+                📄 CSV
+              </button>
+              <button style={c.btnPrimary} onClick={sendToGoogleSheet} disabled={busy || !rows.length || !selected.size}>
+                {busy ? "Saadan…" : "🔗 Google Sheets"}
               </button>
             </div>
+            
             {exportMsg && <div style={c.note}>{exportMsg}</div>}
           </div>
         )}
@@ -1158,7 +1316,7 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "pset" && (
           <div style={c.section}>
             <h3 style={c.heading}>Property Set Libraries</h3>
-            <div style={c.small}>⚠️ Experimental: Client Secret lekib localStorages – soovitus: backend proxy!</div>
+            <div style={c.small}>⚠️ Experimental</div>
             <div style={c.row}>
               <label style={c.label}>Project ID:</label>
               <input
@@ -1186,13 +1344,13 @@ export default function AssemblyExporter({ api }: Props) {
               <input
                 value={libraryId}
                 onChange={(e) => setLibraryId(e.target.value)}
-                placeholder="Sisesta libraryId detailide jaoks"
+                placeholder="Sisesta libraryId"
                 style={c.input}
               />
             </div>
             <div style={c.controls}>
               <button style={c.btn} onClick={fetchLibraryDetails} disabled={busy}>
-                {busy ? "Hankin…" : "Hangi Library Detailid"}
+                {busy ? "Hankin…" : "Hangi Detailid"}
               </button>
             </div>
             {psetMsg && <div style={c.note}>{psetMsg}</div>}
@@ -1224,7 +1382,7 @@ export default function AssemblyExporter({ api }: Props) {
               <input
                 value={settings.trimbleClientId}
                 onChange={(e) => updateSettings({ trimbleClientId: e.target.value })}
-                placeholder="Sisesta Client ID"
+                placeholder="Client ID"
                 style={c.input}
               />
             </div>
@@ -1234,7 +1392,7 @@ export default function AssemblyExporter({ api }: Props) {
                 type="password"
                 value={settings.trimbleClientSecret}
                 onChange={(e) => updateSettings({ trimbleClientSecret: e.target.value })}
-                placeholder="Sisesta Client Secret"
+                placeholder="Client Secret"
                 style={c.input}
               />
             </div>
@@ -1292,7 +1450,7 @@ export default function AssemblyExporter({ api }: Props) {
                   window.location.reload();
                 }}
               >
-                Reset settings
+                Reset
               </button>
             </div>
             {settingsMsg && <div style={c.note}>{settingsMsg}</div>}
@@ -1302,21 +1460,12 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              <b>Assembly Exporter v4.5</b> – Trimble Connect → Google Sheet + Excel<br />
-              • GUID otsing ja värvimine (IFC + MS/Tekla)<br />
-              • Assembly mark otsing<br />
-              • Kohandatav export (Clipboard/Excel/CSV)<br />
-              • Värvi valik settings<br />
-              • convertToObjectIds fallback GUID-idele<br />
-              • Duplikaatsete property nimede tugi (_1, _2 jne)<br />
-              • Property Set Libraries hankimine<br />
-              • Täielik ObjectProperties tugi (getObjectProperties)<br />
-              • Drag & drop + arrow keys reordering<br />
-              • Auto-clear success messages (3s)<br />
-              • Dynamic search fields dropdown<br />
-              • Checkboxes for export column selection<br />
-              • Case-insensitive search matching<br />
-              • Full property search with flexible matching<br />
+              <b>Assembly Exporter v4.7</b> – Trimble Connect<br />
+              • Auto-discover on selection change<br />
+              • Searchable dropdown<br />
+              • Search results table with zoom<br />
+              • Drag & drop reordering<br />
+              • Multiple export formats<br />
               <br />
               Loodud: <b>Silver Vatsel</b> | Consiva OÜ
             </div>
@@ -1546,5 +1695,84 @@ const styles: Record<string, CSSProperties> = {
     color: "#999",
     userSelect: "none" as any,
     lineHeight: 1,
-  }
+  },
+  dropdown: {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    background: "#fff",
+    border: "1px solid #cfd6df",
+    borderRadius: 8,
+    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    maxHeight: 300,
+    overflowY: "auto",
+    zIndex: 1000,
+  },
+  dropdownItem: {
+    padding: "8px 12px",
+    cursor: "pointer",
+    fontSize: 13,
+    transition: "background 0.15s",
+  },
+  dropdownItemSelected: {
+    background: "#e7f3ff",
+    color: "#0a3a67",
+    fontWeight: 600,
+  },
+  resultsBox: {
+    marginTop: 12,
+    border: "1px solid #e5e9f0",
+    borderRadius: 8,
+    padding: 12,
+    background: "#fafbfc",
+  },
+  resultsHeading: {
+    margin: "0 0 8px 0",
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#0a3a67",
+  },
+  resultsTable: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+  resultRow: {
+    display: "grid",
+    gridTemplateColumns: "30px 1fr 50px auto",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    borderRadius: 6,
+    fontSize: 12,
+  },
+  resultRowFound: {
+    background: "#e8f5e9",
+    border: "1px solid #a5d6a7",
+  },
+  resultRowNotFound: {
+    background: "#ffebee",
+    border: "1px solid #ef9a9a",
+  },
+  resultStatus: {
+    fontSize: 16,
+    textAlign: "center" as any,
+  },
+  resultValue: {
+    fontFamily: "monospace",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  resultCount: {
+    fontSize: 11,
+    opacity: 0.7,
+    textAlign: "right" as any,
+  },
+  resultActions: {
+    display: "flex",
+    gap: 4,
+  },
 };
