@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceAPI } from "trimble-connect-workspace-api";
 
-/* ----------------- constants ----------------- */
+/* =========================================================
+   CONSTANTS / TYPES
+   ========================================================= */
+
+type Tab = "export" | "settings" | "about";
+type Row = Record<string, string>;
 
 const LOCKED_ORDER = [
   "GUID",
@@ -14,20 +19,55 @@ const LOCKED_ORDER = [
   "Type",
   "BLOCK",
 ] as const;
-
 type LockedKey = typeof LOCKED_ORDER[number];
-type Row = Record<string, string>;
-type Props = { api: WorkspaceAPI };
-type Tab = "export" | "settings" | "about";
-type Grouped = Record<string, string[]>;
 
-/** columns we must force as TEXT in Google Sheet, to keep + / − */
+/** Column keys that must be sent to Sheet as TEXT (keep + / -). */
 const FORCE_TEXT_KEYS = new Set<string>([
   "Tekla_Assembly.AssemblyCast_unit_top_elevation",
   "Tekla_Assembly.AssemblyCast_unit_bottom_elevation",
 ]);
 
-/* ----------------- utils ----------------- */
+/* =========================================================
+   SETTINGS (single localStorage key)
+   ========================================================= */
+
+type DefaultPreset = "recommended" | "tekla" | "ifc";
+
+interface AppSettings {
+  scriptUrl: string;
+  secret: string;
+  autoColorize: boolean;
+  defaultPreset: DefaultPreset;
+}
+
+function useSettings() {
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const saved = localStorage.getItem("assemblyExporterSettings");
+    if (saved) return JSON.parse(saved) as AppSettings;
+    return {
+      scriptUrl: localStorage.getItem("sheet_webapp") || "",
+      secret: localStorage.getItem("sheet_secret") ||
+        "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU",
+      autoColorize: true,
+      defaultPreset: "recommended",
+    };
+  });
+
+  const update = (patch: Partial<AppSettings>) => {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    localStorage.setItem("assemblyExporterSettings", JSON.stringify(next));
+    // backward-compat
+    localStorage.setItem("sheet_webapp", next.scriptUrl || "");
+    localStorage.setItem("sheet_secret", next.secret || "");
+  };
+
+  return [settings, update] as const;
+}
+
+/* =========================================================
+   SMALL UTILS
+   ========================================================= */
 
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
@@ -39,6 +79,7 @@ function groupSortKey(group: string) {
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
+type Grouped = Record<string, string[]>;
 function groupKeys(keys: string[]): Grouped {
   const g: Grouped = {};
   for (const k of keys) {
@@ -53,7 +94,22 @@ function groupKeys(keys: string[]): Grouped {
   return g;
 }
 
-/* ---- PropertySet helpers ---- */
+/* ----------------- Number helpers ----------------- */
+
+function isNumericString(s: string) {
+  return /^[-+]?(\d+|\d*\.\d+)(e[-+]?\d+)?$/i.test(s.trim());
+}
+function normaliseNumberString(s: string) {
+  const n = Number(s);
+  if (!Number.isFinite(n)) return s;
+  const r = Math.round(n);
+  if (Math.abs(n - r) < 1e-9) return String(r);
+  return String(parseFloat(n.toFixed(4)));
+}
+
+/* =========================================================
+   PROPERTY SETS + GUIDS
+   ========================================================= */
 
 type TCProperty = { name: string; value: unknown };
 type TCPropertySet = { name: string; properties: TCProperty[] };
@@ -74,56 +130,37 @@ function collectAllPropertySets(obj: any): TCPropertySet[] {
   );
 }
 
-/* ---- number normaliser ---- */
-
-function isNumericString(s: string) {
-  // only pure numbers; '77/J-K' etc are not numeric
-  return /^[-+]?(\d+|\d*\.\d+)(e[-+]?\d+)?$/i.test(s.trim());
-}
-function normaliseNumberString(s: string) {
-  const n = Number(s);
-  if (!Number.isFinite(n)) return s;
-  const roundedInt = Math.round(n);
-  if (Math.abs(n - roundedInt) < 1e-9) return String(roundedInt);
-  return String(parseFloat(n.toFixed(4)));
-}
-
-/* ---- deep scan for GUID/meta ---- */
-
-function deepScanForGuidAndMeta(
-  node: any,
-  path: string[] = [],
-  acc: { ifc?: string; ms?: string; any?: string; file?: string; commonType?: string } = {}
-) {
-  if (!node || typeof node !== "object") return acc;
-  for (const [rawK, v] of Object.entries(node)) {
-    const k = String(rawK);
-
-    if (/guid/i.test(k)) {
-      const val = v == null ? "" : String(v);
-      if (/\bifc\b/i.test(k) && !acc.ifc) acc.ifc = val;
-      else if (/\bms\b/i.test(k) && !acc.ms) acc.ms = val;
-      else if (!acc.any) acc.any = val;
-    }
-    if (!acc.file && /(file\s*name|filename)/i.test(k)) acc.file = v == null ? "" : String(v);
-    if (!acc.commonType && /(common.*type)/i.test(k)) acc.commonType = v == null ? "" : String(v);
-
-    if (v && typeof v === "object") deepScanForGuidAndMeta(v, [...path, k], acc);
-  }
-  return acc;
-}
-
-/** classify GUID value */
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
-  if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC"; // IFC compressed
-  if (/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(s)) return "MS";
+  if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC"; // compressed IFC
+  if (/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(s))
+    return "MS";
   if (/^[0-9A-Fa-f]{32}$/.test(s)) return "MS";
   return "UNKNOWN";
 }
 
-/* ---- flatten properties to a row ---- */
+function deepScanForGuidAndMeta(
+  node: any,
+  acc: { ifc?: string; ms?: string; any?: string; file?: string; commonType?: string } = {}
+) {
+  if (!node || typeof node !== "object") return acc;
+  for (const [k, v] of Object.entries(node)) {
+    if (/guid/i.test(k)) {
+      const s = v == null ? "" : String(v);
+      const cls = classifyGuid(s);
+      if (cls === "IFC" && !acc.ifc) acc.ifc = s;
+      else if (cls === "MS" && !acc.ms) acc.ms = s;
+      else if (!acc.any) acc.any = s;
+    }
+    if (!acc.file && /(file\s*name|filename)/i.test(k)) acc.file = v == null ? "" : String(v);
+    if (!acc.commonType && /(common.*type)/i.test(k))
+      acc.commonType = v == null ? "" : String(v);
+    if (v && typeof v === "object") deepScanForGuidAndMeta(v, acc);
+  }
+  return acc;
+}
 
+/** Flatten single object properties into a Row. */
 function flattenProps(obj: any, modelId: string, projectName: string): Row {
   const out: Row = {
     GUID: "",
@@ -143,7 +180,8 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
   const push = (group: string, name: string, val: unknown) => {
     const key = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
     let v: unknown = val;
-    if (Array.isArray(v)) v = (v as unknown[]).map((x) => (x == null ? "" : String(x))).join(" | ");
+    if (Array.isArray(v))
+      v = (v as unknown[]).map((x) => (x == null ? "" : String(x))).join(" | ");
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
     const s = v == null ? "" : String(v);
     propMap.set(key, s);
@@ -158,13 +196,12 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
       const vv = (p as any)?.value;
       rawNames.push({ group: g, name: nm, value: vv });
       push(g, nm, vv);
-
       if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(nm))) out.Name = String(vv ?? "");
       if (out.Type === "Unknown" && /\btype\b/i.test(String(nm))) out.Type = String(vv ?? "Unknown");
     }
   }
 
-  // FileName quick candidates
+  // FileName candidates
   const fileKeyCandidates = [
     "Reference_Object.File_Name",
     "Reference_Object.FileName",
@@ -175,7 +212,7 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
   }
   if (!out.FileName) {
     for (const r of rawNames) {
-      if (/^file\s*name$/i.test(String(r.name || "")) && /reference/i.test(String(r.group || ""))) {
+      if (/^file\s*name$/i.test(String(r.name)) && /reference/i.test(String(r.group))) {
         out.FileName = r.value == null ? "" : String(r.value);
         break;
       }
@@ -189,36 +226,38 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     "BLOCK.BLOCK_2",
     "Tekla_Assembly.AssemblyCast_unit_Mark",
   ];
-  for (const k of blockCandidates) { if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; } }
+  for (const k of blockCandidates) {
+    if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; }
+  }
 
-  // Try structured GUID keys first
+  // GUIDs by structured keys
   let guidIfc = "";
-  let guidMs  = "";
+  let guidMs = "";
   for (const [k, v] of propMap) {
     if (!/guid/i.test(k)) continue;
     const cls = classifyGuid(v);
     if (cls === "IFC" && !guidIfc) guidIfc = v;
-    if (cls === "MS"  && !guidMs)  guidMs  = v;
+    if (cls === "MS" && !guidMs) guidMs = v;
   }
-  // If still missing, scan by raw property names
+  // Raw name scan
   if (!guidIfc || !guidMs) {
     for (const r of rawNames) {
-      if (!/guid/i.test(String(r.name || ""))) continue;
+      if (!/guid/i.test(String(r.name))) continue;
       const val = r.value == null ? "" : String(r.value);
       const cls = classifyGuid(val);
       if (cls === "IFC" && !guidIfc) guidIfc = val;
-      if (cls === "MS"  && !guidMs)  guidMs  = val;
+      if (cls === "MS" && !guidMs) guidMs = val;
     }
   }
   out.GUID_IFC = guidIfc;
-  out.GUID_MS  = guidMs;
-  out.GUID     = guidIfc || guidMs || "";
+  out.GUID_MS = guidMs;
+  out.GUID = guidIfc || guidMs || "";
 
-  // Final fallback: deep scan whole object
+  // Global deep scan fallback
   if (!out.GUID || !out.GUID_IFC || !out.GUID_MS || !out.FileName) {
     const found = deepScanForGuidAndMeta(obj);
     if (!out.GUID_IFC && found.ifc) out.GUID_IFC = found.ifc;
-    if (!out.GUID_MS  && found.ms)  out.GUID_MS  = found.ms;
+    if (!out.GUID_MS && found.ms) out.GUID_MS = found.ms;
     if (!out.GUID) out.GUID = found.ifc || found.ms || found.any || out.GUID;
     if (!out.FileName && found.file) out.FileName = found.file;
   }
@@ -226,36 +265,91 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
   return out;
 }
 
-/** Project name via ProjectAPI.getProject() */
+/* =========================================================
+   PROJECT NAME
+   ========================================================= */
+
 async function getProjectName(api: any): Promise<string> {
-  if (typeof api?.project?.getProject === "function") {
-    const proj = await api.project.getProject();
-    if (proj?.name) return String(proj.name);
-  }
+  try {
+    if (typeof api?.project?.getProject === "function") {
+      const proj = await api.project.getProject();
+      if (proj?.name) return String(proj.name);
+    }
+  } catch {}
   return "";
 }
 
-/* ----------------- component ----------------- */
+/* =========================================================
+   SELECTION (viewer + property panel fallback)
+   ========================================================= */
+
+async function getCurrentSelectionBlocks(api: any): Promise<{ modelId: string; ids: number[] }[]> {
+  // viewer.getSelection()
+  try {
+    const sel = await api?.viewer?.getSelection?.();
+    if (Array.isArray(sel) && sel.length) {
+      return sel
+        .map((m: any) => ({ modelId: String(m.modelId), ids: (m.objectRuntimeIds || []).slice() }))
+        .filter((b: any) => b.ids.length);
+    }
+  } catch {}
+
+  // Property Panel getPropertyPanelData()
+  const tryPP = async (host: any) => {
+    try {
+      const data = await host?.getPropertyPanelData?.();
+      const ents = (data?.entities || data?.items || []);
+      if (Array.isArray(ents) && ents.length) {
+        return ents
+          .map((e: any) => ({
+            modelId: String(e.modelId),
+            ids: (e.objectRuntimeIds || e.selection || []).slice(),
+          }))
+          .filter((b: any) => b.ids.length);
+      }
+    } catch {}
+    return [];
+  };
+  for (const host of [api, (api as any)?.propertyPanel, (api as any)?.detailsPanel, (api as any)?.panel]) {
+    const blocks = await tryPP(host);
+    if (blocks.length) return blocks;
+  }
+  return [];
+}
+
+/* =========================================================
+   COMPONENT
+   ========================================================= */
+
+type Props = { api: WorkspaceAPI };
 
 export default function AssemblyExporter({ api }: Props) {
+  const [settings, updateSettings] = useSettings();
+
   const [tab, setTab] = useState<Tab>("export");
-
-  // settings
-  const [scriptUrl, setScriptUrl] = useState<string>(localStorage.getItem("sheet_webapp") || "");
-  const [secret, setSecret] = useState<string>(localStorage.getItem("sheet_secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU");
-
-  // export data
   const [rows, setRows] = useState<Row[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set<string>(JSON.parse(localStorage.getItem("fieldSel") || "[]")));
-  const [filter, setFilter] = useState<string>("");
+  const [selected, setSelected] = useState<Set<string>>(
+    new Set<string>(JSON.parse(localStorage.getItem("fieldSel") || "[]"))
+  );
 
-  // messages
+  // filter (debounced)
+  const [filter, setFilter] = useState<string>("");
+  const [debouncedFilter, setDebouncedFilter] = useState<string>("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedFilter(filter), 300);
+    return () => clearTimeout(t);
+  }, [filter]);
+
+  // messages / progress
+  const [busy, setBusy] = useState(false);
   const [exportMsg, setExportMsg] = useState<string>("");
   const [settingsMsg, setSettingsMsg] = useState<string>("");
+  const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
 
-  const [busy, setBusy] = useState<boolean>(false);
+  // last selection (for colorize)
   const [lastSelection, setLastSelection] = useState<{ modelId: string; ids: number[] }[]>([]);
 
+  /* ---------- derived ---------- */
   const allKeys: string[] = useMemo(
     () => Array.from(new Set(rows.flatMap((r: Row) => Object.keys(r)))).sort(),
     [rows]
@@ -267,12 +361,27 @@ export default function AssemblyExporter({ api }: Props) {
         .sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])),
     [groupedUnsorted]
   );
+  const filteredKeysSet = useMemo(() => {
+    if (!debouncedFilter) return new Set(allKeys);
+    const f = debouncedFilter.toLowerCase();
+    return new Set(allKeys.filter((k) => k.toLowerCase().includes(f)));
+  }, [allKeys, debouncedFilter]);
 
   useEffect(() => {
     localStorage.setItem("fieldSel", JSON.stringify(Array.from(selected)));
   }, [selected]);
 
-  const matches = (k: string) => !filter || k.toLowerCase().includes(filter.toLowerCase());
+  // apply default preset after discovery (only when nothing selected yet)
+  useEffect(() => {
+    if (!rows.length) return;
+    if (selected.size) return;
+    if (settings.defaultPreset === "tekla") presetTekla();
+    else if (settings.defaultPreset === "ifc") presetIFC();
+    else presetRecommended();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
+
+  const matches = (k: string) => filteredKeysSet.has(k);
   function toggle(k: string) {
     setSelected((s) => {
       const n = new Set(s);
@@ -291,7 +400,10 @@ export default function AssemblyExporter({ api }: Props) {
     setSelected(() => (on ? new Set(allKeys) : new Set()));
   }
 
-  // presets (placed under list)
+  /* =========================================================
+     PRESETS
+     ========================================================= */
+
   function presetRecommended() {
     const wanted = new Set<string>([
       ...LOCKED_ORDER,
@@ -300,10 +412,12 @@ export default function AssemblyExporter({ api }: Props) {
     ]);
     setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
   }
-  function presetTeklaAssembly() {
-    setSelected(new Set(allKeys.filter((k) => k.startsWith("Tekla_Assembly.") || k === "BLOCK" || k === "Reference_Object.File_Name")));
+  function presetTekla() {
+    setSelected(
+      new Set(allKeys.filter((k) => k.startsWith("Tekla_Assembly.") || k === "BLOCK" || k === "Reference_Object.File_Name"))
+    );
   }
-  function presetIFCReference() {
+  function presetIFC() {
     const wanted = new Set<string>([
       "GUID_IFC",
       "GUID_MS",
@@ -313,37 +427,62 @@ export default function AssemblyExporter({ api }: Props) {
     setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
   }
 
+  /* =========================================================
+     DISCOVER (with timeout + progress)
+     ========================================================= */
+
   async function discover() {
     try {
       setBusy(true);
       setExportMsg("Reading current selection…");
-      const selection: any[] = await (api as any).viewer.getSelection();
-      if (!selection?.length) { setExportMsg("Select objects in the models first."); setRows([]); return; }
+      setProgress({ current: 0, total: 0 });
 
-      const projectName = await getProjectName(api);
-      const collectedRows: Row[] = [];
-      const selForColor: { modelId: string; ids: number[] }[] = [];
-
-      for (const m of selection) {
-        const modelId: string = String(m.modelId);
-        const ids: number[] = (m.objectRuntimeIds ?? []).slice();
-        if (!ids.length) continue;
-
-        const props: any[] = await (api as any).viewer.getObjectProperties(modelId, ids);
-        const flat: Row[] = props.map((o: any) => flattenProps(o, modelId, projectName));
-        collectedRows.push(...flat);
-        selForColor.push({ modelId, ids });
+      const blocks = await getCurrentSelectionBlocks(api);
+      if (!blocks.length) {
+        setExportMsg("⚠️ Please select objects in the models first.");
+        setRows([]);
+        return;
       }
 
-      setRows(collectedRows);
-      setLastSelection(selForColor);
-      setExportMsg(`Found ${collectedRows.length} objects. Total keys: ${Array.from(new Set(collectedRows.flatMap((r) => Object.keys(r)))).length}.`);
+      // timeout protection
+      const timeout = new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error("Discovery timeout after 30s")), 30000)
+      );
+
+      const projectName = await getProjectName(api);
+      const perform = async () => {
+        const out: Row[] = [];
+        setProgress({ current: 0, total: blocks.length });
+
+        for (let i = 0; i < blocks.length; i++) {
+          const b = blocks[i];
+          setExportMsg(`Processing model ${i + 1}/${blocks.length}…`);
+          const props: any[] = await (api as any).viewer.getObjectProperties(b.modelId, b.ids);
+          out.push(...props.map((o: any) => flattenProps(o, b.modelId, projectName)));
+          setProgress({ current: i + 1, total: blocks.length });
+        }
+        return out;
+      };
+
+      const collected = await Promise.race([perform(), timeout]);
+      setRows(collected);
+      setLastSelection(blocks);
+      setExportMsg(
+        `Found ${collected.length} objects. Total keys: ${
+          Array.from(new Set(collected.flatMap((r) => Object.keys(r)))).length
+        }.`
+      );
     } catch (e: any) {
-      setExportMsg(`Error: ${e?.message || e}`);
+      console.error("Discovery error:", e);
+      setExportMsg(`❌ Error: ${e?.message || "Unknown error during discovery"}`);
     } finally {
       setBusy(false);
     }
   }
+
+  /* =========================================================
+     VALIDATION + ORDERING
+     ========================================================= */
 
   function orderRowByLockedAndAlpha(r: Row, chosen: Set<string>): Row {
     const o: Row = {};
@@ -354,12 +493,39 @@ export default function AssemblyExporter({ api }: Props) {
     return o;
   }
 
-  async function send() {
-    if (!scriptUrl || !secret) { setTab("settings"); setSettingsMsg("Please fill Script URL and Shared Secret."); return; }
-    if (!rows.length)           { setTab("export");   setExportMsg("Click “Discover fields” first."); return; }
+  function validateRows(input: Row[]): { valid: Row[]; errors: string[] } {
+    const valid: Row[] = [];
+    const errors: string[] = [];
+    input.forEach((row, idx) => {
+      const rowErrors: string[] = [];
+      if (!row.GUID && !row.GUID_IFC && !row.GUID_MS) rowErrors.push("Missing all GUID fields");
+      if (!row.Name?.trim()) rowErrors.push("Missing Name");
+      if (rowErrors.length) errors.push(`Row ${idx + 1}: ${rowErrors.join(", ")}`);
+      else valid.push(row);
+    });
+    return { valid, errors };
+  }
 
-    // warnings
-    const rowsWithWarn = rows.map((r) => {
+  /* =========================================================
+     EXPORT: Google Sheet
+     ========================================================= */
+
+  async function send() {
+    const { scriptUrl, secret, autoColorize } = settings;
+
+    if (!scriptUrl || !secret) {
+      setTab("settings");
+      setSettingsMsg("Please fill Script URL and Shared Secret.");
+      return;
+    }
+    if (!rows.length) {
+      setTab("export");
+      setExportMsg("Click “Discover fields” first.");
+      return;
+    }
+
+    // add warnings + number cleanup + force text
+    const warnRows = rows.map((r) => {
       const warn: string[] = [];
       if (!r.GUID) warn.push("Missing GUID");
       const copy: Row = { ...r };
@@ -367,13 +533,12 @@ export default function AssemblyExporter({ api }: Props) {
       return copy;
     });
 
-    // numeric normalisation & force-text for specific keys
     const numericSkip = new Set<string>(["GUID", "GUID_IFC", "GUID_MS", "Project", "Name", "Type", "FileName"]);
-    const cleaned = rowsWithWarn.map((r) => {
+    const cleaned = warnRows.map((r) => {
       const c: Row = {};
       for (const [k, v] of Object.entries(r) as [string, string][]) {
         if (FORCE_TEXT_KEYS.has(k) && typeof v === "string" && !v.startsWith("'")) {
-          c[k] = `'${v}`; // force text in Google Sheets (keeps + / -)
+          c[k] = `'${v}`;
         } else if (typeof v === "string" && !numericSkip.has(k) && isNumericString(v)) {
           c[k] = normaliseNumberString(v);
         } else {
@@ -383,7 +548,7 @@ export default function AssemblyExporter({ api }: Props) {
       return c;
     });
 
-    // build payload
+    // chosen columns
     const chosen = new Set<string>([
       ...LOCKED_ORDER,
       ...Array.from(selected),
@@ -392,13 +557,11 @@ export default function AssemblyExporter({ api }: Props) {
 
     const payload = cleaned.map((r) => orderRowByLockedAndAlpha(r, chosen));
     const missing = cleaned.filter((r) => !r.GUID).length;
-    if (missing) setExportMsg(`⚠️ ${missing} row(s) without GUID – added __warnings and will send anyway.`);
+    if (missing) setExportMsg(`⚠️ ${missing} row(s) without GUID – added __warnings.`);
 
     try {
       setBusy(true);
-      localStorage.setItem("sheet_webapp", scriptUrl);
-      localStorage.setItem("sheet_secret", secret);
-
+      setExportMsg("Sending rows to Google Sheet…");
       const res = await fetch(scriptUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -407,8 +570,8 @@ export default function AssemblyExporter({ api }: Props) {
       const data = await res.json();
       setTab("export");
       if (data?.ok) {
-        setExportMsg(`✅ Added ${payload.length} row(s) to Google Sheet. Coloring selection dark red…`);
-        await colorLastSelectionDarkRed();
+        setExportMsg(`✅ Added ${payload.length} row(s) to Google Sheet.${autoColorize ? " Coloring selection dark red…" : ""}`);
+        if (autoColorize) await colorLastSelectionDarkRed();
       } else {
         setExportMsg(`❌ Error: ${data?.error || "unknown"}`);
       }
@@ -420,58 +583,77 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }
 
-  /* ---- robust colorizer ---- */
+  /* =========================================================
+     COLORIZE (robust fallbacks)
+     ========================================================= */
+
   async function colorLastSelectionDarkRed() {
     const viewer: any = (api as any).viewer;
-    // build selection fallback from current viewer if discover wasn’t run
     let blocks = lastSelection;
-    if (!blocks?.length && typeof viewer?.getSelection === "function") {
-      const sel: any[] = await viewer.getSelection();
-      blocks = (sel || [])
-        .filter(Boolean)
-        .map(m => ({ modelId: String(m.modelId), ids: (m.objectRuntimeIds || []).slice() }))
-        .filter(b => b.ids.length);
-    }
+    if (!blocks?.length) blocks = await getCurrentSelectionBlocks(api);
     if (!blocks?.length) return;
 
-    for (const b of blocks) {
-      await tryApplyStateAny(viewer, b.modelId, b.ids);
-    }
+    for (const b of blocks) await tryApplyStateAny(viewer, b.modelId, b.ids);
   }
 
   async function tryApplyStateAny(viewer: any, modelId: string, ids: number[]) {
     const c255 = { r: 140, g: 0, b: 0 };
-    const c01  = { r: 0.55, g: 0, b: 0 };
+    const c01 = { r: 0.55, g: 0, b: 0 };
     const trials = [
       () => viewer?.setObjectState?.({ modelId, objectRuntimeIds: ids, state: { color: c255, opacity: 255 } }),
       () => viewer?.setObjectState?.({ modelId, objectRuntimeIds: ids, color: c255, opacity: 255 }),
-      () => viewer?.setObjectState?.({ modelId, objectRuntimeIds: ids, state: { color: c01,  opacity: 1 } }),
-      () => viewer?.setObjectState?.({ modelId, objectRuntimeIds: ids, color: c01,  opacity: 1 }),
+      () => viewer?.setObjectState?.({ modelId, objectRuntimeIds: ids, state: { color: c01, opacity: 1 } }),
+      () => viewer?.setObjectState?.({ modelId, objectRuntimeIds: ids, color: c01, opacity: 1 }),
       () => viewer?.applyObjectStates?.([{ modelId, objectRuntimeIds: ids, state: { color: c255, opacity: 255 } }]),
       () => viewer?.colorizeObjects?.(modelId, ids, c255),
     ];
     for (const t of trials) {
-      try { const r = await t(); if (r !== undefined) return; } catch { /* try next */ }
+      try { const r = await t(); if (r !== undefined) return; } catch { /* next */ }
     }
   }
 
   async function resetState() {
     try {
       const viewer: any = (api as any).viewer;
-      if (typeof viewer?.resetObjectState === "function") {
-        await viewer.resetObjectState();
-      } else if (typeof viewer?.clearObjectStates === "function") {
-        await viewer.clearObjectStates();
-      } else if (typeof viewer?.clearColors === "function") {
-        await viewer.clearColors();
-      }
+      if (typeof viewer?.resetObjectState === "function") await viewer.resetObjectState();
+      else if (typeof viewer?.clearObjectStates === "function") await viewer.clearObjectStates();
+      else if (typeof viewer?.clearColors === "function") await viewer.clearColors();
       setExportMsg("View state reset.");
     } catch (e: any) {
       setExportMsg(`Reset failed: ${e?.message || e}`);
     }
   }
 
-  /* ----------------- UI ----------------- */
+  /* =========================================================
+     CSV EXPORT (backup)
+     ========================================================= */
+
+  function exportToCSV() {
+    if (!rows.length) return;
+    const chosen = [...LOCKED_ORDER, ...Array.from(selected)]
+      .filter((k) => allKeys.includes(k) || LOCKED_ORDER.includes(k as any));
+
+    const head = chosen.join(",");
+    const body = rows
+      .map((r) =>
+        chosen
+          .map((k) => `"${((r[k] ?? "") as string).replace(/"/g, '""')}"`)
+          .join(",")
+      )
+      .join("\n");
+
+    const blob = new Blob([head + "\n" + body], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `assembly-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /* =========================================================
+     UI
+     ========================================================= */
 
   const c = styles;
 
@@ -489,15 +671,47 @@ export default function AssemblyExporter({ api }: Props) {
           <div style={c.section}>
             <div style={c.row}>
               <label style={c.label}>Google Apps Script URL</label>
-              <input value={scriptUrl} onChange={(e) => setScriptUrl(e.target.value)} placeholder="https://…/exec" style={c.input}/>
+              <input
+                value={settings.scriptUrl}
+                onChange={(e) => updateSettings({ scriptUrl: e.target.value })}
+                placeholder="https://…/exec"
+                style={c.input}
+              />
             </div>
             <div style={c.row}>
               <label style={c.label}>Shared Secret</label>
-              <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} style={c.input}/>
+              <input
+                type="password"
+                value={settings.secret}
+                onChange={(e) => updateSettings({ secret: e.target.value })}
+                style={c.input}
+              />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>Auto colorize after export</label>
+              <input
+                type="checkbox"
+                checked={settings.autoColorize}
+                onChange={(e) => updateSettings({ autoColorize: e.target.checked })}
+              />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>Default preset</label>
+              <select
+                value={settings.defaultPreset}
+                onChange={(e) => updateSettings({ defaultPreset: e.target.value as DefaultPreset })}
+                style={c.input}
+              >
+                <option value="recommended">Recommended</option>
+                <option value="tekla">Tekla Assembly</option>
+                <option value="ifc">IFC Reference</option>
+              </select>
             </div>
             <div style={{ ...c.row, justifyContent: "flex-end" }}>
-              <button style={c.btn} onClick={() => { localStorage.setItem("sheet_webapp", scriptUrl); localStorage.setItem("sheet_secret", secret); setSettingsMsg("Settings saved."); }}>Save</button>
-              <button style={c.btnGhost} onClick={() => { localStorage.removeItem("sheet_webapp"); localStorage.removeItem("sheet_secret"); setScriptUrl(""); setSecret(""); setSettingsMsg("Settings cleared."); }}>Clear</button>
+              <button style={c.btn} onClick={() => setSettingsMsg("Settings saved.")}>Save</button>
+              <button style={c.btnGhost} onClick={() => { localStorage.removeItem("assemblyExporterSettings"); updateSettings({}); setSettingsMsg("Settings reset."); }}>
+                Reset
+              </button>
             </div>
             {!!settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
@@ -522,10 +736,17 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btnGhost} onClick={() => selectAll(true)} disabled={!rows.length}>Select all</button>
               <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>Clear</button>
               <button style={c.btnGhost} onClick={resetState}>Reset state</button>
+              <button style={c.btnGhost} onClick={exportToCSV} disabled={!rows.length}>Download CSV</button>
               <button style={c.btnPrimary} onClick={send} disabled={busy || !rows.length}>
                 {busy ? "Sending…" : `Send to Google Sheet (${rows.length} rows)`}
               </button>
             </div>
+
+            {!!progress.total && progress.total > 1 && (
+              <div style={c.small}>
+                Progress: {progress.current}/{progress.total}
+              </div>
+            )}
 
             <div style={c.meta}>
               Locked order: {Array.from(LOCKED_ORDER).join(", ")}. Selected: {selected.size}.
@@ -564,12 +785,12 @@ export default function AssemblyExporter({ api }: Props) {
               )}
             </div>
 
-            {/* presets below list */}
-            <div style={{marginTop:8, display:"flex", gap:6, flexWrap:"wrap"}}>
-              <span style={{alignSelf:"center", opacity:.7}}>Presets:</span>
+            {/* Presets under the list */}
+            <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ alignSelf: "center", opacity: 0.7 }}>Presets:</span>
               <button style={c.btnGhost} onClick={presetRecommended} disabled={!rows.length}>Recommended</button>
-              <button style={c.btnGhost} onClick={presetTeklaAssembly} disabled={!rows.length}>Tekla Assembly</button>
-              <button style={c.btnGhost} onClick={presetIFCReference} disabled={!rows.length}>IFC Reference</button>
+              <button style={c.btnGhost} onClick={presetTekla} disabled={!rows.length}>Tekla Assembly</button>
+              <button style={c.btnGhost} onClick={presetIFC} disabled={!rows.length}>IFC Reference</button>
             </div>
 
             {!!exportMsg && <div style={{ ...c.note, marginTop: 6 }}>{exportMsg}</div>}
@@ -577,12 +798,16 @@ export default function AssemblyExporter({ api }: Props) {
         )}
       </div>
 
-      <div style={c.footer}>created by <b>Silver Vatsel</b> | Consiva OÜ</div>
+      <div style={c.footer}>
+        created by <b>Silver Vatsel</b> | Consiva OÜ
+      </div>
     </div>
   );
 }
 
-/* ----------------- styles ----------------- */
+/* =========================================================
+   STYLES
+   ========================================================= */
 
 const styles: Record<string, React.CSSProperties> = {
   shell: { height: "100vh", display: "flex", flexDirection: "column", background: "#fff", color: "#111",
