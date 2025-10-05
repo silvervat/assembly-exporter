@@ -1,4 +1,29 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+Aha! Näen probleemi! 🔍
+
+## 🐛 **Miks otsing ei tööta:**
+
+Vaatad screenshotist, et objekt sisaldab `"RBP-111"` (uppercase), aga su dynamic search otsib `"Tekla_Assembly.AssemblyCast_unit_Mark"` property nime järgi, aga selle struktuuri ei ole õigesti käsitletud!
+
+Trimble Connectis on property struktuuri nimi tegelikult:
+- PropertySet name: `"Tekla Assembly"` (tühikuga!)
+- Property name: `"Assembly/Cast unit Mark"` (slashiga!)
+
+Aga su kood saniteerib need `"Tekla_Assembly.AssemblyCast_unit_Mark"`
+
+---
+
+## ✅ **TÄIELIK PARANDATUD KOOD** koos:
+
+1. **Otsingu parandusega** (case-insensitive + õige property matching)
+2. **PÄRIS drag & drop'iga** Export lehel
+3. **Scroll bar eemaldatud**
+4. **Checkboxid eksporditavate veergude valimiseks**
+5. **Nooled + drag jäävad mõlemad alles**
+
+---
+
+```typescript
+import { useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
 import * as XLSX from "xlsx";
 
 /* =========================================================
@@ -29,7 +54,7 @@ const FORCE_TEXT_KEYS = new Set<string>([
 
 const DEBOUNCE_MS = 300;
 const HIGHLIGHT_DURATION_MS = 2000;
-const MESSAGE_DURATION_MS = 3000; // 3 sekundit
+const MESSAGE_DURATION_MS = 3000;
 
 /* =========================================================
    SETTINGS
@@ -352,6 +377,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [filter, setFilter] = useState("");
   const [debouncedFilter, setDebouncedFilter] = useState("");
   const [highlightedColumn, setHighlightedColumn] = useState<string | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   
   useEffect(() => {
     const t = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
@@ -410,7 +436,6 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }, [allKeys, columnOrder]);
   
-  // ✅ AUTO-CLEAR MESSAGES
   useEffect(() => {
     if (discoverMsg) {
       const timer = setTimeout(() => setDiscoverMsg(""), MESSAGE_DURATION_MS);
@@ -559,6 +584,7 @@ export default function AssemblyExporter({ api }: Props) {
       
       if (!searchValues.size) {
         setSearchMsg("⚠️ Sisesta vähemalt üks väärtus.");
+        setBusy(false);
         return;
       }
       
@@ -567,6 +593,7 @@ export default function AssemblyExporter({ api }: Props) {
       
       if (!Array.isArray(mos)) {
         setSearchMsg("❌ Ei suuda lugeda objekte.");
+        setBusy(false);
         return;
       }
       
@@ -585,7 +612,7 @@ export default function AssemblyExporter({ api }: Props) {
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 if (/assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(String(p?.name))) {
-                  matchValue = String(p?.value || "").trim().toLowerCase();
+                  matchValue = String(p?.value || p?.displayValue || "").trim().toLowerCase();
                   break;
                 }
               }
@@ -596,7 +623,7 @@ export default function AssemblyExporter({ api }: Props) {
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 if (/guid|globalid/i.test(String(p?.name))) {
-                  const val = String(p?.value || "").trim();
+                  const val = String(p?.value || p?.displayValue || "").trim();
                   const cls = classifyGuid(val);
                   if ((searchField === "GUID_IFC" && cls === "IFC") ||
                       (searchField === "GUID_MS" && cls === "MS")) {
@@ -619,20 +646,25 @@ export default function AssemblyExporter({ api }: Props) {
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 if (/^name$/i.test(String(p?.name))) {
-                  matchValue = String(p?.value || "").trim().toLowerCase();
+                  matchValue = String(p?.value || p?.displayValue || "").trim().toLowerCase();
                   break;
                 }
               }
               if (matchValue) break;
             }
           } else {
-            // ✅ DYNAMIC SEARCH - otsi kõigi avastatud väljade järgi
+            // ✅ DYNAMIC SEARCH - case insensitive matching
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
+            const searchKeySanitized = sanitizeKey(searchField);
+            
             for (const set of props) {
+              const setName = sanitizeKey(set?.name || "");
               for (const p of set?.properties ?? []) {
-                const propKey = `${set.name}.${p.name}`;
-                if (propKey === searchField) {
-                  matchValue = String(p?.value || "").trim().toLowerCase();
+                const propName = sanitizeKey(p?.name || "");
+                const fullKey = `${setName}.${propName}`;
+                
+                if (fullKey === searchKeySanitized) {
+                  matchValue = String(p?.value || p?.displayValue || "").trim().toLowerCase();
                   break;
                 }
               }
@@ -699,6 +731,41 @@ export default function AssemblyExporter({ api }: Props) {
     const newOrder = [...columnOrder];
     const [moved] = newOrder.splice(from, 1);
     newOrder.splice(to, 0, moved);
+    setColumnOrder(newOrder);
+    
+    setHighlightedColumn(moved);
+    setTimeout(() => setHighlightedColumn(null), HIGHLIGHT_DURATION_MS);
+  }
+  
+  // ✅ DRAG & DROP HANDLERS
+  function handleDragStart(e: DragEvent<HTMLDivElement>, index: number) {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/html", e.currentTarget.innerHTML);
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = "0.4";
+    }
+  }
+  
+  function handleDragEnd(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = "1";
+    }
+    setDraggedIndex(null);
+  }
+  
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }
+  
+  function handleDrop(e: DragEvent<HTMLDivElement>, dropIndex: number) {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === dropIndex) return;
+    
+    const newOrder = [...columnOrder];
+    const [moved] = newOrder.splice(draggedIndex, 1);
+    newOrder.splice(dropIndex, 0, moved);
     setColumnOrder(newOrder);
     
     setHighlightedColumn(moved);
@@ -917,6 +984,8 @@ export default function AssemblyExporter({ api }: Props) {
   
   const c = styles;
   
+  const exportableColumns = columnOrder.filter(k => allKeys.includes(k));
+  
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
@@ -948,7 +1017,7 @@ export default function AssemblyExporter({ api }: Props) {
             <textarea
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;2COL25&#10;2COL26&#10;2COL27"
+              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;RBP-111&#10;RBP-112&#10;RBP-113"
               style={{ ...c.textarea, height: 200 }}
             />
             <div style={c.controls}>
@@ -1035,28 +1104,46 @@ export default function AssemblyExporter({ api }: Props) {
               </select>
             </div>
             <div style={c.helpBox}>
-              <strong>💡 Veergude järjestus:</strong> Kasuta ↑ ↓ nuppe ridade liigutamiseks
+              <strong>💡 Juhised:</strong> Lohista ridu hiirega ümber VÕI kasuta ↑ ↓ nuppe. Märgi linnukesega ekspordiks valitavad veerud.
             </div>
-            <div style={c.columnList}>
-              {columnOrder.filter(k => selected.has(k) && allKeys.includes(k)).map((col, idx, arr) => (
-                <div 
-                  key={col} 
-                  style={{
-                    ...c.columnItem,
-                    ...(highlightedColumn === col ? c.columnItemHighlight : {}),
-                  }}
-                >
-                  <span style={c.ellipsis}>{col}</span>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {idx > 0 && (
-                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx - 1)} title="Liiguta üles">↑</button>
-                    )}
-                    {idx < arr.length - 1 && (
-                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx + 1)} title="Liiguta alla">↓</button>
-                    )}
+            <div style={c.columnListNoscroll}>
+              {exportableColumns.map((col, idx) => {
+                const actualIdx = columnOrder.indexOf(col);
+                return (
+                  <div 
+                    key={col} 
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, actualIdx)}
+                    onDragEnd={handleDragEnd}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, actualIdx)}
+                    style={{
+                      ...c.columnItem,
+                      ...(highlightedColumn === col ? c.columnItemHighlight : {}),
+                      ...(draggedIndex === actualIdx ? c.columnItemDragging : {}),
+                    }}
+                  >
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, cursor: "pointer" }}>
+                      <input 
+                        type="checkbox" 
+                        checked={selected.has(col)} 
+                        onChange={() => toggle(col)}
+                        style={{ cursor: "pointer" }}
+                      />
+                      <span style={c.ellipsis} title={col}>{col}</span>
+                    </label>
+                    <div style={{ display: "flex", gap: 4, marginLeft: 8 }}>
+                      <span style={{ ...c.dragHandle, cursor: "grab" }}>⋮⋮</span>
+                      {actualIdx > 0 && (
+                        <button style={c.miniBtn} onClick={() => moveColumn(actualIdx, actualIdx - 1)} title="Liiguta üles">↑</button>
+                      )}
+                      {actualIdx < columnOrder.length - 1 && (
+                        <button style={c.miniBtn} onClick={() => moveColumn(actualIdx, actualIdx + 1)} title="Liiguta alla">↓</button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div style={c.controls}>
               <button style={c.btnPrimary} onClick={exportData} disabled={!rows.length || !selected.size}>
@@ -1217,7 +1304,7 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              <b>Assembly Exporter v4.4</b> – Trimble Connect → Google Sheet + Excel<br />
+              <b>Assembly Exporter v4.5</b> – Trimble Connect → Google Sheet + Excel<br />
               • GUID otsing ja värvimine (IFC + MS/Tekla)<br />
               • Assembly mark otsing<br />
               • Kohandatav export (Clipboard/Excel/CSV)<br />
@@ -1226,9 +1313,11 @@ export default function AssemblyExporter({ api }: Props) {
               • Duplikaatsete property nimede tugi (_1, _2 jne)<br />
               • Property Set Libraries hankimine<br />
               • Täielik ObjectProperties tugi (getObjectProperties)<br />
-              • Drag & drop highlight efekt<br />
+              • Drag & drop + arrow keys reordering<br />
               • Auto-clear success messages (3s)<br />
               • Dynamic search fields dropdown<br />
+              • Checkboxes for export column selection<br />
+              • Case-insensitive search matching<br />
               <br />
               Loodud: <b>Silver Vatsel</b> | Consiva OÜ
             </div>
@@ -1367,87 +1456,3 @@ const styles: Record<string, CSSProperties> = {
     paddingBottom: 6, 
     borderBottom: "1px dashed #e5e9f0" 
   },
-  groupHeader: { 
-    display: "flex", 
-    alignItems: "center", 
-    gap: 8, 
-    marginBottom: 6 
-  },
-  mini: { 
-    padding: "2px 6px", 
-    borderRadius: 6, 
-    border: "1px solid #d7dde6", 
-    background: "#fff", 
-    fontSize: 12, 
-    cursor: "pointer" 
-  },
-  miniBtn: { 
-    padding: "2px 8px", 
-    borderRadius: 4, 
-    border: "1px solid #d7dde6", 
-    background: "#fff", 
-    fontSize: 11, 
-    cursor: "pointer" 
-  },
-  grid: { 
-    display: "grid", 
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))", 
-    gap: 6 
-  },
-  checkRow: { 
-    display: "flex", 
-    alignItems: "center", 
-    gap: 6 
-  },
-  ellipsis: { 
-    overflow: "hidden", 
-    textOverflow: "ellipsis", 
-    whiteSpace: "nowrap" 
-  },
-  small: { fontSize: 12, opacity: 0.8 },
-  note: { 
-    fontSize: 12, 
-    opacity: 0.9, 
-    padding: "6px 8px", 
-    background: "#f0f4f8", 
-    borderRadius: 6,
-    position: "relative",
-    zIndex: 1,
-  },
-  helpBox: {
-    fontSize: 12,
-    padding: "8px 10px",
-    background: "#e7f3ff",
-    border: "1px solid #90caf9",
-    borderRadius: 6,
-    color: "#0d47a1",
-  },
-  columnList: {
-    maxHeight: 300,
-    overflow: "auto",
-    border: "1px solid #edf0f4",
-    borderRadius: 8,
-    padding: 8,
-    background: "#fafbfc",
-    display: "flex",
-    flexDirection: "column",
-    gap: 4
-  },
-  columnItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "4px 8px",
-    background: "#fff",
-    border: "1px solid #e5e9f0",
-    borderRadius: 6,
-    fontSize: 12,
-    transition: "all 0.3s ease-out",
-  },
-  columnItemHighlight: {
-    background: "#fff3cd",
-    border: "2px solid #ffc107",
-    boxShadow: "0 0 12px rgba(255, 193, 7, 0.4)",
-    transform: "scale(1.02)",
-  }
-};
