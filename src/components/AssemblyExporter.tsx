@@ -775,7 +775,7 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>Tühjenda</button>
               <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>Valitud: {selected.size}</span>
             </div>
-            <div style={c.list}>
+            <div style={{...c.list, maxHeight: "none", overflow: "visible"}}>
               {!rows.length ? (
                 <div style={c.small}>Klõpsa "Discover fields".</div>
               ) : (
@@ -1064,7 +1064,7 @@ const styles: Record<string, CSSProperties> = {
     color: "#fff",
     cursor: "pointer",
   },
-  list: { flex: 1, minHeight: 0, maxHeight: 400, overflow: "auto", border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc" },
+  list: { flex: 1, minHeight: 0, overflow: "auto", border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc" },
   group: { marginBottom: 8, paddingBottom: 6, borderBottom: "1px dashed #e5e9f0" },
   groupHeader: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
   mini: { padding: "2px 6px", borderRadius: 6, border: "1px solid #d7dde6", background: "#fff", fontSize: 12, cursor: "pointer" },
