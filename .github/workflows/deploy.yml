@@ -10,7 +10,6 @@ permissions:
   pages: write
   id-token: write
 
-# Vältib paralleelseid/risti jooksvaid Pages deploysid: ainult VIIMANE jääb aktiivseks
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -22,14 +21,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      # Kui lock-fail olemas -> kasuta cache'i
+      - name: Setup Node (with cache)
+        if: hashFiles('**/package-lock.json') != ''
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
+      # Kui lock-faili pole -> ilma cache’ita
+      - name: Setup Node (no cache)
+        if: hashFiles('**/package-lock.json') == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Install: kui on lock, kasuta `npm ci`, muidu `npm i`
       - name: Install deps
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm i
+          fi
 
       - name: Build
         run: npm run build --if-present
@@ -40,7 +54,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist   # Vite vaikimisi väljund
+          path: ./dist
 
   deploy:
     needs: build
