@@ -132,7 +132,7 @@ function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   return "UNKNOWN";
 }
 /* =========================================================
-   PROPERTY FLATTENING (WITH DUPLICATE HANDLING)
+   PROPERTY FLATTENING (WITH DUPLICATE HANDLING AND NESTED SUPPORT)
    ========================================================= */
 async function flattenProps(
   obj: any,
@@ -167,18 +167,20 @@ async function flattenProps(
     propMap.set(key, s);
     out[key] = s;
   };
-  const sets: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
-  for (const set of sets) {
-    const groupName = set?.set ?? set?.setName ?? set?.name ?? set?.displayName ?? "Group";
-    for (const p of set?.properties ?? []) {
-      const propName = p?.name ?? p?.displayName ?? "Prop";
-      push(groupName, propName, p?.value);
-      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(propName)))
-        out.Name = String(p?.value ?? "");
-      if (out.Type === "Unknown" && /\btype\b/i.test(String(propName)))
-        out.Type = String(p?.value ?? "Unknown");
+  const recurseProps = (props: any, groupPrefix: string = "") => {
+    if (Array.isArray(props)) {
+      for (const p of props) recurseProps(p, groupPrefix);
+    } else if (typeof props === "object" && props !== null) {
+      for (const [key, val] of Object.entries(props)) {
+        if (typeof val === "object" && val !== null) {
+          recurseProps(val, `${groupPrefix}${sanitizeKey(key)}.`);
+        } else {
+          push(groupPrefix.slice(0, -1), key, val);
+        }
+      }
     }
-  }
+  };
+  recurseProps(obj?.properties);
   for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
@@ -313,7 +315,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [settingsMsg, setSettingsMsg] = useState("");
   const [psetMsg, setPsetMsg] = useState("");
   const [psetLibraries, setPsetLibraries] = useState<any[]>([]);
-  const [projectId, setProjectId] = useState(""); // Sisesta oma projectId siia või lisa input
+  const [projectId, setProjectId] = useState(""); // Sisesta oma projectId siin või lisa input
   const [libraryId, setLibraryId] = useState("");
   const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
  
