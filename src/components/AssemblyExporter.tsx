@@ -1459,3 +1459,66 @@ const styles: Record<string, CSSProperties> = {
   checkRow: { 
     display: "flex", 
     alignItems: "center", 
+    gap: 6 
+  },
+  ellipsis: { 
+    overflow: "hidden", 
+    textOverflow: "ellipsis", 
+    whiteSpace: "nowrap" 
+  },
+  small: { fontSize: 12, opacity: 0.8 },
+  note: { 
+    fontSize: 12, 
+    opacity: 0.9, 
+    padding: "6px 8px", 
+    background: "#f0f4f8", 
+    borderRadius: 6,
+    position: "relative",
+    zIndex: 1,
+  },
+  helpBox: {
+    fontSize: 12,
+    padding: "8px 10px",
+    background: "#e7f3ff",
+    border: "1px solid #90caf9",
+    borderRadius: 6,
+    color: "#0d47a1",
+  },
+  columnListNoscroll: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    border: "1px solid #edf0f4",
+    borderRadius: 8,
+    padding: 8,
+    background: "#fafbfc",
+  },
+  columnItem: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "4px 8px",
+    background: "#fff",
+    border: "1px solid #e5e9f0",
+    borderRadius: 6,
+    fontSize: 12,
+    transition: "all 0.3s ease-out",
+    cursor: "move",
+  },
+  columnItemHighlight: {
+    background: "#fff3cd",
+    border: "2px solid #ffc107",
+    boxShadow: "0 0 12px rgba(255, 193, 7, 0.4)",
+    transform: "scale(1.02)",
+  },
+  columnItemDragging: {
+    opacity: 0.4,
+    cursor: "grabbing",
+  },
+  dragHandle: {
+    fontSize: 16,
+    color: "#999",
+    userSelect: "none" as any,
+    lineHeight: 1,
+  }
+};
