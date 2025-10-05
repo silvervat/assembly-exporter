@@ -1,108 +1,113 @@
-import { ModusButton, ModusTextInput } from "@trimble-oss/modus-react-components";
 import { useState } from "react";
+import { ModusButton, ModusTextInput } from "@trimble-oss/modus-react-components";
 import type { WorkspaceAPI } from "trimble-connect-workspace-api";
 
-export default function AssemblyExporter({ api }: { api: WorkspaceAPI }) {
-  const [webAppUrl, setWebAppUrl] = useState<string>(localStorage.getItem("sheet_webapp") || "");
-  const [secret, setSecret] = useState<string>(localStorage.getItem("sheet_secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU");
-  const [status, setStatus] = useState<string>("");
-  const [isError, setIsError] = useState<boolean>(false);
+interface Props {
+  api: WorkspaceAPI;
+}
 
-  async function exportToSheet() {
+export default function AssemblyExporter({ api }: Props) {
+  const [scriptUrl, setScriptUrl] = useState(
+    localStorage.getItem("scriptUrl") || ""
+  );
+  const [secret, setSecret] = useState(
+    localStorage.getItem("secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU"
+  );
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState(false);
+
+  const getProp = (obj: any, name: string) => {
+    for (const group of obj?.properties || [])
+      for (const p of group.properties || [])
+        if (p.name === name) return p.value;
+    return "";
+  };
+
+  async function handleSend() {
     try {
-      localStorage.setItem("sheet_webapp", webAppUrl);
-      localStorage.setItem("sheet_secret", secret);
-
-      setIsError(false);
-      setStatus("Loen valitud objekte...");
+      localStorage.setItem("scriptUrl", scriptUrl);
+      localStorage.setItem("secret", secret);
+      setStatus("Loen valikut...");
+      setError(false);
 
       const selection = await api.viewer.getSelection();
-      if (!selection.length || !selection[0].objectRuntimeIds?.length) {
-        setIsError(true);
-        setStatus("Vali esmalt objekte mudelist!");
+      if (!selection.length) {
+        setError(true);
+        setStatus("Valik on tühi!");
         return;
       }
 
-      const firstModel = selection[0];
-      setStatus(`Loen ${firstModel.objectRuntimeIds.length} objekti omadusi...`);
+      const model = selection[0];
+      const ids = model.objectRuntimeIds;
+      if (!ids?.length) {
+        setError(true);
+        setStatus("Valik on tühi!");
+        return;
+      }
 
-      const properties = await api.viewer.getObjectProperties(firstModel.modelId, firstModel.objectRuntimeIds);
+      const props = await api.viewer.getObjectProperties(model.modelId, ids);
 
-      const rows = properties.map((obj: any) => {
-        const name =
-          getPropertyValue(obj, "Name") || getPropertyValue(obj, "NAME") || "Unknown";
-        const type =
-          getPropertyValue(obj, "IfcType") ||
-          getPropertyValue(obj, "IFC_TYPE") ||
-          getPropertyValue(obj, "Type") ||
-          "Unknown";
+      const rows = props.map((o: any) => ({
+        ObjectId: o.id,
+        Name: getProp(o, "Name") || "Unknown",
+        Type:
+          getProp(o, "IfcType") ||
+          getProp(o, "Type") ||
+          getProp(o, "IFC_TYPE") ||
+          "Unknown",
+        ModelId: model.modelId,
+      }));
 
-        return {
-          ObjectId: obj.id,
-          Name: name,
-          Type: type,
-          ModelId: firstModel.modelId,
-        };
-      });
+      setStatus(`Saadan ${rows.length} rida...`);
 
-      setStatus(`Saadan ${rows.length} rida Google Sheeti...`);
-
-      const response = await fetch(webAppUrl, {
+      const res = await fetch(scriptUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ secret, rows }),
       });
 
-      if (!response.ok) throw new Error(`HTTP viga: ${response.status}`);
-
-      const result = await response.json();
+      const result = await res.json();
       if (result.ok) {
-        setIsError(false);
         setStatus(`✅ Edukalt lisatud ${result.inserted} rida Google Sheeti!`);
       } else {
-        setIsError(true);
+        setError(true);
         setStatus(`❌ Viga: ${result.error}`);
       }
-    } catch (error: any) {
-      setIsError(true);
-      setStatus(`❌ Viga: ${error?.message || error}`);
-      console.error(error);
+    } catch (err: any) {
+      setError(true);
+      setStatus(`❌ Viga: ${err.message}`);
     }
-  }
-
-  function getPropertyValue(obj: any, propertyName: string): string {
-    if (!obj?.properties) return "";
-    for (const set of obj.properties) {
-      const found = set?.properties?.find((p: any) => p?.name === propertyName);
-      if (found) return String(found.value ?? "");
-    }
-    return "";
   }
 
   return (
-    <div className="content-panel">
-      <h3>Seaded</h3>
+    <div className="p-4 space-y-3">
+      <h3>Assembly Exporter</h3>
 
       <ModusTextInput
         label="Google Apps Script URL"
-        placeholder="https://script.google.com/macros/s/.../exec"
-        value={webAppUrl}
-        onValueChange={(e: any) => setWebAppUrl(e.target.value)}
+        value={scriptUrl}
+        onValueChange={(e: any) => setScriptUrl(e.target.value)}
       />
-
       <ModusTextInput
         label="Shared Secret"
         type="password"
-        placeholder="sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU"
         value={secret}
         onValueChange={(e: any) => setSecret(e.target.value)}
       />
 
-      <div className="button-container">
-        <ModusButton onClick={exportToSheet}>Saada valik Google Sheeti</ModusButton>
-      </div>
+      <ModusButton onClick={handleSend}>Saada valik Google Sheeti</ModusButton>
 
-      {status && <div className={`status-message ${isError ? "error" : "success"}`}>{status}</div>}
+      {status && (
+        <div
+          style={{
+            marginTop: "1rem",
+            color: error ? "red" : "green",
+            fontSize: "14px",
+          }}
+        >
+          {status}
+        </div>
+      )}
     </div>
   );
 }
