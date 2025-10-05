@@ -20,7 +20,6 @@ const LOCKED_ORDER = [
 ] as const;
 type LockedKey = (typeof LOCKED_ORDER)[number];
 
-/** Column keys that must be sent to Sheet as TEXT (keep + / -). */
 const FORCE_TEXT_KEYS = new Set<string>([
   "Tekla_Assembly.AssemblyCast_unit_top_elevation",
   "Tekla_Assembly.AssemblyCast_unit_bottom_elevation",
@@ -29,7 +28,7 @@ const FORCE_TEXT_KEYS = new Set<string>([
 const DEBOUNCE_MS = 300;
 
 /* =========================================================
-   SETTINGS (single localStorage key)
+   SETTINGS
    ========================================================= */
 
 type DefaultPreset = "recommended" | "tekla" | "ifc";
@@ -47,7 +46,9 @@ function useSettings() {
     if (saved) {
       try {
         return JSON.parse(saved) as AppSettings;
-      } catch {}
+      } catch {
+        // ignore
+      }
     }
     return {
       scriptUrl: localStorage.getItem("sheet_webapp") || "",
@@ -63,7 +64,6 @@ function useSettings() {
     const next = { ...settings, ...patch };
     setSettings(next);
     localStorage.setItem("assemblyExporterSettings", JSON.stringify(next));
-    // backward-compat
     localStorage.setItem("sheet_webapp", next.scriptUrl || "");
     localStorage.setItem("sheet_secret", next.secret || "");
   };
@@ -72,7 +72,7 @@ function useSettings() {
 }
 
 /* =========================================================
-   SMALL UTILS
+   UTILS
    ========================================================= */
 
 function sanitizeKey(s: string) {
@@ -94,16 +94,14 @@ function groupKeys(keys: string[]): Grouped {
   for (const k of keys) {
     const dot = k.indexOf(".");
     const grp = dot > 0 ? k.slice(0, dot) : "Other";
-    (g[grp] ||= []).push(k);
+    if (!g[grp]) g[grp] = [];
+    g[grp].push(k);
   }
-  for (const [grp, arr] of Object.entries(g)) {
+  for (const arr of Object.values(g)) {
     arr.sort((a, b) => a.localeCompare(b));
-    g[grp] = arr;
   }
   return g;
 }
-
-/* ----------------- Number helpers ----------------- */
 
 function isNumericString(s: string) {
   return /^[-+]?(\d+|\d*\.\d+)(e[-+]?\d+)?$/i.test(s.trim());
@@ -144,7 +142,7 @@ function collectAllPropertySets(obj: any): TCPropertySet[] {
 
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
-  if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC"; // compressed IFC
+  if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
   if (
     /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(
       s
@@ -183,7 +181,6 @@ function deepScanForGuidAndMeta(
   return acc;
 }
 
-/** Flatten single object properties into a Row. */
 function flattenProps(obj: any, modelId: string, projectName: string): Row {
   const out: Row = {
     GUID: "",
@@ -210,7 +207,7 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
     const s = v == null ? "" : String(v);
     propMap.set(key, s);
-    (out as any)[key] = s;
+    out[key] = s;
   };
 
   const sets = collectAllPropertySets(obj);
@@ -228,7 +225,6 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     }
   }
 
-  // FileName candidates
   const fileKeyCandidates = [
     "Reference_Object.File_Name",
     "Reference_Object.FileName",
@@ -252,7 +248,6 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     }
   }
 
-  // BLOCK
   const blockCandidates = [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
@@ -266,7 +261,6 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     }
   }
 
-  // GUIDs by structured keys
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
@@ -275,7 +269,6 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
     if (cls === "IFC" && !guidIfc) guidIfc = v;
     if (cls === "MS" && !guidMs) guidMs = v;
   }
-  // Raw name scan
   if (!guidIfc || !guidMs) {
     for (const r of rawNames) {
       if (!/guid/i.test(String(r.name))) continue;
@@ -289,7 +282,6 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
   out.GUID_MS = guidMs;
   out.GUID = guidIfc || guidMs || "";
 
-  // Global deep scan fallback
   if (!out.GUID || !out.GUID_IFC || !out.GUID_MS || !out.FileName) {
     const found = deepScanForGuidAndMeta(obj);
     if (!out.GUID_IFC && found.ifc) out.GUID_IFC = found.ifc;
@@ -301,28 +293,21 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
   return out;
 }
 
-/* =========================================================
-   PROJECT NAME
-   ========================================================= */
-
 async function getProjectName(api: any): Promise<string> {
   try {
     if (typeof api?.project?.getProject === "function") {
       const proj = await api.project.getProject();
       if (proj?.name) return String(proj.name);
     }
-  } catch {}
+  } catch {
+    // ignore
+  }
   return "";
 }
-
-/* =========================================================
-   SELECTION (viewer + property panel fallback)
-   ========================================================= */
 
 async function getCurrentSelectionBlocks(
   api: any
 ): Promise<{ modelId: string; ids: number[] }[]> {
-  // 1) viewer.getSelection()
   try {
     const sel = await api?.viewer?.getSelection?.();
     if (Array.isArray(sel) && sel.length) {
@@ -333,9 +318,10 @@ async function getCurrentSelectionBlocks(
         }))
         .filter((b: any) => b.ids.length);
     }
-  } catch {}
+  } catch {
+    // ignore
+  }
 
-  // 2) Property Panel getPropertyPanelData()
   const tryPP = async (host: any) => {
     try {
       const data = await host?.getPropertyPanelData?.();
@@ -348,7 +334,9 @@ async function getCurrentSelectionBlocks(
           }))
           .filter((b: any) => b.ids.length);
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
     return [];
   };
 
@@ -380,7 +368,6 @@ export default function AssemblyExporter({ api }: Props) {
     new Set<string>(JSON.parse(localStorage.getItem("fieldSel") || "[]"))
   );
 
-  // filter (debounced)
   const [filter, setFilter] = useState<string>("");
   const [debouncedFilter, setDebouncedFilter] = useState<string>("");
   useEffect(() => {
@@ -388,7 +375,6 @@ export default function AssemblyExporter({ api }: Props) {
     return () => clearTimeout(t);
   }, [filter]);
 
-  // messages / progress
   const [busy, setBusy] = useState(false);
   const [exportMsg, setExportMsg] = useState<string>("");
   const [settingsMsg, setSettingsMsg] = useState<string>("");
@@ -396,12 +382,10 @@ export default function AssemblyExporter({ api }: Props) {
     { current: 0, total: 0 }
   );
 
-  // last selection (for colorize)
   const [lastSelection, setLastSelection] = useState
-    { modelId: string; ids: number[] }[]
+    Array<{ modelId: string; ids: number[] }>
   >([]);
 
-  /* ---------- derived ---------- */
   const allKeys: string[] = useMemo(
     () => Array.from(new Set(rows.flatMap((r: Row) => Object.keys(r)))).sort(),
     [rows]
@@ -428,7 +412,6 @@ export default function AssemblyExporter({ api }: Props) {
     localStorage.setItem("fieldSel", JSON.stringify(Array.from(selected)));
   }, [selected]);
 
-  // apply default preset after discovery (only when nothing selected yet)
   useEffect(() => {
     if (!rows.length) return;
     if (selected.size) return;
@@ -459,10 +442,6 @@ export default function AssemblyExporter({ api }: Props) {
   function selectAll(on: boolean) {
     setSelected(() => (on ? new Set(allKeys) : new Set()));
   }
-
-  /* =========================================================
-     PRESETS
-     ========================================================= */
 
   function presetRecommended() {
     const wanted = new Set<string>([
@@ -496,10 +475,6 @@ export default function AssemblyExporter({ api }: Props) {
     setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
   }
 
-  /* =========================================================
-     DISCOVER (with timeout + progress)
-     ========================================================= */
-
   async function discover() {
     try {
       setBusy(true);
@@ -513,7 +488,6 @@ export default function AssemblyExporter({ api }: Props) {
         return;
       }
 
-      // timeout protection
       const timeout = new Promise<never>((_, rej) =>
         setTimeout(() => rej(new Error("Discovery timeout after 30s")), 30000)
       );
@@ -554,18 +528,14 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }
 
-  /* =========================================================
-     VALIDATION + ORDERING
-     ========================================================= */
-
   function orderRowByLockedAndAlpha(r: Row, chosen: Set<string>): Row {
     const o: Row = {};
-    for (const k of LOCKED_ORDER) if (k in r) (o as any)[k] = r[k];
+    for (const k of LOCKED_ORDER) if (k in r) o[k] = r[k];
     const rest = Array.from(chosen).filter(
       (k) => !(LOCKED_ORDER as readonly string[]).includes(k as LockedKey)
     );
     rest.sort((a, b) => a.localeCompare(b));
-    for (const k of rest) if (k in r) (o as any)[k] = r[k];
+    for (const k of rest) if (k in r) o[k] = r[k];
     return o;
   }
 
@@ -584,10 +554,6 @@ export default function AssemblyExporter({ api }: Props) {
     return { valid, errors };
   }
 
-  /* =========================================================
-     EXPORT: Google Sheet
-     ========================================================= */
-
   async function send() {
     const { scriptUrl, secret, autoColorize } = settings;
 
@@ -602,12 +568,10 @@ export default function AssemblyExporter({ api }: Props) {
       return;
     }
 
-    // use validator (fixes TS build + provides warnings)
     const { errors: validationErrors } = validateRows(rows);
     if (validationErrors.length)
       console.warn("Validation warnings:", validationErrors);
 
-    // add warnings + number cleanup + force text
     const warnRows = rows.map((r) => {
       const warn: string[] = [];
       if (!r.GUID) warn.push("Missing GUID");
@@ -647,7 +611,6 @@ export default function AssemblyExporter({ api }: Props) {
       return c;
     });
 
-    // chosen columns
     const chosen = new Set<string>(
       [...LOCKED_ORDER, ...Array.from(selected), "__warnings"].filter(
         (k) =>
@@ -692,10 +655,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
-  /* =========================================================
-     COLORIZE (robust fallbacks)
-     ========================================================= */
 
   async function colorLastSelectionDarkRed() {
     const viewer: any = (api as any).viewer;
@@ -755,7 +714,7 @@ export default function AssemblyExporter({ api }: Props) {
         const r = await t();
         if (r !== undefined) return;
       } catch {
-        /* next */
+        // ignore
       }
     }
   }
@@ -774,10 +733,6 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(`Reset failed: ${e?.message || e}`);
     }
   }
-
-  /* =========================================================
-     CSV EXPORT (backup)
-     ========================================================= */
 
   function exportToCSV() {
     if (!rows.length) return;
@@ -803,15 +758,10 @@ export default function AssemblyExporter({ api }: Props) {
     URL.revokeObjectURL(url);
   }
 
-  /* =========================================================
-     UI
-     ========================================================= */
-
   const c = styles;
 
   return (
     <div style={c.shell}>
-      {/* Tabs */}
       <div style={c.topbar}>
         <button
           style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }}
@@ -865,7 +815,8 @@ export default function AssemblyExporter({ api }: Props) {
               />
             </div>
             <div style={c.row}>
-              <label style={c.label}>Default preset</label<select
+              <label style={c.label}>Default preset</label>
+              <select
                 value={settings.defaultPreset}
                 onChange={(e) =>
                   updateSettings({
@@ -886,8 +837,7 @@ export default function AssemblyExporter({ api }: Props) {
               >
                 Save
               </button>
-              <button
-                style={c.btnGhost}
+              <buttonstyle={c.btnGhost}
                 onClick={() => {
                   localStorage.removeItem("assemblyExporterSettings");
                   updateSettings({
@@ -1026,7 +976,6 @@ export default function AssemblyExporter({ api }: Props) {
               )}
             </div>
 
-            {/* Presets under the list */}
             <div
               style={{
                 marginTop: 8,
@@ -1074,10 +1023,6 @@ export default function AssemblyExporter({ api }: Props) {
     </div>
   );
 }
-
-/* =========================================================
-   STYLES
-   ========================================================= */
 
 const styles: Record<string, React.CSSProperties> = {
   shell: {
