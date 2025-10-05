@@ -5,4 +5,5 @@ export default defineConfig({
   plugins: [react()],
   base: "/assembly-exporter/",
   build: { outDir: "dist", emptyOutDir: true },
+  optimizeDeps: { include: ["xlsx"] },
 });
