@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 /* =========================================================
-   CONSTANTS / TYPES
+   TYPES / CONSTANTS
    ========================================================= */
 
-type Tab = "export" | "settings" | "about";
+type Tab = "search" | "discover" | "export" | "settings" | "about";
 type Row = Record<string, string>;
+type ExportFormat = "clipboard" | "excel" | "csv";
 
 const LOCKED_ORDER = [
   "GUID",
@@ -38,7 +39,18 @@ interface AppSettings {
   secret: string;
   autoColorize: boolean;
   defaultPreset: DefaultPreset;
+  colorizeColor: { r: number; g: number; b: number };
 }
+
+const DEFAULT_COLORS = {
+  darkRed: { r: 140, g: 0, b: 0 },
+  red: { r: 255, g: 0, b: 0 },
+  orange: { r: 255, g: 140, b: 0 },
+  yellow: { r: 255, g: 255, b: 0 },
+  green: { r: 0, g: 200, b: 0 },
+  blue: { r: 0, g: 100, b: 255 },
+  purple: { r: 160, g: 0, b: 200 },
+};
 
 function useSettings() {
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -50,11 +62,10 @@ function useSettings() {
     }
     return {
       scriptUrl: localStorage.getItem("sheet_webapp") || "",
-      secret:
-        localStorage.getItem("sheet_secret") ||
-        "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU",
+      secret: localStorage.getItem("sheet_secret") || "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU",
       autoColorize: true,
       defaultPreset: "recommended",
+      colorizeColor: DEFAULT_COLORS.darkRed,
     };
   });
 
@@ -80,7 +91,7 @@ function sanitizeKey(s: string) {
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
-  if (g === "referenceobject") return 1; // <— oluline parandus
+  if (g === "referenceobject") return 1;
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
@@ -111,182 +122,68 @@ function normaliseNumberString(s: string) {
   return String(parseFloat(n.toFixed(4)));
 }
 
-/* =========================================================
-   PROPERTY SETS + GUIDS
-   ========================================================= */
-
-type TCProperty = { name: string; value: unknown };
-type TCPropertySet = { name: string; properties: TCProperty[] };
-
-function collectAllPropertySets(obj: any): TCPropertySet[] {
-  const official: TCPropertySet[] = [
-    ...(Array.isArray(obj?.propertySets) ? obj.propertySets : []),
-    ...(Array.isArray(obj?.propertySetLibraries)
-      ? obj.propertySetLibraries
-      : []),
-  ];
-  const fallbacks: TCPropertySet[] = [
-    ...(Array.isArray(obj?.properties) ? obj.properties : []),
-    ...(Array.isArray(obj?.psets) ? obj.psets : []),
-    ...(Array.isArray(obj?.libraries) ? obj.libraries : []),
-    ...(Array.isArray(obj?.customProperties) ? obj.customProperties : []),
-  ];
-  return [...official, ...fallbacks].filter(
-    (s): s is TCPropertySet => !!s && Array.isArray((s as any).properties)
-  );
-}
-
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
   if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
   if (
-    /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(
-      s
-    ) || /^[0-9A-Fa-f]{32}$/.test(s)
+    /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(s) ||
+    /^[0-9A-Fa-f]{32}$/.test(s)
   ) return "MS";
   return "UNKNOWN";
 }
 
-function deepScanForGuidAndMeta(
-  node: any,
-  acc: {
-    ifc?: string;
-    ms?: string;
-    any?: string;
-    file?: string;
-    commonType?: string;
-  } = {}
-) {
-  if (!node || typeof node !== "object") return acc;
-  for (const [k, v] of Object.entries(node)) {
-    if (/guid|globalid/i.test(k)) {
-      const s = v == null ? "" : String(v);
-      const cls = classifyGuid(s);
-      if (cls === "IFC" && !acc.ifc) acc.ifc = s;
-      else if (cls === "MS" && !acc.ms) acc.ms = s;
-      else if (!acc.any) acc.any = s;
-    }
-    if (!acc.file && /(file\s*name|filename)/i.test(k))
-      acc.file = v == null ? "" : String(v);
-    if (!acc.commonType && /(common.*type)/i.test(k))
-      acc.commonType = v == null ? "" : String(v);
-    if (v && typeof v === "object") deepScanForGuidAndMeta(v, acc);
-  }
-  return acc;
-}
-
-/** Mudeli nimede kaart (faili nimi fallback’iks) */
-async function getModelNamesMap(api: any): Promise<Record<string, string>> {
-  const map: Record<string, string> = {};
-  try {
-    const models = (await api?.viewer?.getModels?.()) ?? [];
-    for (const m of models) {
-      const id = String((m as any).id ?? (m as any).modelId ?? "");
-      const name =
-        (m as any).name ??
-        (m as any).fileName ??
-        (m as any).documentName ??
-        "";
-      if (id && name) map[id] = String(name);
-    }
-  } catch {}
-  // täiendav fallback ükshaaval:
-  const ids = Object.keys(map);
-  try {
-    const sel = await api?.viewer?.getSelection?.();
-    for (const s of sel ?? []) {
-      const id = String(s?.modelId ?? "");
-      if (id && !map[id]) {
-        const lm = await api?.viewer?.getLoadedModel?.(id);
-        const n = lm?.name || lm?.file?.name;
-        if (n) map[id] = String(n);
-      }
-    }
-  } catch {}
-  return map;
-}
+/* =========================================================
+   PROPERTY FLATTENING
+   ========================================================= */
 
 function flattenProps(
   obj: any,
   modelId: string,
   projectName: string,
-  modelFileNameFallback = ""
+  modelNameById: Map<string, string>
 ): Row {
   const out: Row = {
     GUID: "",
     GUID_IFC: "",
     GUID_MS: "",
-    Project: String(projectName),
+    Project: String(projectName || ""),
     ModelId: String(modelId),
-    FileName: modelFileNameFallback || "",
+    FileName: modelNameById.get(modelId) || "",
     Name: "",
     Type: "Unknown",
     BLOCK: "",
   };
 
   const propMap = new Map<string, string>();
-  const rawNames: Array<{ group: string; name: string; value: unknown }> = [];
-
   const push = (group: string, name: string, val: unknown) => {
     const key = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
     let v: unknown = val;
-    if (Array.isArray(v))
-      v = (v as unknown[]).map((x) => (x == null ? "" : String(x))).join(" | ");
+    if (Array.isArray(v)) v = v.map(x => (x == null ? "" : String(x))).join(" | ");
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
     const s = v == null ? "" : String(v);
     propMap.set(key, s);
     out[key] = s;
   };
 
-  const sets = collectAllPropertySets(obj);
+  const sets: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
   for (const set of sets) {
-    const g = set?.name || set?.set || "Group";
+    const groupName = set?.set || "Group";
     for (const p of set?.properties ?? []) {
-      const nm = (p as any)?.name ?? "Prop";
-      const vv = (p as any)?.value;
-      rawNames.push({ group: g, name: nm, value: vv });
-      push(g, nm, vv);
-      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(nm)))
-        out.Name = String(vv ?? "");
-      if (out.Type === "Unknown" && /\btype\b/i.test(String(nm)))
-        out.Type = String(vv ?? "Unknown");
+      push(groupName, p?.name ?? "Prop", p?.value);
+      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(p?.name)))
+        out.Name = String(p?.value ?? "");
+      if (out.Type === "Unknown" && /\btype\b/i.test(String(p?.name)))
+        out.Type = String(p?.value ?? "Unknown");
     }
   }
 
-  // FileName – õiged kandidaadid + FILE/IFC variandid
-  const fileKeyCandidates = [
-    "ReferenceObject.File_Name",
-    "ReferenceObject.FileName",
-    "FILE.File_Name",
-    "FILE.FileName",
-    "IFC.File_Name",
-    "IFC.FileName",
-  ];
-  for (const k of fileKeyCandidates) {
-    if (propMap.has(k)) {
-      out.FileName = propMap.get(k)!;
-      break;
-    }
-  }
-  if (!out.FileName) {
-    for (const r of rawNames) {
-      if (/^file\s*name$/i.test(String(r.name)) && /reference/i.test(String(r.group))) {
-        out.FileName = r.value == null ? "" : String(r.value);
-        break;
-      }
-    }
-  }
-  if (!out.FileName && modelFileNameFallback) out.FileName = modelFileNameFallback;
-
-  // BLOCK kandidaadid
   for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
     "BLOCK.BLOCK_2",
     "Tekla_Assembly.AssemblyCast_unit_Mark",
-  ]) { if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; } }
+  ]) if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; }
 
-  // GUID’id
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
@@ -295,65 +192,46 @@ function flattenProps(
     if (cls === "IFC" && !guidIfc) guidIfc = v;
     if (cls === "MS" && !guidMs) guidMs = v;
   }
-  if (!guidIfc || !guidMs) {
-    for (const r of rawNames) {
-      if (!/guid|globalid/i.test(String(r.name))) continue;
-      const val = r.value == null ? "" : String(r.value);
-      const cls = classifyGuid(val);
-      if (cls === "IFC" && !guidIfc) guidIfc = val;
-      if (cls === "MS" && !guidMs) guidMs = val;
-    }
-  }
   out.GUID_IFC = guidIfc;
-  out.GUID_MS  = guidMs;
-  out.GUID     = guidIfc || guidMs || "";
-
-  if (!out.GUID || !out.GUID_IFC || !out.GUID_MS || !out.FileName) {
-    const found = deepScanForGuidAndMeta(obj);
-    if (!out.GUID_IFC && found.ifc) out.GUID_IFC = found.ifc;
-    if (!out.GUID_MS && found.ms)   out.GUID_MS  = found.ms;
-    if (!out.GUID) out.GUID         = found.ifc || found.ms || found.any || out.GUID;
-    if (!out.FileName && found.file) out.FileName = found.file;
-  }
+  out.GUID_MS = guidMs;
+  out.GUID = guidIfc || guidMs || "";
 
   return out;
 }
 
+/* =========================================================
+   API HELPERS
+   ========================================================= */
+
 async function getProjectName(api: any): Promise<string> {
   try {
     const proj = await api?.project?.getProject?.();
-    return proj?.name ? String(proj.name) : "";
+    return String(proj?.name || "");
   } catch { return ""; }
 }
 
-/** Eelistatud: saab valiku objektid koos omadustega */
-async function getSelectedObjectsWithProps(
-  api: any
-): Promise<Array<{ modelId: string; objects: any[] }>> {
-  try {
-    const result = await api?.viewer?.getObjects?.({ selected: true });
-    if (Array.isArray(result) && result.length) {
-      return result.map((m: any) => ({
-        modelId: String(m.modelId),
-        objects: Array.isArray(m.objects) ? m.objects : [],
-      }));
-    }
-  } catch {}
-  return [];
+async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
+  const viewer: any = api?.viewer;
+  const mos = await viewer?.getObjects?.({ selected: true });
+  if (!Array.isArray(mos) || !mos.length) return [];
+  return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
 }
 
-/** Tagavara: sinu vana tee – runtimeId’d → getObjectProperties */
-async function getBlocksBySelection(api: any): Promise<{ modelId: string; ids: number[] }[]> {
+async function buildModelNameMap(api: any, modelIds: string[]) {
+  const map = new Map<string, string>();
   try {
-    const sel = await api?.viewer?.getSelection?.();
-    if (Array.isArray(sel) && sel.length) {
-      return sel.map((m: any) => ({
-        modelId: String(m.modelId),
-        ids: (m.objectRuntimeIds || []).slice(),
-      })).filter((b) => b.ids.length);
-    }
+    const list: any[] = await api?.viewer?.getModels?.();
+    for (const m of list || []) if (m?.id && m?.name) map.set(String(m.id), String(m.name));
   } catch {}
-  return [];
+  for (const id of new Set(modelIds)) {
+    if (map.has(id)) continue;
+    try {
+      const f = await api?.viewer?.getLoadedModel?.(id);
+      const n = f?.name || f?.file?.name;
+      if (n) map.set(id, String(n));
+    } catch {}
+  }
+  return map;
 }
 
 /* =========================================================
@@ -365,11 +243,12 @@ type Props = { api: any };
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
 
-  const [tab, setTab] = useState<Tab>("export");
+  const [tab, setTab] = useState<Tab>("search");
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Set<string>>(
     new Set<string>(JSON.parse(localStorage.getItem("fieldSel") || "[]"))
   );
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
 
   const [filter, setFilter] = useState("");
   const [debouncedFilter, setDebouncedFilter] = useState("");
@@ -379,20 +258,25 @@ export default function AssemblyExporter({ api }: Props) {
   }, [filter]);
 
   const [busy, setBusy] = useState(false);
+  const [discoverMsg, setDiscoverMsg] = useState("");
   const [exportMsg, setExportMsg] = useState("");
+  const [searchMsg, setSearchMsg] = useState("");
   const [settingsMsg, setSettingsMsg] = useState("");
   const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+
+  const [searchInput, setSearchInput] = useState("");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("clipboard");
 
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
 
   const allKeys: string[] = useMemo(
-    () => Array.from(new Set(rows.flatMap((r) => Object.keys(r)))).sort(),
+    () => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(),
     [rows]
   );
 
   const groupedUnsorted: Grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
   const groupedSortedEntries = useMemo(
-    () => (Object.entries(groupedUnsorted) as [string, string][])
+    () => (Object.entries(groupedUnsorted) as [string, string[]][])
       .sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])),
     [groupedUnsorted]
   );
@@ -400,7 +284,7 @@ export default function AssemblyExporter({ api }: Props) {
   const filteredKeysSet = useMemo(() => {
     if (!debouncedFilter) return new Set(allKeys);
     const f = debouncedFilter.toLowerCase();
-    return new Set(allKeys.filter((k) => k.toLowerCase().includes(f)));
+    return new Set(allKeys.filter(k => k.toLowerCase().includes(f)));
   }, [allKeys, debouncedFilter]);
 
   useEffect(() => {
@@ -412,25 +296,32 @@ export default function AssemblyExporter({ api }: Props) {
     if (settings.defaultPreset === "tekla") presetTekla();
     else if (settings.defaultPreset === "ifc") presetIFC();
     else presetRecommended();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
+
+  useEffect(() => {
+    if (!columnOrder.length && allKeys.length) {
+      setColumnOrder([...LOCKED_ORDER, ...allKeys.filter(k => !LOCKED_ORDER.includes(k as any))]);
+    }
+  }, [allKeys, columnOrder.length]);
 
   const matches = (k: string) => filteredKeysSet.has(k);
 
   function toggle(k: string) {
-    setSelected((s) => {
+    setSelected(s => {
       const n = new Set(s);
       n.has(k) ? n.delete(k) : n.add(k);
       return n;
     });
   }
+
   function toggleGroup(keys: string[], on: boolean) {
-    setSelected((s) => {
+    setSelected(s => {
       const n = new Set(s);
       for (const k of keys) on ? n.add(k) : n.delete(k);
       return n;
     });
   }
+
   function selectAll(on: boolean) {
     setSelected(() => (on ? new Set(allKeys) : new Set()));
   }
@@ -441,243 +332,271 @@ export default function AssemblyExporter({ api }: Props) {
       "ReferenceObject.Common_Type",
       "ReferenceObject.File_Name",
     ]);
-    setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
+    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
+
   function presetTekla() {
-    setSelected(
-      new Set(
-        allKeys.filter(
-          (k) =>
-            k.startsWith("Tekla_Assembly.") ||
-            k === "BLOCK" ||
-            k === "ReferenceObject.File_Name"
-        )
-      )
-    );
+    setSelected(new Set(allKeys.filter(k =>
+      k.startsWith("Tekla_Assembly.") || k === "BLOCK" || k === "ReferenceObject.File_Name"
+    )));
   }
+
   function presetIFC() {
     const wanted = new Set<string>([
-      "GUID_IFC",
-      "GUID_MS",
+      "GUID_IFC", "GUID_MS",
       "ReferenceObject.Common_Type",
       "ReferenceObject.File_Name",
     ]);
-    setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
+    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
 
   async function discover() {
     try {
       setBusy(true);
-      setExportMsg("Reading current selection…");
+      setDiscoverMsg("Loen valitud objekte…");
       setProgress({ current: 0, total: 0 });
 
+      const selectedWithProps = await getSelectedObjects(api);
+      if (!selectedWithProps.length) {
+        setDiscoverMsg("⚠️ Palun vali 3D vaates objektid.");
+        setRows([]);
+        return;
+      }
+
       const projectName = await getProjectName(api);
-      const nameMap = await getModelNamesMap(api);
+      const modelIds = selectedWithProps.map(m => m.modelId);
+      const nameMap = await buildModelNameMap(api, modelIds);
 
-      const preferred = await getSelectedObjectsWithProps(api);
+      const out: Row[] = [];
+      const lastSel: Array<{ modelId: string; ids: number[] }> = [];
+      setProgress({ current: 0, total: selectedWithProps.length });
 
-      let out: Row[] = [];
-      let lastSel: Array<{ modelId: string; ids: number[] }> = [];
-
-      if (preferred.length) {
-        setProgress({ current: 0, total: preferred.length });
-        for (let i = 0; i < preferred.length; i++) {
-          const { modelId, objects } = preferred[i];
-          setExportMsg(`Processing model ${i + 1}/${preferred.length}…`);
-          lastSel.push({
-            modelId,
-            ids: (objects || []).map((o: any) => Number(o?.id)).filter(Number.isFinite),
-          });
-          for (const o of objects || []) {
-            out.push(flattenProps(o, modelId, projectName, nameMap[modelId] || ""));
-          }
-          setProgress({ current: i + 1, total: preferred.length });
+      for (let i = 0; i < selectedWithProps.length; i++) {
+        const { modelId, objects } = selectedWithProps[i];
+        setDiscoverMsg(`Töötlen mudelit ${i + 1}/${selectedWithProps.length}…`);
+        lastSel.push({
+          modelId,
+          ids: (objects || []).map((o: any) => Number(o?.id)).filter((n: any) => Number.isFinite(n)),
+        });
+        for (const o of objects || []) {
+          out.push(flattenProps(o, modelId, projectName, nameMap));
         }
-      } else {
-        // Fallback sinu vana meetodile
-        const blocks = await getBlocksBySelection(api);
-        if (!blocks.length) {
-          setExportMsg("⚠️ Please select objects in the models first.");
-          setRows([]);
-          return;
-        }
-        setProgress({ current: 0, total: blocks.length });
-        for (let i = 0; i < blocks.length; i++) {
-          const b = blocks[i];
-          setExportMsg(`Processing model ${i + 1}/${blocks.length}…`);
-          const props: any[] = await api.viewer.getObjectProperties(b.modelId, b.ids);
-          out.push(
-            ...props.map((o: any) =>
-              flattenProps(o, b.modelId, projectName, nameMap[b.modelId] || "")
-            )
-          );
-          lastSel.push({ modelId: b.modelId, ids: b.ids.slice() });
-          setProgress({ current: i + 1, total: blocks.length });
-        }
+        setProgress({ current: i + 1, total: selectedWithProps.length });
       }
 
       setRows(out);
       setLastSelection(lastSel);
-      setExportMsg(
-        `Found ${out.length} objects. Total keys: ${
-          Array.from(new Set(out.flatMap((r) => Object.keys(r)))).length
-        }.`
+      setDiscoverMsg(
+        `✅ Leidsin ${out.length} objekti. Võtmeid kokku: ${Array.from(new Set(out.flatMap(r => Object.keys(r)))).length}.`
       );
     } catch (e: any) {
-      console.error("Discovery error:", e);
-      setExportMsg(`❌ Error: ${e?.message || "Unknown error during discovery"}`);
+      console.error(e);
+      setDiscoverMsg(`❌ Viga: ${e?.message || "tundmatu viga"}`);
     } finally {
       setBusy(false);
     }
   }
 
-  function orderRowByLockedAndAlpha(r: Row, chosen: Set<string>): Row {
-    const o: Row = {};
-    for (const k of LOCKED_ORDER) if (k in r) o[k] = r[k];
-    const rest = Array.from(chosen).filter(
-      (k) => !(LOCKED_ORDER as readonly string[]).includes(k as LockedKey)
-    ).sort((a, b) => a.localeCompare(b));
-    for (const k of rest) if (k in r) o[k] = r[k];
-    return o;
+  async function searchAndSelect() {
+    try {
+      setBusy(true);
+      setSearchMsg("Otsin märke…");
+      
+      const marks = searchInput
+        .split(/[\n,;\t]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      
+      if (!marks.length) {
+        setSearchMsg("⚠️ Sisesta vähemalt üks assembly mark.");
+        return;
+      }
+
+      const viewer = api?.viewer;
+      const mos = await viewer?.getObjects?.();
+      
+      if (!Array.isArray(mos)) {
+        setSearchMsg("❌ Ei suuda lugeda objekte.");
+        return;
+      }
+
+      const found: Array<{ modelId: string; ids: number[] }> = [];
+      const foundMarks = new Set<string>();
+
+      for (const mo of mos) {
+        const modelId = String(mo.modelId);
+        const matchIds: number[] = [];
+
+        for (const obj of mo.objects || []) {
+          const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
+          for (const set of props) {
+            for (const p of set?.properties ?? []) {
+              if (String(p?.name).includes("AssemblyCast_unit_Mark") || 
+                  String(p?.name).includes("BLOCK")) {
+                const val = String(p?.value || "").trim();
+                if (marks.includes(val)) {
+                  matchIds.push(Number(obj?.id));
+                  foundMarks.add(val);
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        if (matchIds.length) {
+          found.push({ modelId, ids: matchIds });
+        }
+      }
+
+      if (found.length) {
+        const selector = {
+          modelObjectIds: found.map(f => ({
+            modelId: f.modelId,
+            objectRuntimeIds: f.ids
+          }))
+        };
+        await viewer?.setSelection?.(selector);
+        
+        const notFound = marks.filter(m => !foundMarks.has(m));
+        if (notFound.length) {
+          setSearchMsg(`✅ Leidsin ${foundMarks.size}/${marks.length} märki. Ei leidnud: ${notFound.join(", ")}`);
+        } else {
+          setSearchMsg(`✅ Leidsin kõik ${marks.length} märki ja valisin need.`);
+        }
+      } else {
+        setSearchMsg(`❌ Ei leidnud ühtegi märki: ${marks.join(", ")}`);
+      }
+    } catch (e: any) {
+      console.error(e);
+      setSearchMsg(`❌ Viga: ${e?.message || "tundmatu viga"}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function validateRows(input: Row[]): { valid: Row[]; errors: string[] } {
-    const valid: Row[] = [];
-    const errors: string[] = [];
-    input.forEach((row, idx) => {
-      const rowErrors: string[] = [];
-      if (!row.GUID && !row.GUID_IFC && !row.GUID_MS)
-        rowErrors.push("Missing all GUID fields");
-      if (!row.Name?.trim()) rowErrors.push("Missing Name");
-      if (rowErrors.length) errors.push(`Row ${idx + 1}: ${rowErrors.join(", ")}`);
-      else valid.push(row);
-    });
-    return { valid, errors };
+  function moveColumn(from: number, to: number) {
+    const newOrder = [...columnOrder];
+    const [moved] = newOrder.splice(from, 1);
+    newOrder.splice(to, 0, moved);
+    setColumnOrder(newOrder);
   }
 
-  async function send() {
+  async function exportData() {
+    if (!rows.length) {
+      setExportMsg("⚠️ Pole andmeid eksportimiseks. Mine 'Discover' lehele.");
+      return;
+    }
+
+    const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
+    if (!exportCols.length) {
+      setExportMsg("⚠️ Vali vähemalt üks veerg.");
+      return;
+    }
+
+    const header = exportCols.join("\t");
+    const body = rows
+      .map(r => exportCols.map(k => (r[k] ?? "")).join("\t"))
+      .join("\n");
+    const content = header + "\n" + body;
+
+    try {
+      if (exportFormat === "clipboard") {
+        await navigator.clipboard.writeText(content);
+        setExportMsg(`✅ Kopeeritud ${rows.length} rida (${exportCols.length} veergu) lõikelauale.`);
+      } else if (exportFormat === "csv") {
+        const csvHead = exportCols.join(",");
+        const csvBody = rows
+          .map(r => exportCols.map(k => `"${((r[k] ?? "") as string).replace(/"/g, '""')}"`).join(","))
+          .join("\n");
+        const blob = new Blob([csvHead + "\n" + csvBody], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `assembly-export-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setExportMsg(`✅ Salvestatud ${rows.length} rida CSV-na.`);
+      } else if (exportFormat === "excel") {
+        const tsvContent = content;
+        await navigator.clipboard.writeText(tsvContent);
+        setExportMsg(`✅ Kopeeritud ${rows.length} rida (${exportCols.length} veergu). Kleebi Excelisse!`);
+      }
+    } catch (e: any) {
+      setExportMsg(`❌ Viga: ${e?.message || e}`);
+    }
+  }
+
+  async function sendToGoogleSheet() {
     const { scriptUrl, secret, autoColorize } = settings;
 
     if (!scriptUrl || !secret) {
       setTab("settings");
-      setSettingsMsg("Please fill Script URL and Shared Secret.");
+      setSettingsMsg("Täida Script URL ja Shared Secret.");
       return;
     }
     if (!rows.length) {
-      setTab("export");
-      setExportMsg('Click "Discover fields" first.');
+      setExportMsg('Klõpsa kõigepealt "Discover fields".');
       return;
     }
 
-    const { errors: validationErrors } = validateRows(rows);
-    if (validationErrors.length) console.warn("Validation warnings:", validationErrors);
-
-    const warnRows = rows.map((r) => {
-      const warn: string[] = [];
-      if (!r.GUID) warn.push("Missing GUID");
-      const copy: Row = { ...r };
-      if (warn.length) (copy as any)["__warnings"] = warn.join("; ");
-      return copy;
+    const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
+    const payload = rows.map(r => {
+      const obj: Row = {};
+      for (const k of exportCols) obj[k] = r[k] ?? "";
+      return obj;
     });
-
-    const numericSkip = new Set<string>([
-      "GUID","GUID_IFC","GUID_MS","Project","Name","Type","FileName",
-    ]);
-    const cleaned = warnRows.map((r) => {
-      const c: Row = {};
-      for (const [k, v] of Object.entries(r) as [string, string][]) {
-        if (FORCE_TEXT_KEYS.has(k) && typeof v === "string" && !v.startsWith("'")) {
-          c[k] = `'${v}`;
-        } else if (typeof v === "string" && !numericSkip.has(k) && isNumericString(v)) {
-          c[k] = normaliseNumberString(v);
-        } else c[k] = v as string;
-      }
-      return c;
-    });
-
-    const chosen = new Set<string>(
-      [...LOCKED_ORDER, ...Array.from(selected), "__warnings"].filter(
-        (k) =>
-          allKeys.includes(k) ||
-          (LOCKED_ORDER as readonly string[]).includes(k as any) ||
-          k === "__warnings"
-      )
-    );
-
-    const payload = cleaned.map((r) => orderRowByLockedAndAlpha(r, chosen));
-    const missing = cleaned.filter((r) => !r.GUID).length;
-    if (missing) setExportMsg(`⚠️ ${missing} row(s) without GUID – added __warnings.`);
 
     try {
       setBusy(true);
-      setExportMsg("Sending rows to Google Sheet…");
+      setExportMsg("Saadan Google Sheeti…");
       const res = await fetch(scriptUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ secret, rows: payload }),
       });
       const data = await res.json();
-      setTab("export");
       if (data?.ok) {
-        const extra =
-          validationErrors.length > 0 ? ` (${validationErrors.length} validation warning(s))` : "";
-        setExportMsg(`✅ Added ${payload.length} row(s) to Google Sheet${extra}.` + (autoColorize ? " Coloring selection dark red…" : ""));
-        if (autoColorize) await colorLastSelectionDarkRed();
+        setExportMsg(`✅ Lisatud ${payload.length} rida.` + (autoColorize ? " Värvin…" : ""));
+        if (autoColorize) await colorLastSelection();
       } else {
-        setExportMsg(`❌ Error: ${data?.error || "unknown"}`);
+        setExportMsg(`❌ Viga: ${data?.error || "unknown"}`);
       }
     } catch (e: any) {
-      setTab("export");
-      setExportMsg(`❌ Error: ${e?.message || e}`);
-    } finally { setBusy(false); }
+      setExportMsg(`❌ Viga: ${e?.message || e}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function colorLastSelectionDarkRed() {
-    const viewer: any = api?.viewer;
+  async function colorLastSelection() {
+    const viewer = api?.viewer;
     let blocks = lastSelection;
     if (!blocks?.length) {
-      const preferred = await getSelectedObjectsWithProps(api);
-      blocks = preferred.map((m) => ({
-        modelId: m.modelId,
-        ids: (m.objects || []).map((o: any) => Number(o?.id)).filter(Number.isFinite),
+      const mos = await getSelectedObjects(api);
+      blocks = mos.map(m => ({ 
+        modelId: m.modelId, 
+        ids: (m.objects || []).map((o: any) => o?.id).filter(Boolean) 
       }));
     }
     if (!blocks?.length) return;
 
-    for (const b of blocks) {
-      // Õige signatuur: selector + state (RGBA 0..255)
-      const selector = { modelObjectIds: [{ modelId: b.modelId, objectRuntimeIds: b.ids }] };
-      await viewer.setObjectState(selector, { color: { r: 140, g: 0, b: 0, a: 255 } });
+    const { r, g, b } = settings.colorizeColor;
+    for (const bl of blocks) {
+      const selector = { 
+        modelObjectIds: [{ modelId: bl.modelId, objectRuntimeIds: bl.ids }] 
+      };
+      await viewer?.setObjectState?.(selector, { color: { r, g, b, a: 255 } });
     }
   }
 
   async function resetState() {
     try {
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
-      setExportMsg("View state reset.");
+      setDiscoverMsg("✅ View state reset.");
     } catch (e: any) {
-      setExportMsg(`Reset failed: ${e?.message || e}`);
+      setDiscoverMsg(`❌ Reset failed: ${e?.message || e}`);
     }
-  }
-
-  function exportToCSV() {
-    if (!rows.length) return;
-    const chosen = [...LOCKED_ORDER, ...Array.from(selected)].filter(
-      (k) => allKeys.includes(k) || (LOCKED_ORDER as readonly string[]).includes(k as any)
-    );
-
-    const head = chosen.join(",");
-    const body = rows
-      .map((r) => chosen.map((k) => `"${((r[k] ?? "") as string).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const blob = new Blob([head + "\n" + body], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `assembly-export-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   const c = styles;
@@ -685,12 +604,144 @@ export default function AssemblyExporter({ api }: Props) {
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
+        <button style={{ ...c.tab, ...(tab === "search" ? c.tabActive : {}) }} onClick={() => setTab("search")}>SEARCH</button>
+        <button style={{ ...c.tab, ...(tab === "discover" ? c.tabActive : {}) }} onClick={() => setTab("discover")}>DISCOVER</button>
         <button style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }} onClick={() => setTab("export")}>EXPORT</button>
         <button style={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }} onClick={() => setTab("settings")}>SETTINGS</button>
         <button style={{ ...c.tab, ...(tab === "about" ? c.tabActive : {}) }} onClick={() => setTab("about")}>ABOUT</button>
       </div>
 
       <div style={c.page}>
+        {tab === "search" && (
+          <div style={c.section}>
+            <h3 style={c.heading}>Otsi ja vali Assembly Marki järgi</h3>
+            <textarea
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Kleebi siia assembly märgid (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;2ERP11&#10;2ERP12&#10;2ERP13"
+              style={{ ...c.textarea, height: 200 }}
+            />
+            <div style={c.controls}>
+              <button style={c.btn} onClick={searchAndSelect} disabled={busy || !searchInput.trim()}>
+                {busy ? "Otsin…" : "Otsi ja vali"}
+              </button>
+              <button style={c.btnGhost} onClick={() => setSearchInput("")}>Tühjenda</button>
+            </div>
+            {searchMsg && <div style={c.note}>{searchMsg}</div>}
+          </div>
+        )}
+
+        {tab === "discover" && (
+          <div style={c.section}>
+            <h3 style={c.heading}>Discover Fields</h3>
+            <div style={c.controls}>
+              <button style={c.btn} onClick={discover} disabled={busy}>
+                {busy ? "…" : "Discover fields"}
+              </button>
+              <button style={c.btnGhost} onClick={resetState}>Reset colors</button>
+            </div>
+
+            {!!progress.total && progress.total > 1 && (
+              <div style={c.small}>Progress: {progress.current}/{progress.total}</div>
+            )}
+
+            <input
+              placeholder="Filter veerge…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              style={c.input}
+            />
+
+            <div style={c.controls}>
+              <button style={c.btnGhost} onClick={() => selectAll(true)} disabled={!rows.length}>Vali kõik</button>
+              <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>Tühjenda</button>
+              <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>Valitud: {selected.size}</span>
+            </div>
+
+            <div style={c.list}>
+              {!rows.length ? (
+                <div style={c.small}>Klõpsa "Discover fields".</div>
+              ) : (
+                groupedSortedEntries.map(([groupName, keys]) => {
+                  const keysShown = keys.filter(matches);
+                  if (!keysShown.length) return null;
+                  return (
+                    <div key={groupName} style={c.group}>
+                      <div style={c.groupHeader}>
+                        <b>{groupName}</b>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button style={c.mini} onClick={() => toggleGroup(keys, true)}>vali</button>
+                          <button style={c.mini} onClick={() => toggleGroup(keys, false)}>tühjenda</button>
+                        </div>
+                      </div>
+                      <div style={c.grid}>
+                        {keysShown.map((k) => (
+                          <label key={k} style={c.checkRow} title={k}>
+                            <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(k)} />
+                            <span style={c.ellipsis}>{k}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ alignSelf: "center", opacity: 0.7 }}>Presets:</span>
+              <button style={c.btnGhost} onClick={presetRecommended} disabled={!rows.length}>Recommended</button>
+              <button style={c.btnGhost} onClick={presetTekla} disabled={!rows.length}>Tekla</button>
+              <button style={c.btnGhost} onClick={presetIFC} disabled={!rows.length}>IFC</button>
+            </div>
+
+            {discoverMsg && <div style={c.note}>{discoverMsg}</div>}
+          </div>
+        )}
+
+        {tab === "export" && (
+          <div style={c.section}>
+            <h3 style={c.heading}>Export Data</h3>
+            
+            <div style={c.row}>
+              <label style={c.label}>Formaat:</label>
+              <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value as ExportFormat)} style={c.input}>
+                <option value="clipboard">Clipboard (TSV)</option>
+                <option value="excel">Excel (clipboard)</option>
+                <option value="csv">CSV (download)</option>
+              </select>
+            </div>
+
+            <div style={c.small}>Veergude järjestus (lohista ümber):</div>
+            <div style={c.columnList}>
+              {columnOrder.filter(k => selected.has(k) && allKeys.includes(k)).map((col, idx) => (
+                <div key={col} style={c.columnItem}>
+                  <span style={c.ellipsis}>{col}</span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {idx > 0 && (
+                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx - 1)}>↑</button>
+                    )}
+                    {idx < columnOrder.filter(k => selected.has(k)).length - 1 && (
+                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx + 1)}>↓</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={c.controls}>
+              <button style={c.btnPrimary} onClick={exportData} disabled={!rows.length || !selected.size}>
+                {exportFormat === "clipboard" ? "Kopeeri lõikelauale" : exportFormat === "excel" ? "Kopeeri Excelile" : "Lae alla CSV"}
+              </button>
+              <button style={c.btn} onClick={sendToGoogleSheet} disabled={busy || !rows.length}>
+                {busy ? "Saadan…" : "Saada Google Sheeti"}
+              </button>
+            </div>
+
+            {exportMsg && <div style={c.note}>{exportMsg}</div>}
+          </div>
+        )}
+
         {tab === "settings" && (
           <div style={c.section}>
             <div style={c.row}>
@@ -712,12 +763,34 @@ export default function AssemblyExporter({ api }: Props) {
               />
             </div>
             <div style={c.row}>
-              <label style={c.label}>Auto colorize after export</label>
+              <label style={c.label}>Auto colorize</label>
               <input
                 type="checkbox"
                 checked={settings.autoColorize}
                 onChange={(e) => updateSettings({ autoColorize: e.target.checked })}
               />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>Värv</label>
+              <select
+                value={Object.keys(DEFAULT_COLORS).find(k => {
+                  const col = DEFAULT_COLORS[k as keyof typeof DEFAULT_COLORS];
+                  return col.r === settings.colorizeColor.r && col.g === settings.colorizeColor.g && col.b === settings.colorizeColor.b;
+                })}
+                onChange={(e) => {
+                  const colorKey = e.target.value as keyof typeof DEFAULT_COLORS;
+                  updateSettings({ colorizeColor: DEFAULT_COLORS[colorKey] });
+                }}
+                style={c.input}
+              >
+                <option value="darkRed">Tumepunane</option>
+                <option value="red">Punane</option>
+                <option value="orange">Oranž</option>
+                <option value="yellow">Kollane</option>
+                <option value="green">Roheline</option>
+                <option value="blue">Sinine</option>
+                <option value="purple">Lilla</option>
+              </select>
             </div>
             <div style={c.row}>
               <label style={c.label}>Default preset</label>
@@ -727,113 +800,31 @@ export default function AssemblyExporter({ api }: Props) {
                 style={c.input}
               >
                 <option value="recommended">Recommended</option>
-                <option value="tekla">Tekla Assembly</option>
-                <option value="ifc">IFC Reference</option>
+                <option value="tekla">Tekla</option>
+                <option value="ifc">IFC</option>
               </select>
             </div>
             <div style={{ ...c.row, justifyContent: "flex-end" }}>
-              <button style={c.btn} onClick={() => setSettingsMsg("Settings saved.")}>Save</button>
-              <button
-                style={c.btnGhost}
-                onClick={() => {
-                  localStorage.removeItem("assemblyExporterSettings");
-                  updateSettings({
-                    scriptUrl: "",
-                    secret: "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU",
-                    autoColorize: true,
-                    defaultPreset: "recommended",
-                  });
-                  setSettingsMsg("Settings reset.");
-                }}
-              >
-                Reset
-              </button>
+              <button style={c.btn} onClick={() => setSettingsMsg("✅ Salvestatud.")}>Salvesta</button>
             </div>
-            {!!settingsMsg && <div style={c.note}>{settingsMsg}</div>}
+            {settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
         )}
 
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              Assembly Exporter – Trimble Connect → Google Sheet.
+              <b>Assembly Exporter v3</b> – Trimble Connect → Google Sheet + Excel<br />
+              • GUID otsing ja värvimine<br />
+              • Assembly mark otsing<br />
+              • Kohandatav export (Clipboard/Excel/CSV)<br />
+              • Värvi valik settings<br />
               <br />
-              • Multi-model • getObjects(selected) • getModels/getLoadedModel
-              <br />
-              • GUID + GUID_IFC + GUID_MS • Number normalisation
-              <br />• Dark-red colorize & Reset • Presets • Locked column order
+              Loodud: <b>Silver Vatsel</b> | Consiva OÜ
             </div>
-          </div>
-        )}
-
-        {tab === "export" && (
-          <div style={c.section}>
-            <div style={c.controls}>
-              <button style={c.btn} onClick={discover} disabled={busy}>
-                {busy ? "…" : "Discover fields"}
-              </button>
-              <input
-                placeholder="Filter columns…"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                style={{ ...c.input, flex: 1, minWidth: 120 }}
-              />
-              <button style={c.btnGhost} onClick={() => selectAll(true)} disabled={!rows.length}>Select all</button>
-              <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>Clear</button>
-              <button style={c.btnGhost} onClick={resetState}>Reset state</button>
-              <button style={c.btnGhost} onClick={exportToCSV} disabled={!rows.length}>Download CSV</button>
-              <button style={c.btnPrimary} onClick={send} disabled={busy || !rows.length}>
-                {busy ? "Sending…" : `Send to Google Sheet (${rows.length} rows)`}
-              </button>
-            </div>
-
-            {!!progress.total && progress.total > 1 && (
-              <div style={c.small}>Progress: {progress.current}/{progress.total}</div>
-            )}
-
-            <div style={c.meta}>
-              Locked order: {Array.from(LOCKED_ORDER).join(", ")}. Selected: {selected.size}.
-            </div>
-
-            <div style={c.list}>
-              {!rows.length ? (
-                <div style={c.small}>Click "Discover fields".</div>
-              ) : (
-                groupedSortedEntries.map(([groupName, keys]) => {
-                  const keysShown = keys.filter(matches);
-                  if (!keysShown.length) return null;
-                  const allOn = keys.every((k) => selected.has(k));
-                  const noneOn = keys.every((k) => !selected.has(k));
-                  return (
-                    <div key={groupName} style={c.group}>
-                      <div style={c.groupHeader}>
-                        <b>{groupName}</b>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button style={c.mini} onClick={() => toggleGroup(keys, true)}>select</button>
-                          <button style={c.mini} onClick={() => toggleGroup(keys, false)}>clear</button>
-                        </div>
-                        <span style={c.faint}>{allOn ? "all" : noneOn ? "none" : "partial"}</span>
-                      </div>
-                      <div style={c.grid}>
-                        {keysShown.map((k) => (
-                          <label key={k} style={c.checkRow} title={k}>
-                            <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(k)} />
-                            <span style={c.ellipsis}>{k}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {!!exportMsg && <div style={{ ...c.note, marginTop: 6 }}>{exportMsg}</div>}
           </div>
         )}
       </div>
-
-      <div style={c.footer}>created by <b>Silver Vatsel</b> | Consiva OÜ</div>
     </div>
   );
 }
@@ -870,11 +861,13 @@ const styles: Record<string, CSSProperties> = {
     color: "#fff",
     fontWeight: 600,
   },
-  page: { flex: 1, display: "flex", flexDirection: "column", padding: 10, gap: 10, minHeight: 0 },
-  section: { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 },
+  page: { flex: 1, display: "flex", flexDirection: "column", padding: 10, gap: 10, minHeight: 0, overflow: "auto" },
+  section: { display: "flex", flexDirection: "column", gap: 8 },
+  heading: { margin: "0 0 8px 0", fontSize: 16, fontWeight: 600 },
   row: { display: "flex", alignItems: "center", gap: 8 },
   label: { width: 160, opacity: 0.8 },
   input: { flex: 1, padding: "6px 8px", border: "1px solid #cfd6df", borderRadius: 8, outline: "none" },
+  textarea: { width: "100%", padding: "8px", border: "1px solid #cfd6df", borderRadius: 8, outline: "none", fontFamily: "monospace", fontSize: 12 },
   controls: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
   btn: { padding: "6px 10px", borderRadius: 8, border: "1px solid #cfd6df", background: "#f6f8fb", cursor: "pointer" },
   btnGhost: { padding: "6px 10px", borderRadius: 8, border: "1px solid #d7dde6", background: "#fff", cursor: "pointer" },
@@ -885,18 +878,36 @@ const styles: Record<string, CSSProperties> = {
     background: "#0a3a67",
     color: "#fff",
     cursor: "pointer",
-    marginLeft: "auto",
   },
-  meta: { fontSize: 12, opacity: 0.75 },
-  list: { flex: 1, minHeight: 0, overflow: "auto", border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc" },
+  list: { flex: 1, minHeight: 0, maxHeight: 400, overflow: "auto", border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc" },
   group: { marginBottom: 8, paddingBottom: 6, borderBottom: "1px dashed #e5e9f0" },
   groupHeader: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
   mini: { padding: "2px 6px", borderRadius: 6, border: "1px solid #d7dde6", background: "#fff", fontSize: 12, cursor: "pointer" },
+  miniBtn: { padding: "2px 8px", borderRadius: 4, border: "1px solid #d7dde6", background: "#fff", fontSize: 11, cursor: "pointer" },
   grid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6 },
   checkRow: { display: "flex", alignItems: "center", gap: 6 },
   ellipsis: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   small: { fontSize: 12, opacity: 0.8 },
-  faint: { fontSize: 12, opacity: 0.55, marginLeft: "auto" },
-  note: { fontSize: 12, opacity: 0.9 },
-  footer: { padding: "6px 10px", borderTop: "1px solid #eef2f6", fontSize: 12, color: "#66758c" },
+  note: { fontSize: 12, opacity: 0.9, padding: "6px 8px", background: "#f0f4f8", borderRadius: 6 },
+  columnList: { 
+    maxHeight: 300, 
+    overflow: "auto", 
+    border: "1px solid #edf0f4", 
+    borderRadius: 8, 
+    padding: 8, 
+    background: "#fafbfc",
+    display: "flex",
+    flexDirection: "column",
+    gap: 4
+  },
+  columnItem: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "4px 8px",
+    background: "#fff",
+    border: "1px solid #e5e9f0",
+    borderRadius: 6,
+    fontSize: 12
+  }
 };
