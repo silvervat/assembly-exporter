@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import * as WorkspaceAPI from "trimble-connect-workspace-api";
-import type { WorkspaceAPI as TWorkspaceAPI } from "trimble-connect-workspace-api";
 
 /* =========================================================
    CONSTANTS / TYPES
@@ -307,7 +305,7 @@ function flattenProps(obj: any, modelId: string, projectName: string): Row {
    PROJECT NAME
    ========================================================= */
 
-async function getProjectName(api: TWorkspaceAPI): Promise<string> {
+async function getProjectName(api: any): Promise<string> {
   try {
     if (typeof api?.project?.getProject === "function") {
       const proj = await api.project.getProject();
@@ -322,7 +320,7 @@ async function getProjectName(api: TWorkspaceAPI): Promise<string> {
    ========================================================= */
 
 async function getCurrentSelectionBlocks(
-  api: TWorkspaceAPI
+  api: any
 ): Promise<{ modelId: string; ids: number[] }[]> {
   // 1) viewer.getSelection()
   try {
@@ -371,7 +369,7 @@ async function getCurrentSelectionBlocks(
    COMPONENT
    ========================================================= */
 
-type Props = { api: TWorkspaceAPI };
+type Props = { api: any };
 
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
@@ -414,7 +412,8 @@ export default function AssemblyExporter({ api }: Props) {
   const groupedSortedEntries = useMemo(
     () =>
       (Object.entries(groupedUnsorted) as [string, string[]][]).sort(
-        (a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])
+        (a, b) =>
+          groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])
       ),
     [groupedUnsorted]
   );
@@ -821,7 +820,7 @@ export default function AssemblyExporter({ api }: Props) {
           EXPORT
         </button>
         <button
-          style={{ ...c.tab, ...(tabstyle={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }}
+          style={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }}
           onClick={() => setTab("settings")}
         >
           SETTINGS
@@ -866,8 +865,7 @@ export default function AssemblyExporter({ api }: Props) {
               />
             </div>
             <div style={c.row}>
-              <label style={c.label}>Default preset</label>
-              <select
+              <label style={c.label}>Default preset</label<select
                 value={settings.defaultPreset}
                 onChange={(e) =>
                   updateSettings({
@@ -892,7 +890,12 @@ export default function AssemblyExporter({ api }: Props) {
                 style={c.btnGhost}
                 onClick={() => {
                   localStorage.removeItem("assemblyExporterSettings");
-                  updateSettings({});
+                  updateSettings({
+                    scriptUrl: "",
+                    secret: "sK9pL2mN8qR4vT6xZ1wC7jH3fY5bA0eU",
+                    autoColorize: true,
+                    defaultPreset: "recommended",
+                  });
                   setSettingsMsg("Settings reset.");
                 }}
               >
