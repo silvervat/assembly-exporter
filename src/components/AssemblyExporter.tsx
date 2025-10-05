@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 /* =========================================================
-   TYPES / CONSTANTS
+   CONSTANTS / TYPES
    ========================================================= */
 
 type Tab = "export" | "settings" | "about";
 type Row = Record<string, string>;
-
-type WorkspaceAPI = any;     // Tüübi saab soovi korral importida @trimble/workspace-api paketist
-type ViewerAPI = any;
 
 const LOCKED_ORDER = [
   "GUID",
@@ -83,7 +80,7 @@ function sanitizeKey(s: string) {
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
-  if (g === "referenceobject") return 1;
+  if (g === "referenceobject") return 1; // <— oluline parandus
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
@@ -114,73 +111,182 @@ function normaliseNumberString(s: string) {
   return String(parseFloat(n.toFixed(4)));
 }
 
+/* =========================================================
+   PROPERTY SETS + GUIDS
+   ========================================================= */
+
+type TCProperty = { name: string; value: unknown };
+type TCPropertySet = { name: string; properties: TCProperty[] };
+
+function collectAllPropertySets(obj: any): TCPropertySet[] {
+  const official: TCPropertySet[] = [
+    ...(Array.isArray(obj?.propertySets) ? obj.propertySets : []),
+    ...(Array.isArray(obj?.propertySetLibraries)
+      ? obj.propertySetLibraries
+      : []),
+  ];
+  const fallbacks: TCPropertySet[] = [
+    ...(Array.isArray(obj?.properties) ? obj.properties : []),
+    ...(Array.isArray(obj?.psets) ? obj.psets : []),
+    ...(Array.isArray(obj?.libraries) ? obj.libraries : []),
+    ...(Array.isArray(obj?.customProperties) ? obj.customProperties : []),
+  ];
+  return [...official, ...fallbacks].filter(
+    (s): s is TCPropertySet => !!s && Array.isArray((s as any).properties)
+  );
+}
+
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
-  if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC"; // IFC GlobalId (base64-ish 22)
+  if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
   if (
     /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(
       s
     ) || /^[0-9A-Fa-f]{32}$/.test(s)
-  ) return "MS"; // UUID või 32hex
+  ) return "MS";
   return "UNKNOWN";
 }
 
-/* =========================================================
-   PROPERTY FLATTENING
-   ========================================================= */
+function deepScanForGuidAndMeta(
+  node: any,
+  acc: {
+    ifc?: string;
+    ms?: string;
+    any?: string;
+    file?: string;
+    commonType?: string;
+  } = {}
+) {
+  if (!node || typeof node !== "object") return acc;
+  for (const [k, v] of Object.entries(node)) {
+    if (/guid|globalid/i.test(k)) {
+      const s = v == null ? "" : String(v);
+      const cls = classifyGuid(s);
+      if (cls === "IFC" && !acc.ifc) acc.ifc = s;
+      else if (cls === "MS" && !acc.ms) acc.ms = s;
+      else if (!acc.any) acc.any = s;
+    }
+    if (!acc.file && /(file\s*name|filename)/i.test(k))
+      acc.file = v == null ? "" : String(v);
+    if (!acc.commonType && /(common.*type)/i.test(k))
+      acc.commonType = v == null ? "" : String(v);
+    if (v && typeof v === "object") deepScanForGuidAndMeta(v, acc);
+  }
+  return acc;
+}
+
+/** Mudeli nimede kaart (faili nimi fallback’iks) */
+async function getModelNamesMap(api: any): Promise<Record<string, string>> {
+  const map: Record<string, string> = {};
+  try {
+    const models = (await api?.viewer?.getModels?.()) ?? [];
+    for (const m of models) {
+      const id = String((m as any).id ?? (m as any).modelId ?? "");
+      const name =
+        (m as any).name ??
+        (m as any).fileName ??
+        (m as any).documentName ??
+        "";
+      if (id && name) map[id] = String(name);
+    }
+  } catch {}
+  // täiendav fallback ükshaaval:
+  const ids = Object.keys(map);
+  try {
+    const sel = await api?.viewer?.getSelection?.();
+    for (const s of sel ?? []) {
+      const id = String(s?.modelId ?? "");
+      if (id && !map[id]) {
+        const lm = await api?.viewer?.getLoadedModel?.(id);
+        const n = lm?.name || lm?.file?.name;
+        if (n) map[id] = String(n);
+      }
+    }
+  } catch {}
+  return map;
+}
 
 function flattenProps(
   obj: any,
   modelId: string,
   projectName: string,
-  modelNameById: Map<string, string>
+  modelFileNameFallback = ""
 ): Row {
-  // NB! tugineb Workspace API ametlikule struktuurile:
-  // ObjectProperties.properties?: PropertySet[] { set?: string, properties?: Property[] } :contentReference[oaicite:2]{index=2}
   const out: Row = {
     GUID: "",
     GUID_IFC: "",
     GUID_MS: "",
-    Project: String(projectName || ""),
+    Project: String(projectName),
     ModelId: String(modelId),
-    FileName: modelNameById.get(modelId) || "",
+    FileName: modelFileNameFallback || "",
     Name: "",
     Type: "Unknown",
     BLOCK: "",
   };
 
   const propMap = new Map<string, string>();
+  const rawNames: Array<{ group: string; name: string; value: unknown }> = [];
+
   const push = (group: string, name: string, val: unknown) => {
     const key = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
     let v: unknown = val;
-    if (Array.isArray(v)) v = v.map(x => (x == null ? "" : String(x))).join(" | ");
+    if (Array.isArray(v))
+      v = (v as unknown[]).map((x) => (x == null ? "" : String(x))).join(" | ");
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
     const s = v == null ? "" : String(v);
     propMap.set(key, s);
     out[key] = s;
   };
 
-  const sets: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
+  const sets = collectAllPropertySets(obj);
   for (const set of sets) {
-    const groupName = set?.set || "Group";
+    const g = set?.name || set?.set || "Group";
     for (const p of set?.properties ?? []) {
-      push(groupName, p?.name ?? "Prop", p?.value);
-      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(p?.name)))
-        out.Name = String(p?.value ?? "");
-      if (out.Type === "Unknown" && /\btype\b/i.test(String(p?.name)))
-        out.Type = String(p?.value ?? "Unknown");
+      const nm = (p as any)?.name ?? "Prop";
+      const vv = (p as any)?.value;
+      rawNames.push({ group: g, name: nm, value: vv });
+      push(g, nm, vv);
+      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(nm)))
+        out.Name = String(vv ?? "");
+      if (out.Type === "Unknown" && /\btype\b/i.test(String(nm)))
+        out.Type = String(vv ?? "Unknown");
     }
   }
 
-  // BLOCK kandidaadid (tekla/ifc)
+  // FileName – õiged kandidaadid + FILE/IFC variandid
+  const fileKeyCandidates = [
+    "ReferenceObject.File_Name",
+    "ReferenceObject.FileName",
+    "FILE.File_Name",
+    "FILE.FileName",
+    "IFC.File_Name",
+    "IFC.FileName",
+  ];
+  for (const k of fileKeyCandidates) {
+    if (propMap.has(k)) {
+      out.FileName = propMap.get(k)!;
+      break;
+    }
+  }
+  if (!out.FileName) {
+    for (const r of rawNames) {
+      if (/^file\s*name$/i.test(String(r.name)) && /reference/i.test(String(r.group))) {
+        out.FileName = r.value == null ? "" : String(r.value);
+        break;
+      }
+    }
+  }
+  if (!out.FileName && modelFileNameFallback) out.FileName = modelFileNameFallback;
+
+  // BLOCK kandidaadid
   for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
     "BLOCK.BLOCK_2",
     "Tekla_Assembly.AssemblyCast_unit_Mark",
-  ]) if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; }
+  ]) { if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; } }
 
-  // GUID tuvastus
+  // GUID’id
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
@@ -189,57 +295,72 @@ function flattenProps(
     if (cls === "IFC" && !guidIfc) guidIfc = v;
     if (cls === "MS" && !guidMs) guidMs = v;
   }
+  if (!guidIfc || !guidMs) {
+    for (const r of rawNames) {
+      if (!/guid|globalid/i.test(String(r.name))) continue;
+      const val = r.value == null ? "" : String(r.value);
+      const cls = classifyGuid(val);
+      if (cls === "IFC" && !guidIfc) guidIfc = val;
+      if (cls === "MS" && !guidMs) guidMs = val;
+    }
+  }
   out.GUID_IFC = guidIfc;
-  out.GUID_MS = guidMs;
-  out.GUID = guidIfc || guidMs || "";
+  out.GUID_MS  = guidMs;
+  out.GUID     = guidIfc || guidMs || "";
+
+  if (!out.GUID || !out.GUID_IFC || !out.GUID_MS || !out.FileName) {
+    const found = deepScanForGuidAndMeta(obj);
+    if (!out.GUID_IFC && found.ifc) out.GUID_IFC = found.ifc;
+    if (!out.GUID_MS && found.ms)   out.GUID_MS  = found.ms;
+    if (!out.GUID) out.GUID         = found.ifc || found.ms || found.any || out.GUID;
+    if (!out.FileName && found.file) out.FileName = found.file;
+  }
 
   return out;
 }
 
-/* =========================================================
-   API HELPERS
-   ========================================================= */
-
-async function getProjectName(api: WorkspaceAPI): Promise<string> {
+async function getProjectName(api: any): Promise<string> {
   try {
-    const proj = await api?.project?.getProject?.(); // :contentReference[oaicite:3]{index=3}
-    return String(proj?.name || "");
+    const proj = await api?.project?.getProject?.();
+    return proj?.name ? String(proj.name) : "";
   } catch { return ""; }
 }
 
-async function getSelectedObjects(api: WorkspaceAPI): Promise<Array<{ modelId: string; objects: any[] }>> {
-  const viewer: ViewerAPI = api?.viewer;
-  // Lihtsaim viis on küsida otse valitud objektid koos omadustega
-  // viewer.getObjects({ selected: true }) → ModelObjects[] :contentReference[oaicite:4]{index=4}
-  const mos = await viewer?.getObjects?.({ selected: true });
-  if (!Array.isArray(mos) || !mos.length) return [];
-  return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
+/** Eelistatud: saab valiku objektid koos omadustega */
+async function getSelectedObjectsWithProps(
+  api: any
+): Promise<Array<{ modelId: string; objects: any[] }>> {
+  try {
+    const result = await api?.viewer?.getObjects?.({ selected: true });
+    if (Array.isArray(result) && result.length) {
+      return result.map((m: any) => ({
+        modelId: String(m.modelId),
+        objects: Array.isArray(m.objects) ? m.objects : [],
+      }));
+    }
+  } catch {}
+  return [];
 }
 
-async function buildModelNameMap(api: WorkspaceAPI, modelIds: string[]) {
-  const map = new Map<string, string>();
+/** Tagavara: sinu vana tee – runtimeId’d → getObjectProperties */
+async function getBlocksBySelection(api: any): Promise<{ modelId: string; ids: number[] }[]> {
   try {
-    // Proovi esmalt getModels (kiire) :contentReference[oaicite:5]{index=5}
-    const list: any[] = await api?.viewer?.getModels?.();
-    for (const m of list || []) if (m?.id && m?.name) map.set(String(m.id), String(m.name));
+    const sel = await api?.viewer?.getSelection?.();
+    if (Array.isArray(sel) && sel.length) {
+      return sel.map((m: any) => ({
+        modelId: String(m.modelId),
+        ids: (m.objectRuntimeIds || []).slice(),
+      })).filter((b) => b.ids.length);
+    }
   } catch {}
-  // Täienda koormatud mudelite tegeliku nimega
-  for (const id of new Set(modelIds)) {
-    if (map.has(id)) continue;
-    try {
-      const f = await api?.viewer?.getLoadedModel?.(id); // :contentReference[oaicite:6]{index=6}
-      const n = f?.name || f?.file?.name;
-      if (n) map.set(id, String(n));
-    } catch {}
-  }
-  return map;
+  return [];
 }
 
 /* =========================================================
    COMPONENT
    ========================================================= */
 
-type Props = { api: WorkspaceAPI };
+type Props = { api: any };
 
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
@@ -262,17 +383,16 @@ export default function AssemblyExporter({ api }: Props) {
   const [settingsMsg, setSettingsMsg] = useState("");
   const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
 
-  // meelde jäetud viimane valik (värvimiseks)
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
 
   const allKeys: string[] = useMemo(
-    () => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(),
+    () => Array.from(new Set(rows.flatMap((r) => Object.keys(r)))).sort(),
     [rows]
   );
 
   const groupedUnsorted: Grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
   const groupedSortedEntries = useMemo(
-    () => (Object.entries(groupedUnsorted) as [string, string[]][])
+    () => (Object.entries(groupedUnsorted) as [string, string][])
       .sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])),
     [groupedUnsorted]
   );
@@ -280,7 +400,7 @@ export default function AssemblyExporter({ api }: Props) {
   const filteredKeysSet = useMemo(() => {
     if (!debouncedFilter) return new Set(allKeys);
     const f = debouncedFilter.toLowerCase();
-    return new Set(allKeys.filter(k => k.toLowerCase().includes(f)));
+    return new Set(allKeys.filter((k) => k.toLowerCase().includes(f)));
   }, [allKeys, debouncedFilter]);
 
   useEffect(() => {
@@ -298,21 +418,19 @@ export default function AssemblyExporter({ api }: Props) {
   const matches = (k: string) => filteredKeysSet.has(k);
 
   function toggle(k: string) {
-    setSelected(s => {
+    setSelected((s) => {
       const n = new Set(s);
       n.has(k) ? n.delete(k) : n.add(k);
       return n;
     });
   }
-
   function toggleGroup(keys: string[], on: boolean) {
-    setSelected(s => {
+    setSelected((s) => {
       const n = new Set(s);
       for (const k of keys) on ? n.add(k) : n.delete(k);
       return n;
     });
   }
-
   function selectAll(on: boolean) {
     setSelected(() => (on ? new Set(allKeys) : new Set()));
   }
@@ -323,22 +441,28 @@ export default function AssemblyExporter({ api }: Props) {
       "ReferenceObject.Common_Type",
       "ReferenceObject.File_Name",
     ]);
-    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
+    setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
   }
   function presetTekla() {
-    setSelected(new Set(allKeys.filter(k =>
-      k.startsWith("Tekla_Assembly.") ||
-      k === "BLOCK" ||
-      k === "ReferenceObject.File_Name"
-    )));
+    setSelected(
+      new Set(
+        allKeys.filter(
+          (k) =>
+            k.startsWith("Tekla_Assembly.") ||
+            k === "BLOCK" ||
+            k === "ReferenceObject.File_Name"
+        )
+      )
+    );
   }
   function presetIFC() {
     const wanted = new Set<string>([
-      "GUID_IFC", "GUID_MS",
+      "GUID_IFC",
+      "GUID_MS",
       "ReferenceObject.Common_Type",
       "ReferenceObject.File_Name",
     ]);
-    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
+    setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
   }
 
   async function discover() {
@@ -347,42 +471,61 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg("Reading current selection…");
       setProgress({ current: 0, total: 0 });
 
-      const selectedWithProps = await getSelectedObjects(api);
-      if (!selectedWithProps.length) {
-        setExportMsg("⚠️ Palun vali 3D vaates objektid.");
-        setRows([]);
-        return;
-      }
-
       const projectName = await getProjectName(api);
-      const modelIds = selectedWithProps.map(m => m.modelId);
-      const nameMap = await buildModelNameMap(api, modelIds);
+      const nameMap = await getModelNamesMap(api);
 
-      const out: Row[] = [];
-      const lastSel: Array<{ modelId: string; ids: number[] }> = [];
-      setProgress({ current: 0, total: selectedWithProps.length });
+      const preferred = await getSelectedObjectsWithProps(api);
 
-      for (let i = 0; i < selectedWithProps.length; i++) {
-        const { modelId, objects } = selectedWithProps[i];
-        setExportMsg(`Processing model ${i + 1}/${selectedWithProps.length}…`);
-        lastSel.push({
-          modelId,
-          ids: (objects || []).map((o: any) => Number(o?.id)).filter((n: any) => Number.isFinite(n)),
-        });
-        for (const o of objects || []) {
-          out.push(flattenProps(o, modelId, projectName, nameMap));
+      let out: Row[] = [];
+      let lastSel: Array<{ modelId: string; ids: number[] }> = [];
+
+      if (preferred.length) {
+        setProgress({ current: 0, total: preferred.length });
+        for (let i = 0; i < preferred.length; i++) {
+          const { modelId, objects } = preferred[i];
+          setExportMsg(`Processing model ${i + 1}/${preferred.length}…`);
+          lastSel.push({
+            modelId,
+            ids: (objects || []).map((o: any) => Number(o?.id)).filter(Number.isFinite),
+          });
+          for (const o of objects || []) {
+            out.push(flattenProps(o, modelId, projectName, nameMap[modelId] || ""));
+          }
+          setProgress({ current: i + 1, total: preferred.length });
         }
-        setProgress({ current: i + 1, total: selectedWithProps.length });
+      } else {
+        // Fallback sinu vana meetodile
+        const blocks = await getBlocksBySelection(api);
+        if (!blocks.length) {
+          setExportMsg("⚠️ Please select objects in the models first.");
+          setRows([]);
+          return;
+        }
+        setProgress({ current: 0, total: blocks.length });
+        for (let i = 0; i < blocks.length; i++) {
+          const b = blocks[i];
+          setExportMsg(`Processing model ${i + 1}/${blocks.length}…`);
+          const props: any[] = await api.viewer.getObjectProperties(b.modelId, b.ids);
+          out.push(
+            ...props.map((o: any) =>
+              flattenProps(o, b.modelId, projectName, nameMap[b.modelId] || "")
+            )
+          );
+          lastSel.push({ modelId: b.modelId, ids: b.ids.slice() });
+          setProgress({ current: i + 1, total: blocks.length });
+        }
       }
 
       setRows(out);
       setLastSelection(lastSel);
       setExportMsg(
-        `Leidsin ${out.length} objekti. Võtmeid kokku: ${Array.from(new Set(out.flatMap(r => Object.keys(r)))).length}.`
+        `Found ${out.length} objects. Total keys: ${
+          Array.from(new Set(out.flatMap((r) => Object.keys(r)))).length
+        }.`
       );
     } catch (e: any) {
-      console.error(e);
-      setExportMsg(`❌ Viga: ${e?.message || "tundmatu viga avastamisel"}`);
+      console.error("Discovery error:", e);
+      setExportMsg(`❌ Error: ${e?.message || "Unknown error during discovery"}`);
     } finally {
       setBusy(false);
     }
@@ -392,7 +535,7 @@ export default function AssemblyExporter({ api }: Props) {
     const o: Row = {};
     for (const k of LOCKED_ORDER) if (k in r) o[k] = r[k];
     const rest = Array.from(chosen).filter(
-      k => !(LOCKED_ORDER as readonly string[]).includes(k as LockedKey)
+      (k) => !(LOCKED_ORDER as readonly string[]).includes(k as LockedKey)
     ).sort((a, b) => a.localeCompare(b));
     for (const k of rest) if (k in r) o[k] = r[k];
     return o;
@@ -417,19 +560,19 @@ export default function AssemblyExporter({ api }: Props) {
 
     if (!scriptUrl || !secret) {
       setTab("settings");
-      setSettingsMsg("Täida Script URL ja Shared Secret.");
+      setSettingsMsg("Please fill Script URL and Shared Secret.");
       return;
     }
     if (!rows.length) {
       setTab("export");
-      setExportMsg('Klõpsa kõigepealt "Discover fields".');
+      setExportMsg('Click "Discover fields" first.');
       return;
     }
 
     const { errors: validationErrors } = validateRows(rows);
     if (validationErrors.length) console.warn("Validation warnings:", validationErrors);
 
-    const warnRows = rows.map(r => {
+    const warnRows = rows.map((r) => {
       const warn: string[] = [];
       if (!r.GUID) warn.push("Missing GUID");
       const copy: Row = { ...r };
@@ -438,38 +581,36 @@ export default function AssemblyExporter({ api }: Props) {
     });
 
     const numericSkip = new Set<string>([
-      "GUID","GUID_IFC","GUID_MS","Project","Name","Type","FileName"
+      "GUID","GUID_IFC","GUID_MS","Project","Name","Type","FileName",
     ]);
-    const cleaned = warnRows.map(r => {
+    const cleaned = warnRows.map((r) => {
       const c: Row = {};
       for (const [k, v] of Object.entries(r) as [string, string][]) {
         if (FORCE_TEXT_KEYS.has(k) && typeof v === "string" && !v.startsWith("'")) {
           c[k] = `'${v}`;
         } else if (typeof v === "string" && !numericSkip.has(k) && isNumericString(v)) {
           c[k] = normaliseNumberString(v);
-        } else {
-          c[k] = v as string;
-        }
+        } else c[k] = v as string;
       }
       return c;
     });
 
     const chosen = new Set<string>(
       [...LOCKED_ORDER, ...Array.from(selected), "__warnings"].filter(
-        k =>
+        (k) =>
           allKeys.includes(k) ||
           (LOCKED_ORDER as readonly string[]).includes(k as any) ||
           k === "__warnings"
       )
     );
 
-    const payload = cleaned.map(r => orderRowByLockedAndAlpha(r, chosen));
-    const missing = cleaned.filter(r => !r.GUID).length;
-    if (missing) setExportMsg(`⚠️ ${missing} rida ilma GUIDita – lisasin __warnings.`);
+    const payload = cleaned.map((r) => orderRowByLockedAndAlpha(r, chosen));
+    const missing = cleaned.filter((r) => !r.GUID).length;
+    if (missing) setExportMsg(`⚠️ ${missing} row(s) without GUID – added __warnings.`);
 
     try {
       setBusy(true);
-      setExportMsg("Saadan read Google Sheeti…");
+      setExportMsg("Sending rows to Google Sheet…");
       const res = await fetch(scriptUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -479,30 +620,32 @@ export default function AssemblyExporter({ api }: Props) {
       setTab("export");
       if (data?.ok) {
         const extra =
-          validationErrors.length > 0 ? ` (${validationErrors.length} hoiatus(t))` : "";
-        setExportMsg(`✅ Lisatud ${payload.length} rida Google Sheeti${extra}.` + (autoColorize ? " Värvin valiku tumepunaseks…" : ""));
+          validationErrors.length > 0 ? ` (${validationErrors.length} validation warning(s))` : "";
+        setExportMsg(`✅ Added ${payload.length} row(s) to Google Sheet${extra}.` + (autoColorize ? " Coloring selection dark red…" : ""));
         if (autoColorize) await colorLastSelectionDarkRed();
       } else {
-        setExportMsg(`❌ Viga: ${data?.error || "unknown"}`);
+        setExportMsg(`❌ Error: ${data?.error || "unknown"}`);
       }
     } catch (e: any) {
       setTab("export");
-      setExportMsg(`❌ Viga: ${e?.message || e}`);
+      setExportMsg(`❌ Error: ${e?.message || e}`);
     } finally { setBusy(false); }
   }
 
   async function colorLastSelectionDarkRed() {
-    const viewer: ViewerAPI = api?.viewer;
+    const viewer: any = api?.viewer;
     let blocks = lastSelection;
     if (!blocks?.length) {
-      // kui Discoveri järel pole talletatud, võta otseselt valikust
-      const mos = await getSelectedObjects(api);
-      blocks = mos.map(m => ({ modelId: m.modelId, ids: (m.objects || []).map((o: any) => o?.id).filter(Boolean) }));
+      const preferred = await getSelectedObjectsWithProps(api);
+      blocks = preferred.map((m) => ({
+        modelId: m.modelId,
+        ids: (m.objects || []).map((o: any) => Number(o?.id)).filter(Number.isFinite),
+      }));
     }
     if (!blocks?.length) return;
 
-    // Õige viis: viewer.setObjectState(selector, state) + ColorRGBA 0..255 :contentReference[oaicite:7]{index=7}
     for (const b of blocks) {
+      // Õige signatuur: selector + state (RGBA 0..255)
       const selector = { modelObjectIds: [{ modelId: b.modelId, objectRuntimeIds: b.ids }] };
       await viewer.setObjectState(selector, { color: { r: 140, g: 0, b: 0, a: 255 } });
     }
@@ -510,7 +653,6 @@ export default function AssemblyExporter({ api }: Props) {
 
   async function resetState() {
     try {
-      // Rakenda kõigile objektidele "reset" (värv ja nähtavus) :contentReference[oaicite:8]{index=8}
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
       setExportMsg("View state reset.");
     } catch (e: any) {
@@ -520,12 +662,13 @@ export default function AssemblyExporter({ api }: Props) {
 
   function exportToCSV() {
     if (!rows.length) return;
-    const chosen = [...LOCKED_ORDER, ...Array.from(selected)]
-      .filter(k => allKeys.includes(k) || (LOCKED_ORDER as readonly string[]).includes(k as any));
+    const chosen = [...LOCKED_ORDER, ...Array.from(selected)].filter(
+      (k) => allKeys.includes(k) || (LOCKED_ORDER as readonly string[]).includes(k as any)
+    );
 
     const head = chosen.join(",");
     const body = rows
-      .map(r => chosen.map(k => `"${((r[k] ?? "") as string).replace(/"/g, '""')}"`).join(","))
+      .map((r) => chosen.map((k) => `"${((r[k] ?? "") as string).replace(/"/g, '""')}"`).join(","))
       .join("\n");
 
     const blob = new Blob([head + "\n" + body], { type: "text/csv" });
@@ -602,7 +745,9 @@ export default function AssemblyExporter({ api }: Props) {
                   });
                   setSettingsMsg("Settings reset.");
                 }}
-              >Reset</button>
+              >
+                Reset
+              </button>
             </div>
             {!!settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
@@ -613,7 +758,7 @@ export default function AssemblyExporter({ api }: Props) {
             <div style={c.small}>
               Assembly Exporter – Trimble Connect → Google Sheet.
               <br />
-              • Multi-model • ProjectAPI.getProject() • getObjects(selected) • getModels/getLoadedModel
+              • Multi-model • getObjects(selected) • getModels/getLoadedModel
               <br />
               • GUID + GUID_IFC + GUID_MS • Number normalisation
               <br />• Dark-red colorize & Reset • Presets • Locked column order
@@ -624,7 +769,9 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "export" && (
           <div style={c.section}>
             <div style={c.controls}>
-              <button style={c.btn} onClick={discover} disabled={busy}>{busy ? "…" : "Discover fields"}</button>
+              <button style={c.btn} onClick={discover} disabled={busy}>
+                {busy ? "…" : "Discover fields"}
+              </button>
               <input
                 placeholder="Filter columns…"
                 value={filter}
@@ -679,13 +826,6 @@ export default function AssemblyExporter({ api }: Props) {
                   );
                 })
               )}
-            </div>
-
-            <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <span style={{ alignSelf: "center", opacity: 0.7 }}>Presets:</span>
-              <button style={c.btnGhost} onClick={presetRecommended} disabled={!rows.length}>Recommended</button>
-              <button style={c.btnGhost} onClick={presetTekla} disabled={!rows.length}>Tekla Assembly</button>
-              <button style={c.btnGhost} onClick={presetIFC} disabled={!rows.length}>IFC Reference</button>
             </div>
 
             {!!exportMsg && <div style={{ ...c.note, marginTop: 6 }}>{exportMsg}</div>}
