@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import * as XLSX from "xlsx";
 type Tab = "search" | "discover" | "export" | "settings" | "about" | "pset";
 type Row = Record<string, string>;
@@ -336,6 +336,7 @@ export default function AssemblyExporter({ api }: Props) {
     modelId?: string;
     ids?: number[];
   }>>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
  
   const allKeys: string[] = useMemo(
     () => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(),
@@ -416,11 +417,11 @@ export default function AssemblyExporter({ api }: Props) {
   }, [exportMsg]);
  
   useEffect(() => {
-    if (searchMsg) {
+    if (searchMsg && !busy) {
       const timer = setTimeout(() => setSearchMsg(""), MESSAGE_DURATION_MS);
       return () => clearTimeout(timer);
     }
-  }, [searchMsg]);
+  }, [searchMsg, busy]);
  
   useEffect(() => {
     if (!api?.viewer) return;
@@ -565,7 +566,19 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }
  
+  function cancelSearch() {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setBusy(false);
+      setSearchMsg("❌ Otsing katkestatud.");
+      abortControllerRef.current = null;
+    }
+  }
+ 
   async function searchAndSelect() {
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+   
     try {
       setBusy(true);
       setSearchMsg("Palun oota, teostame otsingut...");
@@ -582,9 +595,10 @@ export default function AssemblyExporter({ api }: Props) {
       }
      
       const viewer = api?.viewer;
-      const mos = await viewer?.getObjects?.();
+      const mos = await viewer?.getObjects?.({ signal: abortController.signal });
      
       if (!Array.isArray(mos)) {
+        if (abortController.signal.aborted) return;
         setSearchMsg("❌ Ei suuda lugeda objekte.");
         setBusy(false);
         return;
@@ -595,6 +609,7 @@ export default function AssemblyExporter({ api }: Props) {
       setProgress({ current: 0, total: mos.length });
      
       for (let mIdx = 0; mIdx < mos.length; mIdx++) {
+        if (abortController.signal.aborted) return;
         const mo = mos[mIdx];
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter(n => Number.isFinite(n));
@@ -603,8 +618,9 @@ export default function AssemblyExporter({ api }: Props) {
        
         let fullProperties: any[] = [];
         try {
-          fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
+          fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { signal: abortController.signal });
         } catch (e) {
+          if (abortController.signal.aborted) return;
           console.warn(`getObjectProperties failed for model ${modelId}:`, e);
           fullProperties = mo.objects || [];
         }
@@ -612,6 +628,7 @@ export default function AssemblyExporter({ api }: Props) {
         const matchIds: number[] = [];
        
         for (let i = 0; i < fullProperties.length; i++) {
+          if (abortController.signal.aborted) return;
           const obj = fullProperties[i];
           const objId = objectRuntimeIds[i];
           let matchValue = "";
@@ -712,6 +729,7 @@ export default function AssemblyExporter({ api }: Props) {
         for (const originalValue of searchValues) {
           const value = originalValue.toLowerCase();
           for (const model of allModels || []) {
+            if (abortController.signal.aborted) return;
             const modelId = String(model.id);
             try {
               const runtimeIds = await api.viewer.convertToObjectRuntimeIds(modelId, [originalValue]);
@@ -777,10 +795,15 @@ export default function AssemblyExporter({ api }: Props) {
         setSearchMsg(`❌ Ei leidnud ühtegi väärtust: ${searchValues.join(", ")}`);
       }
     } catch (e: any) {
-      console.error(e);
-      setSearchMsg(`❌ Viga: ${e?.message || "tundmatu viga"}`);
+      if (e.name === 'AbortError') {
+        setSearchMsg("❌ Otsing katkestatud.");
+      } else {
+        console.error(e);
+        setSearchMsg(`❌ Viga: ${e?.message || "tundmatu viga"}`);
+      }
     } finally {
       setBusy(false);
+      abortControllerRef.current = null;
     }
   }
  
@@ -817,7 +840,6 @@ export default function AssemblyExporter({ api }: Props) {
       if (api?.extension) {
         await api.extension.broadcast({ action: "closePanel" });
       } else {
-        // Alternatiiv iframe'i jaoks
         window.parent.postMessage({ type: "closeExtension" }, "*");
       }
     } catch (e: any) {
@@ -1130,7 +1152,7 @@ export default function AssemblyExporter({ api }: Props) {
                   onChange={(e) => setSearchFieldFilter(e.target.value)}
                   onFocus={() => setIsSearchFieldDropdownOpen(true)}
                   placeholder="Tippige filtriks või valige..."
-                  style={c.input}
+                  style={{ ...c.input, textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" }}
                 />
                 {isSearchFieldDropdownOpen && (
                   <div style={c.dropdown}>
@@ -1177,6 +1199,11 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btn} onClick={searchAndSelect} disabled={busy || !searchInput.trim()}>
                 {busy ? "Otsin…" : "Otsi ja vali"}
               </button>
+              {busy && (
+                <button style={c.btnGhost} onClick={cancelSearch}>
+                  Katkesta otsing
+                </button>
+              )}
               <button style={c.btnGhost} onClick={() => { setSearchInput(""); setSearchResults([]); }}>Tühjenda</button>
             </div>
             {!!progress.total && progress.total > 1 && (
@@ -1204,13 +1231,22 @@ export default function AssemblyExporter({ api }: Props) {
                       </span>
                       <div style={c.resultActions}>
                         {result.status === 'found' && result.modelId && result.ids && (
-                          <button
-                            style={c.miniBtn}
-                            onClick={() => closeAndZoom(result.modelId!, result.ids!)}
-                            title="Sulge paneel ja zoomi"
-                          >
-                            🔍 Sulge & zoom
-                          </button>
+                          <>
+                            <button
+                              style={c.miniBtn}
+                              onClick={() => selectAndZoom(result.modelId!, result.ids!)}
+                              title="Zoomi juurde"
+                            >
+                              🔍 Zoom
+                            </button>
+                            <button
+                              style={c.miniBtn}
+                              onClick={() => closeAndZoom(result.modelId!, result.ids!)}
+                              title="Sulge paneel ja zoomi"
+                            >
+                              🔍 Sulge & zoom
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -1508,7 +1544,7 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
-              <b>Assembly Exporter v4.10</b> – Trimble Connect<br />
+              <b>Assembly Exporter v4.11</b> – Trimble Connect<br />
               • Auto-discover on selection change<br />
               • Searchable dropdown<br />
               • Search results table with zoom<br />
