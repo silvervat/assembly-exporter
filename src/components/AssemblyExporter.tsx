@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import * as XLSX from "xlsx";
-
 /* =========================================================
    TYPES / CONSTANTS
    ========================================================= */
 type Tab = "search" | "discover" | "export" | "settings" | "about" | "pset";
 type Row = Record<string, string>;
 type ExportFormat = "clipboard" | "excel" | "csv";
-
 const LOCKED_ORDER = [
   "GUID",
   "GUID_IFC",
@@ -20,19 +18,15 @@ const LOCKED_ORDER = [
   "BLOCK",
 ] as const;
 type LockedKey = (typeof LOCKED_ORDER)[number];
-
 const FORCE_TEXT_KEYS = new Set<string>([
   "Tekla_Assembly.AssemblyCast_unit_top_elevation",
   "Tekla_Assembly.AssemblyCast_unit_bottom_elevation",
 ]);
-
 const DEBOUNCE_MS = 300;
-
 /* =========================================================
    SETTINGS
    ========================================================= */
 type DefaultPreset = "recommended" | "tekla" | "ifc";
-
 interface AppSettings {
   scriptUrl: string;
   secret: string;
@@ -42,7 +36,6 @@ interface AppSettings {
   trimbleClientId: string;
   trimbleClientSecret: string;
 }
-
 const DEFAULT_COLORS = {
   darkRed: { r: 140, g: 0, b: 0 },
   red: { r: 255, g: 0, b: 0 },
@@ -52,7 +45,6 @@ const DEFAULT_COLORS = {
   blue: { r: 0, g: 100, b: 255 },
   purple: { r: 160, g: 0, b: 200 },
 };
-
 function useSettings() {
   const DEFAULTS: AppSettings = {
     scriptUrl: localStorage.getItem("sheet_webapp") || "",
@@ -95,7 +87,6 @@ function useSettings() {
 
   return [settings, update] as const;
 }
-
 /* =========================================================
    UTILS
    ========================================================= */
@@ -121,6 +112,16 @@ function groupKeys(keys: string[]): Grouped {
   for (const arr of Object.values(g)) arr.sort((a, b) => a.localeCompare(b));
   return g;
 }
+function isNumericString(s: string) {
+  return /^[-+]?(\d+|\d*\.\d+)(e[-+]?\d+)?$/i.test(s.trim());
+}
+function normaliseNumberString(s: string) {
+  const n = Number(s);
+  if (!Number.isFinite(n)) return s;
+  const r = Math.round(n);
+  if (Math.abs(n - r) < 1e-9) return String(r);
+  return String(parseFloat(n.toFixed(4)));
+}
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
   if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
@@ -130,9 +131,8 @@ function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   ) return "MS";
   return "UNKNOWN";
 }
-
 /* =========================================================
-   PROPERTY FLATTENING (WITH DUPLICATE HANDLING)
+   PROPERTY FLATTENING (WITH DEEP NESTED SUPPORT)
    ========================================================= */
 async function flattenProps(
   obj: any,
@@ -152,10 +152,8 @@ async function flattenProps(
     Type: "Unknown",
     BLOCK: "",
   };
-
   const propMap = new Map<string, string>();
   const keyCounts = new Map<string, number>();
-
   const push = (group: string, name: string, val: unknown) => {
     const baseKey = `${sanitizeKey(group)}.${sanitizeKey(name)}`;
     let key = baseKey;
@@ -169,20 +167,21 @@ async function flattenProps(
     propMap.set(key, s);
     out[key] = s;
   };
-
-  const sets: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
-  for (const set of sets) {
-    const groupName = set?.set ?? set?.setName ?? set?.name ?? set?.displayName ?? "Group";
-    for (const p of set?.properties ?? []) {
-      const propName = p?.name ?? p?.displayName ?? "Prop";
-      push(groupName, propName, p?.value);
-      if (!out.Name && /^(name|object[_\s]?name)$/i.test(String(propName)))
-        out.Name = String(p?.value ?? "");
-      if (out.Type === "Unknown" && /\btype\b/i.test(String(propName)))
-        out.Type = String(p?.value ?? "Unknown");
+  const recurseProps = (props: any, groupPrefix: string = "") => {
+    if (Array.isArray(props)) {
+      props.forEach((p, idx) => recurseProps(p, `${groupPrefix}Item${idx}.`));
+    } else if (typeof props === "object" && props !== null) {
+      Object.entries(props).forEach(([key, val]) => {
+        if (typeof val === "object" && val !== null) {
+          recurseProps(val, `${groupPrefix}${sanitizeKey(key)}.`);
+        } else {
+          push(groupPrefix.slice(0, -1), key, val);
+        }
+      });
     }
-  }
-
+  };
+  recurseProps(obj?.properties);
+  recurseProps(obj, "Object"); // Lisa ka objekt ise, kui on nested
   for (const k of [
     "DATA.BLOCK",
     "BLOCK.BLOCK",
@@ -191,7 +190,6 @@ async function flattenProps(
   ]) {
     if (propMap.has(k)) { out.BLOCK = propMap.get(k)!; break; }
   }
-
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
@@ -200,7 +198,6 @@ async function flattenProps(
     if (cls === "IFC" && !guidIfc) guidIfc = v;
     if (cls === "MS" && !guidMs) guidMs = v;
   }
-
   if (!guidIfc && obj.id) {
     try {
       const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
@@ -210,13 +207,11 @@ async function flattenProps(
       console.warn(`convertToObjectIds failed for ${obj.id}:`, e);
     }
   }
-
   out.GUID_IFC = guidIfc;
   out.GUID_MS = guidMs;
   out.GUID = guidIfc || guidMs || "";
   return out;
 }
-
 /* =========================================================
    API HELPERS
    ========================================================= */
@@ -226,14 +221,12 @@ async function getProjectName(api: any): Promise<string> {
     return String(proj?.name || "");
   } catch { return ""; }
 }
-
 async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
   const viewer: any = api?.viewer;
   const mos = await viewer?.getObjects?.({ selected: true });
   if (!Array.isArray(mos) || !mos.length) return [];
   return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
 }
-
 async function buildModelNameMap(api: any, modelIds: string[]) {
   const map = new Map<string, string>();
   try {
@@ -250,7 +243,6 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   }
   return map;
 }
-
 /* =========================================================
    PSET API HELPERS
    ========================================================= */
@@ -299,85 +291,69 @@ async function getLibraryDetails(token: string, libraryId: string) {
     return null;
   }
 }
-
 /* =========================================================
    COMPONENT
    ========================================================= */
 type Props = { api: any };
-
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
-
   const [tab, setTab] = useState<Tab>("search");
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Set<string>>(
     new Set<string>(JSON.parse(localStorage.getItem("fieldSel") || "[]"))
   );
-
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
-  const [dragIndex, setDragIndex] = useState<number | null>(null); // DnD
-
   const [filter, setFilter] = useState("");
   const [debouncedFilter, setDebouncedFilter] = useState("");
   useEffect(() => {
     const t = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [filter]);
-
   const [busy, setBusy] = useState(false);
   const [discoverMsg, setDiscoverMsg] = useState("");
   const [exportMsg, setExportMsg] = useState("");
   const [searchMsg, setSearchMsg] = useState("");
   const [settingsMsg, setSettingsMsg] = useState("");
   const [psetMsg, setPsetMsg] = useState("");
-
   const [psetLibraries, setPsetLibraries] = useState<any[]>([]);
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(""); // Sisesta oma projectId siia või lisa input
   const [libraryId, setLibraryId] = useState("");
   const [progress, setProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
-
+ 
   const [searchInput, setSearchInput] = useState("");
   const [searchField, setSearchField] = useState<string>("AssemblyMark");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("excel");
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
-
   const allKeys: string[] = useMemo(
     () => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(),
     [rows]
   );
-
   const groupedUnsorted: Grouped = useMemo(() => groupKeys(allKeys), [allKeys]);
   const groupedSortedEntries = useMemo(
     () => (Object.entries(groupedUnsorted) as [string, string[]][])
       .sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])),
     [groupedUnsorted]
   );
-
   const filteredKeysSet = useMemo(() => {
     if (!debouncedFilter) return new Set(allKeys);
     const f = debouncedFilter.toLowerCase();
     return new Set(allKeys.filter(k => k.toLowerCase().includes(f)));
   }, [allKeys, debouncedFilter]);
-
   useEffect(() => {
     localStorage.setItem("fieldSel", JSON.stringify(Array.from(selected)));
   }, [selected]);
-
   useEffect(() => {
     if (!rows.length || selected.size) return;
     if (settings.defaultPreset === "tekla") presetTekla();
     else if (settings.defaultPreset === "ifc") presetIFC();
     else presetRecommended();
   }, [rows]);
-
   useEffect(() => {
     if (!columnOrder.length && allKeys.length) {
       setColumnOrder([...LOCKED_ORDER, ...allKeys.filter(k => !LOCKED_ORDER.includes(k as any))]);
     }
   }, [allKeys, columnOrder.length]);
-
   const matches = (k: string) => filteredKeysSet.has(k);
-
   function toggle(k: string) {
     setSelected(s => {
       const n = new Set(s);
@@ -395,14 +371,13 @@ export default function AssemblyExporter({ api }: Props) {
   function selectAll(on: boolean) {
     setSelected(() => (on ? new Set(allKeys) : new Set()));
   }
-
   function presetRecommended() {
     const wanted = new Set<string>([
       ...LOCKED_ORDER,
       "ReferenceObject.Common_Type",
       "ReferenceObject.File_Name",
     ]);
-    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
+    setSelected(new Set(allKeys.filter(k => wanted.has(k)));
   }
   function presetTekla() {
     setSelected(new Set(allKeys.filter(k =>
@@ -415,9 +390,8 @@ export default function AssemblyExporter({ api }: Props) {
       "ReferenceObject.Common_Type",
       "ReferenceObject.File_Name",
     ]);
-    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
+    setSelected(new Set(allKeys.filter(k => wanted.has(k)));
   }
-
   async function discover() {
     if (!api?.viewer) {
       setDiscoverMsg("❌ Viewer API pole saadaval (iframe?).");
@@ -427,21 +401,17 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(true);
       setDiscoverMsg("Loen valitud objekte…");
       setProgress({ current: 0, total: 0 });
-
       const selectedWithProps = await getSelectedObjects(api);
       if (!selectedWithProps.length) {
         setDiscoverMsg("⚠️ Palun vali 3D vaates objektid.");
         setRows([]);
         return;
       }
-
       const projectName = await getProjectName(api);
       const modelIds = selectedWithProps.map(m => m.modelId);
       const nameMap = await buildModelNameMap(api, modelIds);
-
       const out: Row[] = [];
       const lastSel: Array<{ modelId: string; ids: number[] }> = [];
-
       setProgress({ current: 0, total: selectedWithProps.length });
       for (let i = 0; i < selectedWithProps.length; i++) {
         const { modelId, objects } = selectedWithProps[i];
@@ -456,7 +426,6 @@ export default function AssemblyExporter({ api }: Props) {
         });
         setProgress({ current: i + 1, total: selectedWithProps.length });
       }
-
       setRows(out);
       setLastSelection(lastSel);
       setDiscoverMsg(
@@ -469,7 +438,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
   async function searchAndSelect() {
     try {
       setBusy(true);
@@ -481,24 +449,19 @@ export default function AssemblyExporter({ api }: Props) {
         setSearchMsg("⚠️ Sisesta vähemalt üks väärtus.");
         return;
       }
-
       const viewer = api?.viewer;
       const mos = await viewer?.getObjects?.();
       if (!Array.isArray(mos)) {
         setSearchMsg("❌ Ei suuda lugeda objekte.");
         return;
       }
-
       const found: Array<{ modelId: string; ids: number[] }> = [];
       const foundValues = new Set<string>();
-
       for (const mo of mos) {
         const modelId = String(mo.modelId);
         const matchIds: number[] = [];
-
         for (const obj of mo.objects || []) {
           let matchValue = "";
-
           if (searchField === "AssemblyMark") {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
@@ -544,16 +507,29 @@ export default function AssemblyExporter({ api }: Props) {
               if (matchValue) break;
             }
           }
-
           if (matchValue && searchValues.has(matchValue)) {
             matchIds.push(Number(obj?.id));
             foundValues.add(matchValue);
           }
         }
-
         if (matchIds.length) found.push({ modelId, ids: matchIds });
       }
-
+      if (searchField === "GUID_IFC" && found.length === 0) {
+        // Fallback: Otsi GUID-i järgi kõigi mudelite external ID-dega
+        const allModels = await api.viewer.getModels();
+        for (const value of searchValues) {
+          for (const model of allModels || []) {
+            const modelId = String(model.id);
+            try {
+              const runtimeIds = await api.viewer.convertToObjectRuntimeIds(modelId, [value]);
+              if (runtimeIds.length > 0) {
+                found.push({ modelId, ids: runtimeIds.map(id => Number(id)) });
+                foundValues.add(value);
+              }
+            } catch {}
+          }
+        }
+      }
       if (found.length) {
         const selector = {
           modelObjectIds: found.map(f => ({
@@ -562,7 +538,6 @@ export default function AssemblyExporter({ api }: Props) {
           }))
         };
         await viewer?.setSelection?.(selector);
-
         const notFound = Array.from(searchValues).filter(v => !foundValues.has(v));
         if (notFound.length) {
           setSearchMsg(`✅ Leidsin ${foundValues.size}/${searchValues.size} väärtust. Ei leidnud: ${notFound.join(", ")}`);
@@ -579,27 +554,12 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
   function moveColumn(from: number, to: number) {
     const newOrder = [...columnOrder];
     const [moved] = newOrder.splice(from, 1);
     newOrder.splice(to, 0, moved);
     setColumnOrder(newOrder);
   }
-
-  // Drag-and-drop handlers
-  function onDragStartCol(idx: number) {
-    setDragIndex(idx);
-  }
-  function onDragOverCol(e: React.DragEvent) {
-    e.preventDefault();
-  }
-  function onDropCol(idx: number) {
-    if (dragIndex === null || dragIndex === idx) return;
-    moveColumn(dragIndex, idx);
-    setDragIndex(null);
-  }
-
   async function exportData() {
     if (!rows.length) {
       setExportMsg("⚠️ Pole andmeid eksportimiseks. Mine 'Discover' lehele.");
@@ -615,7 +575,6 @@ export default function AssemblyExporter({ api }: Props) {
       .map(r => exportCols.map(k => (r[k] ?? "")).join("\t"))
       .join("\n");
     const content = header + "\n" + body;
-
     try {
       if (exportFormat === "clipboard") {
         await navigator.clipboard.writeText(content);
@@ -634,13 +593,14 @@ export default function AssemblyExporter({ api }: Props) {
         URL.revokeObjectURL(url);
         setExportMsg(`✅ Salvestatud ${rows.length} rida CSV-na.`);
       } else if (exportFormat === "excel") {
+        // Tee päris .xlsx fail xlsx paketiga
         const aoa: any[][] = [];
-        aoa.push(exportCols);
+        aoa.push(exportCols); // header
         for (const r of rows) {
           aoa.push(
             exportCols.map((k) => {
               const v = r[k] ?? "";
-              if (FORCE_TEXT_KEYS.has(k) || /^(GUID|GUID_IFC|GUID_MS)$/i.test(k)) return `'${String(v)}`;
+              if (FORCE_TEXT_KEYS.has(k) || /^(GUID|GUID_IFC|GUID_MS)$/i.test(k)) return `'${String(v)}`; // sunni tekstiks
               return v;
             })
           );
@@ -656,7 +616,6 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(`❌ Viga: ${e?.message || e}`);
     }
   }
-
   async function sendToGoogleSheet() {
     const { scriptUrl, secret, autoColorize } = settings;
     if (!scriptUrl || !secret) {
@@ -695,7 +654,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
   async function colorLastSelection() {
     const viewer = api?.viewer;
     let blocks = lastSelection;
@@ -704,7 +662,7 @@ export default function AssemblyExporter({ api }: Props) {
       blocks = mos.map(m => ({
         modelId: m.modelId,
         ids: (m.objects || []).map((o: any) => o?.id).filter(Boolean)
-      }));
+      });
     }
     if (!blocks?.length) return;
     const safeColor = settings.colorizeColor ?? DEFAULT_COLORS.darkRed;
@@ -716,7 +674,6 @@ export default function AssemblyExporter({ api }: Props) {
       await viewer?.setObjectState?.(selector, { color: { r, g, b, a: 255 } });
     }
   }
-
   async function resetState() {
     try {
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
@@ -725,7 +682,6 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(`❌ Reset failed: ${e?.message || e}`);
     }
   }
-
   async function fetchPsetLibraries() {
     const { trimbleClientId, trimbleClientSecret } = settings;
     if (!trimbleClientId || !trimbleClientSecret) {
@@ -753,7 +709,6 @@ export default function AssemblyExporter({ api }: Props) {
     }
     setBusy(false);
   }
-
   async function fetchLibraryDetails() {
     const { trimbleClientId, trimbleClientSecret } = settings;
     if (!libraryId) {
@@ -770,16 +725,14 @@ export default function AssemblyExporter({ api }: Props) {
     }
     const details = await getLibraryDetails(token, libraryId);
     if (details) {
-      console.log(details);
+      console.log(details); // Siin saad kuvada detailid UI-s
       setPsetMsg(`✅ Library detailid: ${JSON.stringify(details, null, 2)}`);
     } else {
       setPsetMsg("❌ Viga detailide hankimisel.");
     }
     setBusy(false);
   }
-
   const c = styles;
-
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
@@ -790,7 +743,6 @@ export default function AssemblyExporter({ api }: Props) {
         <button style={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }} onClick={() => setTab("settings")}>SETTINGS</button>
         <button style={{ ...c.tab, ...(tab === "about" ? c.tabActive : {}) }} onClick={() => setTab("about")}>ABOUT</button>
       </div>
-
       <div style={c.page}>
         {tab === "search" && (
           <div style={c.section}>
@@ -807,7 +759,7 @@ export default function AssemblyExporter({ api }: Props) {
             <textarea
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder={"Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)\nNäiteks:\n2COL25\n2COL26\n2COL27"}
+              placeholder="Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)&#10;Näiteks:&#10;2COL25&#10;2COL26&#10;2COL27"
               style={{ ...c.textarea, height: 200 }}
             />
             <div style={c.controls}>
@@ -819,7 +771,6 @@ export default function AssemblyExporter({ api }: Props) {
             {searchMsg && <div style={c.note}>{searchMsg}</div>}
           </div>
         )}
-
         {tab === "discover" && (
           <div style={c.section}>
             <h3 style={c.heading}>Discover Fields</h3>
@@ -843,8 +794,7 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>Tühjenda</button>
               <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>Valitud: {selected.size}</span>
             </div>
-
-            <div style={c.list}>
+            <div style={{...c.list, maxHeight: "none", overflow: "visible"}}>
               {!rows.length ? (
                 <div style={c.small}>Klõpsa "Discover fields".</div>
               ) : (
@@ -873,7 +823,6 @@ export default function AssemblyExporter({ api }: Props) {
                 })
               )}
             </div>
-
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <span style={{ alignSelf: "center", opacity: 0.7 }}>Presets:</span>
               <button style={c.btnGhost} onClick={presetRecommended} disabled={!rows.length}>Recommended</button>
@@ -883,11 +832,10 @@ export default function AssemblyExporter({ api }: Props) {
             {discoverMsg && <div style={c.note}>{discoverMsg}</div>}
           </div>
         )}
-
         {tab === "export" && (
           <div style={c.section}>
             <h3 style={c.heading}>Export Data</h3>
-
+           
             <div style={c.row}>
               <label style={c.label}>Formaat:</label>
               <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value as ExportFormat)} style={c.input}>
@@ -896,38 +844,22 @@ export default function AssemblyExporter({ api }: Props) {
                 <option value="csv">CSV (download)</option>
               </select>
             </div>
-
             <div style={c.small}>Veergude järjestus (lohista ümber):</div>
             <div style={c.columnList}>
-              {columnOrder
-                .filter(k => selected.has(k) && allKeys.includes(k))
-                .map((col, idx, arr) => (
-                  <div
-                    key={col}
-                    style={{
-                      ...c.columnItem,
-                      opacity: dragIndex === idx ? 0.6 : 1,
-                      cursor: "grab"
-                    }}
-                    draggable
-                    onDragStart={() => onDragStartCol(idx)}
-                    onDragOver={onDragOverCol}
-                    onDrop={() => onDropCol(idx)}
-                    title="Lohista ümber"
-                  >
-                    <span style={c.ellipsis}>{col}</span>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      {idx > 0 && (
-                        <button style={c.miniBtn} onClick={() => moveColumn(idx, idx - 1)}>↑</button>
-                      )}
-                      {idx < arr.length - 1 && (
-                        <button style={c.miniBtn} onClick={() => moveColumn(idx, idx + 1)}>↓</button>
-                      )}
-                    </div>
+              {columnOrder.filter(k => selected.has(k) && allKeys.includes(k)).map((col, idx, arr) => (
+                <div key={col} style={c.columnItem}>
+                  <span style={c.ellipsis}>{col}</span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {idx > 0 && (
+                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx - 1)}>↑</button>
+                    )}
+                    {idx < arr.length - 1 && (
+                      <button style={c.miniBtn} onClick={() => moveColumn(idx, idx + 1)}>↓</button>
+                    )}
                   </div>
+                </div>
               ))}
             </div>
-
             <div style={c.controls}>
               <button style={c.btnPrimary} onClick={exportData} disabled={!rows.length || !selected.size}>
                 {exportFormat === "clipboard" ? "Kopeeri lõikelauale" : exportFormat === "excel" ? "Lae alla .xlsx" : "Lae alla CSV"}
@@ -939,12 +871,10 @@ export default function AssemblyExporter({ api }: Props) {
             {exportMsg && <div style={c.note}>{exportMsg}</div>}
           </div>
         )}
-
         {tab === "pset" && (
           <div style={c.section}>
             <h3 style={c.heading}>Property Set Libraries</h3>
             <div style={c.small}>⚠️ Experimental: Client Secret lekib localStorages – soovitus: backend proxy!</div>
-
             <div style={c.row}>
               <label style={c.label}>Project ID:</label>
               <input
@@ -967,7 +897,6 @@ export default function AssemblyExporter({ api }: Props) {
                 ))}
               </div>
             )}
-
             <div style={c.row}>
               <label style={c.label}>Library ID:</label>
               <input
@@ -985,7 +914,6 @@ export default function AssemblyExporter({ api }: Props) {
             {psetMsg && <div style={c.note}>{psetMsg}</div>}
           </div>
         )}
-
         {tab === "settings" && (
           <div style={c.section}>
             <div style={c.row}>
@@ -1085,7 +1013,6 @@ export default function AssemblyExporter({ api }: Props) {
             {settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
         )}
-
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
@@ -1106,7 +1033,6 @@ export default function AssemblyExporter({ api }: Props) {
     </div>
   );
 }
-
 const styles: Record<string, CSSProperties> = {
   shell: {
     height: "100vh",
@@ -1157,17 +1083,7 @@ const styles: Record<string, CSSProperties> = {
     color: "#fff",
     cursor: "pointer",
   },
-
-  // Kerimisriba eemaldus: maxHeight/overflow maha – kogu leht kerib
-  list: {
-    flex: 1,
-    minHeight: 0,
-    border: "1px solid #edf0f4",
-    borderRadius: 8,
-    padding: 8,
-    background: "#fafbfc"
-  },
-
+  list: { flex: 1, minHeight: 0, overflow: "auto", border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc" },
   group: { marginBottom: 8, paddingBottom: 6, borderBottom: "1px dashed #e5e9f0" },
   groupHeader: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
   mini: { padding: "2px 6px", borderRadius: 6, border: "1px solid #d7dde6", background: "#fff", fontSize: 12, cursor: "pointer" },
@@ -1177,7 +1093,6 @@ const styles: Record<string, CSSProperties> = {
   ellipsis: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   small: { fontSize: 12, opacity: 0.8 },
   note: { fontSize: 12, opacity: 0.9, padding: "6px 8px", background: "#f0f4f8", borderRadius: 6 },
-
   columnList: {
     maxHeight: 300,
     overflow: "auto",
