@@ -5,23 +5,24 @@ import "@trimbleinc/modus-bootstrap/dist/modus.min.css";
 import "@trimble-oss/modus-icons/dist/modus-outlined/fonts/modus-icons.css";
 import "./App.css";
 
-function App() {
-  const [tcApi, setTcApi] = useState<WorkspaceAPI.WorkspaceAPI>();
+export default function App() {
+  const [api, setApi] = useState<WorkspaceAPI.WorkspaceAPI | null>(null);
 
   useEffect(() => {
-    async function connectWithTcAPI() {
-      const api = await WorkspaceAPI.connect(window.parent, () => {});
-      setTcApi(api);
+    async function init() {
+      const connected = await WorkspaceAPI.connect(window.parent, () => {});
+      setApi(connected);
     }
-    connectWithTcAPI();
+    init();
   }, []);
 
   return (
     <div className="app-container">
-      <h2 className="title">Assembly Exporter</h2>
-      {tcApi && <AssemblyExporter api={tcApi} />}
+      {api ? (
+        <AssemblyExporter api={api} />
+      ) : (
+        <div>Ühendatakse Trimble Connectiga...</div>
+      )}
     </div>
   );
 }
-
-export default App;
