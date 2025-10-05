@@ -15,7 +15,8 @@
     "@trimble-oss/modus-icons": "^1.15.0",
     "@trimbleinc/modus-bootstrap": "^1.6.4",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
