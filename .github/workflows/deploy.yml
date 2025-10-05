@@ -3,6 +3,13 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'index.html'
+      - 'package.json'
+      - 'vite.config.ts'
+      - 'tsconfig*.json'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 permissions:
@@ -10,6 +17,7 @@ permissions:
   pages: write
   id-token: write
 
+# Hoia aktiivsena ainult VIIMANE Pages-deploy
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -21,22 +29,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Kui lock-fail olemas -> kasuta cache'i
-      - name: Setup Node (with cache)
-        if: hashFiles('**/package-lock.json') != ''
+      # Lock-failiga cache; ilma lockita puhas setup
+      - name: Setup Node (cached if lock exists)
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: ${{ hashFiles('**/package-lock.json') != '' && 'npm' || '' }}
 
-      # Kui lock-faili pole -> ilma cache’ita
-      - name: Setup Node (no cache)
-        if: hashFiles('**/package-lock.json') == ''
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      # Install: kui on lock, kasuta `npm ci`, muidu `npm i`
       - name: Install deps
         run: |
           if [ -f package-lock.json ]; then
