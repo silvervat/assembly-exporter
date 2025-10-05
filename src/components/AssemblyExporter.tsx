@@ -1,26 +1,12 @@
-Aha! Näen probleemi! 🔍
+Vabandust! 😅 Sa kopeerisid faili ka minu markdown selgitused! 
 
-## 🐛 **Miks otsing ei tööta:**
+Fail peab algama `import` lausega, mitte tekstiga "Aha! Näen probleemi!"
 
-Vaatad screenshotist, et objekt sisaldab `"RBP-111"` (uppercase), aga su dynamic search otsib `"Tekla_Assembly.AssemblyCast_unit_Mark"` property nime järgi, aga selle struktuuri ei ole õigesti käsitletud!
-
-Trimble Connectis on property struktuuri nimi tegelikult:
-- PropertySet name: `"Tekla Assembly"` (tühikuga!)
-- Property name: `"Assembly/Cast unit Mark"` (slashiga!)
-
-Aga su kood saniteerib need `"Tekla_Assembly.AssemblyCast_unit_Mark"`
+Siin on **ainult puhas kood ilma selgitusteta**:
 
 ---
 
-## ✅ **TÄIELIK PARANDATUD KOOD** koos:
-
-1. **Otsingu parandusega** (case-insensitive + õige property matching)
-2. **PÄRIS drag & drop'iga** Export lehel
-3. **Scroll bar eemaldatud**
-4. **Checkboxid eksporditavate veergude valimiseks**
-5. **Nooled + drag jäävad mõlemad alles**
-
----
+**KOPEERI AINULT ALATES SIIT:**
 
 ```typescript
 import { useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
@@ -653,7 +639,6 @@ export default function AssemblyExporter({ api }: Props) {
               if (matchValue) break;
             }
           } else {
-            // ✅ DYNAMIC SEARCH - case insensitive matching
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             const searchKeySanitized = sanitizeKey(searchField);
             
@@ -737,7 +722,6 @@ export default function AssemblyExporter({ api }: Props) {
     setTimeout(() => setHighlightedColumn(null), HIGHLIGHT_DURATION_MS);
   }
   
-  // ✅ DRAG & DROP HANDLERS
   function handleDragStart(e: DragEvent<HTMLDivElement>, index: number) {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
@@ -1456,3 +1440,33 @@ const styles: Record<string, CSSProperties> = {
     paddingBottom: 6, 
     borderBottom: "1px dashed #e5e9f0" 
   },
+  groupHeader: { 
+    display: "flex", 
+    alignItems: "center", 
+    gap: 8, 
+    marginBottom: 6 
+  },
+  mini: { 
+    padding: "2px 6px", 
+    borderRadius: 6, 
+    border: "1px solid #d7dde6", 
+    background: "#fff", 
+    fontSize: 12, 
+    cursor: "pointer" 
+  },
+  miniBtn: { 
+    padding: "2px 8px", 
+    borderRadius: 4, 
+    border: "1px solid #d7dde6", 
+    background: "#fff", 
+    fontSize: 11, 
+    cursor: "pointer" 
+  },
+  grid: { 
+    display: "grid", 
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))", 
+    gap: 6 
+  },
+  checkRow: { 
+    display: "flex", 
+    alignItems: "center", 
