@@ -1089,4 +1089,4 @@ const styles: Record<string, cssproperties=""> = {
   resultValue: { fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   resultCount: { fontSize: 11, opacity: 0.7, textAlign: "right" as any },
   resultActions: { display: "flex", gap: 4 },
-};</string,></htmldivelement></htmldivelement></htmldivelement></htmldivelement></string,></abortcontroller></array<any></array<{></exportformat></number></string></string[]></set<string></row[]></tab>
+};
