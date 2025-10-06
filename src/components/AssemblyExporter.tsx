@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent, Suspense } from "react";
 import * as XLSX from "xlsx";
 
 type Language = "et" | "en";
@@ -888,12 +888,7 @@ export default function AssemblyExporter({ api }: Props) {
     flex: 1,
   });
   const searchNoteStyle = { ...c.note, fontSize: 11 };
-  let ScanApp;
-  try {
-    ScanApp = require('./ScanApp').default;
-  } catch (e) {
-    ScanApp = () => <div style={c.note}>{t.inDevelopment}</div>;
-  }
+  const ScanAppLazy = React.lazy(() => import('./ScanApp').catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> })));
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
@@ -1034,25 +1029,27 @@ export default function AssemblyExporter({ api }: Props) {
         {tab === "scan" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.scanTitle}</h3>
-            <ScanApp 
-              api={api}
-              settings={{
-                ocrWebhookUrl: settings.ocrWebhookUrl,
-                ocrSecret: settings.ocrSecret,
-                ocrPrompt: settings.ocrPrompt,
-                language: settings.language
-              }}
-              translations={t}
-              styles={c}
-              onConfirm={(marks, rows, markKey, qtyKey) => {
-                setTab("search");
-                setSearchField("AssemblyMark");
-                setSearchFieldFilter("Kooste märk (BLOCK)");
-                setSearchScope("available");
-                setSearchInput(marks.join("\n"));
-                setTimeout(() => { searchAndSelect(); }, 100);
-              }}
-            />
+            <Suspense fallback={<div>Loading...</div>}>
+              <ScanAppLazy 
+                api={api}
+                settings={{
+                  ocrWebhookUrl: settings.ocrWebhookUrl,
+                  ocrSecret: settings.ocrSecret,
+                  ocrPrompt: settings.ocrPrompt,
+                  language: settings.language
+                }}
+                translations={t}
+                styles={c}
+                onConfirm={(marks, rows, markKey, qtyKey) => {
+                  setTab("search");
+                  setSearchField("AssemblyMark");
+                  setSearchFieldFilter("Kooste märk (BLOCK)");
+                  setSearchScope("available");
+                  setSearchInput(marks.join("\n"));
+                  setTimeout(() => { searchAndSelect(); }, 100);
+                }}
+              />
+            </Suspense>
           </div>
         )}
         {tab === "settings" && (
