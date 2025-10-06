@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent } from "react";
 import * as XLSX from "xlsx";
-
 type Language = "et" | "en";
 type Tab = "search" | "discover" | "export" | "settings" | "about";
 type Row = Record<string, string>;
 type ExportFormat = "clipboard" | "excel" | "csv";
-
 const translations = {
   et: {
     search: "OTSI",
@@ -14,7 +12,7 @@ const translations = {
     settings: "SEADED",
     about: "INFO",
     searchAndSelect: "Otsi ja vali",
-    searchBy: "Otsi mille järgi:",
+    searchBy: "Otsitav väli:",
     searchScope: "Otsi ulatus:",
     scopeAll: "Kõik saadaval",
     scopeSelected: "Valitud",
@@ -190,14 +188,12 @@ const translations = {
     models: "models",
   }
 };
-
 const LOCKED_ORDER = ["GUID", "GUID_IFC", "GUID_MS", "Project", "ModelId", "FileName", "Name", "Type"] as const;
 const FORCE_TEXT_KEYS = new Set(["Tekla_Assembly.AssemblyCast_unit_top_elevation", "Tekla_Assembly.AssemblyCast_unit_bottom_elevation"]);
 const DEBOUNCE_MS = 300;
 const HIGHLIGHT_DURATION_MS = 2000;
 const MESSAGE_DURATION_MS = 3000;
 type DefaultPreset = "recommended" | "tekla" | "ifc";
-
 interface AppSettings {
   scriptUrl: string;
   secret: string;
@@ -206,7 +202,6 @@ interface AppSettings {
   colorizeColor: { r: number; g: number; b: number };
   language: Language;
 }
-
 const DEFAULT_COLORS = {
   darkRed: { r: 140, g: 0, b: 0 },
   red: { r: 255, g: 0, b: 0 },
@@ -216,7 +211,6 @@ const DEFAULT_COLORS = {
   blue: { r: 0, g: 100, b: 255 },
   purple: { r: 160, g: 0, b: 200 },
 };
-
 function useSettings() {
   const DEFAULTS: AppSettings = {
     scriptUrl: localStorage.getItem("sheet_webapp") || "",
@@ -247,11 +241,9 @@ function useSettings() {
   }, []);
   return [settings, update] as const;
 }
-
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
 }
-
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
@@ -259,7 +251,6 @@ function groupSortKey(group: string) {
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
-
 type Grouped = Record<string, string[]>;
 function groupKeys(keys: string[]): Grouped {
   const g: Grouped = {};
@@ -272,14 +263,12 @@ function groupKeys(keys: string[]): Grouped {
   for (const arr of Object.values(g)) arr.sort((a, b) => a.localeCompare(b));
   return g;
 }
-
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
   if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
   if (/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(s) || /^[0-9A-Fa-f]{32}$/.test(s)) return "MS";
   return "UNKNOWN";
 }
-
 async function flattenProps(obj: any, modelId: string, projectName: string, productName: string, modelNameById: Map<string, string>, api: any): Promise<Row> {
   const out: Row = {
     GUID: "", GUID_IFC: "", GUID_MS: "", Project: String(projectName || ""),
@@ -343,7 +332,6 @@ async function flattenProps(obj: any, modelId: string, projectName: string, prod
   out.GUID = guidIfc || guidMs || "";
   return out;
 }
-
 async function getProjectName(api: any): Promise<string> {
   try {
     const proj = typeof api?.project?.getProject === "function" ? await api.project.getProject() : api?.project || {};
@@ -352,7 +340,6 @@ async function getProjectName(api: any): Promise<string> {
     return "";
   }
 }
-
 async function getProductName(api: any): Promise<string> {
   try {
     const proj = typeof api?.project?.getProject === "function" ? await api.project.getProject() : api?.project || {};
@@ -361,14 +348,12 @@ async function getProductName(api: any): Promise<string> {
     return "";
   }
 }
-
 async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
   const viewer: any = api?.viewer;
   const mos = await viewer?.getObjects?.({ selected: true });
   if (!Array.isArray(mos) || !mos.length) return [];
   return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
 }
-
 async function buildModelNameMap(api: any, modelIds: string[]) {
   const map = new Map<string, string>();
   try {
@@ -387,7 +372,6 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   }
   return map;
 }
-
 const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => (
   <div style={{ ...styles.resultRow, ...(result.status === 'found' ? styles.resultRowFound : styles.resultRowNotFound) }}>
     <span style={styles.resultStatus}>{result.status === 'found' ? '✅' : '❌'}</span>
@@ -401,7 +385,6 @@ const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => (
     </div>
   </div>
 ));
-
 type Props = { api: any };
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
@@ -429,21 +412,18 @@ export default function AssemblyExporter({ api }: Props) {
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
   const [searchResults, setSearchResults] = useState<Array<any>>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
-
   useEffect(() => {
     const tmr = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(tmr);
   }, [filter]);
-
   useEffect(() => { localStorage.setItem("fieldSel", JSON.stringify(Array.from(selected))); }, [selected]);
   useEffect(() => { if (discoverMsg) { const t = setTimeout(() => setDiscoverMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [discoverMsg]);
   useEffect(() => { if (exportMsg) { const t = setTimeout(() => setExportMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [exportMsg]);
-  useEffect(() => { if (searchMsg && !busy) { const t = setTimeout(() => setSearchMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [searchMsg, busy]);
-
+  useEffect(() => { if (settingsMsg) { const t = setTimeout(() => setSettingsMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [settingsMsg]);
   const allKeys = useMemo(() => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(), [rows]);
   const searchFieldOptions = useMemo(() => {
     const base = [
-      { value: "AssemblyMark", label: "Assembly Mark (BLOCK)" },
+      { value: "AssemblyMark", label: "Kooste märk (BLOCK)" },
       { value: "GUID_IFC", label: "IFC GUID" },
       { value: "GUID_MS", label: "MS/Tekla GUID" },
       { value: "Name", label: "Nimi" },
@@ -454,7 +434,6 @@ export default function AssemblyExporter({ api }: Props) {
     const f = searchFieldFilter.toLowerCase();
     return all.filter(opt => opt.label.toLowerCase().includes(f) || opt.value.toLowerCase().includes(f));
   }, [allKeys, searchFieldFilter]);
-
   const groupedUnsorted = useMemo(() => groupKeys(allKeys), [allKeys]);
   const groupedSortedEntries = useMemo(() => (Object.entries(groupedUnsorted) as [string, string[]][]).sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])), [groupedUnsorted]);
   const filteredKeysSet = useMemo(() => {
@@ -464,21 +443,18 @@ export default function AssemblyExporter({ api }: Props) {
   }, [allKeys, debouncedFilter]);
   const exportableColumns = useMemo(() => columnOrder.filter(k => allKeys.includes(k)), [columnOrder, allKeys]);
   const totalFoundCount = useMemo(() => searchResults.reduce((sum, r) => sum + (r.status === 'found' ? r.ids?.length || 0 : 0), 0), [searchResults]);
-
   useEffect(() => {
     if (!rows.length || selected.size) return;
     if (settings.defaultPreset === "tekla") presetTekla();
     else if (settings.defaultPreset === "ifc") presetIFC();
     else presetRecommended();
   }, [rows, settings.defaultPreset]);
-
   useEffect(() => {
     const currentSet = new Set(columnOrder);
     const missingKeys = allKeys.filter(k => !currentSet.has(k));
     if (missingKeys.length > 0) setColumnOrder(prev => [...prev, ...missingKeys]);
     else if (!columnOrder.length && allKeys.length) setColumnOrder([...LOCKED_ORDER, ...allKeys.filter(k => !LOCKED_ORDER.includes(k as any))]);
   }, [allKeys]);
-
   useEffect(() => {
     if (!api?.viewer) return;
     let selectionTimeout: NodeJS.Timeout;
@@ -492,14 +468,12 @@ export default function AssemblyExporter({ api }: Props) {
       try { api.viewer.off?.('selectionChanged', handleSelectionChange); } catch {}
     };
   }, [api, busy]);
-
   useEffect(() => { if (tab === "export" && !busy) discover(); }, [tab]);
-
+  useEffect(() => { if (tab === "discover" && !busy) discover(); }, [tab]);
   const matches = useCallback((k: string) => filteredKeysSet.has(k), [filteredKeysSet]);
   const toggle = useCallback((k: string) => setSelected(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; }), []);
   const toggleGroup = useCallback((keys: string[], on: boolean) => setSelected(s => { const n = new Set(s); for (const k of keys) on ? n.add(k) : n.delete(k); return n; }), []);
   const selectAll = useCallback((on: boolean) => setSelected(() => (on ? new Set(allKeys) : new Set())), [allKeys]);
-
   function presetRecommended() {
     const wanted = new Set([...LOCKED_ORDER, "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
@@ -509,7 +483,6 @@ export default function AssemblyExporter({ api }: Props) {
     const wanted = new Set(["GUID_IFC", "GUID_MS", "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
-
   async function discover() {
     if (!api?.viewer) { setDiscoverMsg(t.apiError); return; }
     try {
@@ -547,7 +520,6 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(t.error.replace('{error}', e?.message || t.unknownError));
     } finally { setBusy(false); }
   }
-
   const cancelSearch = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -556,7 +528,6 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }, [t]);
-
   async function searchAndSelect() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -720,7 +691,6 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }
-
   const selectAllFound = useCallback(async () => {
     try {
       const allFound = searchResults.filter(r => r.status === 'found' && r.modelId && r.ids).map(r => ({ modelId: r.modelId, ids: r.ids }));
@@ -735,7 +705,6 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(t.selectAllError);
     }
   }, [searchResults, api, t]);
-
   const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
     try {
       const viewer = api?.viewer;
@@ -746,7 +715,6 @@ export default function AssemblyExporter({ api }: Props) {
       console.error("Zoom error:", e);
     }
   }, [api]);
-
   const moveColumn = useCallback((from: number, to: number) => {
     const newOrder = [...columnOrder];
     const [moved] = newOrder.splice(from, 1);
@@ -755,24 +723,20 @@ export default function AssemblyExporter({ api }: Props) {
     setHighlightedColumn(moved);
     setTimeout(() => setHighlightedColumn(null), HIGHLIGHT_DURATION_MS);
   }, [columnOrder]);
-
   const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/html", e.currentTarget.innerHTML);
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "0.4";
   }, []);
-
   const handleDragEnd = useCallback((e: DragEvent<HTMLDivElement>) => {
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "1";
     setDraggedIndex(null);
   }, []);
-
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }, []);
-
   const handleDrop = useCallback((e: DragEvent<HTMLDivElement>, dropIndex: number) => {
     e.preventDefault();
     if (draggedIndex === null || draggedIndex === dropIndex) return;
@@ -783,7 +747,6 @@ export default function AssemblyExporter({ api }: Props) {
     setHighlightedColumn(moved);
     setTimeout(() => setHighlightedColumn(null), HIGHLIGHT_DURATION_MS);
   }, [draggedIndex, columnOrder]);
-
   async function exportData() {
     if (!rows.length) { setExportMsg(t.noDataExport); return; }
     const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
@@ -824,7 +787,6 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(t.exportError.replace('{error}', e?.message || e));
     }
   }
-
   async function sendToGoogleSheet() {
     const { scriptUrl, secret, autoColorize } = settings;
     if (!scriptUrl || !secret) { setTab("settings"); setSettingsMsg(t.fillSettings); return; }
@@ -846,7 +808,6 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(t.exportError.replace('{error}', e?.message || e));
     } finally { setBusy(false); }
   }
-
   async function colorLastSelection() {
     const viewer = api?.viewer;
     let blocks = lastSelection;
@@ -862,7 +823,6 @@ export default function AssemblyExporter({ api }: Props) {
       await viewer?.setObjectState?.(selector, { color: { r, g, b, a: 255 } });
     }
   }
-
   async function resetState() {
     try {
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
@@ -871,10 +831,18 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(t.resetFailed.replace('{error}', e?.message || e));
     }
   }
-
   const removeResult = useCallback((index: number) => setSearchResults(prev => prev.filter((_, i) => i !== index)), []);
   const c = styles;
-
+  const scopeButtonStyle = (isActive: boolean): CSSProperties => ({
+    padding: "6px 10px",
+    borderRadius: 8,
+    border: "1px solid #cfd6df",
+    background: isActive ? "#0a3a67" : "#f6f8fb",
+    color: isActive ? "#fff" : "#000",
+    cursor: "pointer",
+    flex: 1,
+  });
+  const searchNoteStyle = { ...c.note, fontSize: 11 };
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
@@ -883,11 +851,7 @@ export default function AssemblyExporter({ api }: Props) {
         <button style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }} onClick={() => setTab("export")}>{t.export}</button>
         <button style={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }} onClick={() => setTab("settings")}>{t.settings}</button>
         <button style={{ ...c.tab, ...(tab === "about" ? c.tabActive : {}) }} onClick={() => setTab("about")}>{t.about}</button>
-        <button style={{ ...c.tab, marginLeft: "auto" }} onClick={() => updateSettings({ language: settings.language === "et" ? "en" : "et" })}>
-          {settings.language === "et" ? "🇬🇧 EN" : "🇪🇪 ET"}
-        </button>
       </div>
-
       <div style={c.page}>
         {tab === "search" && (
           <div style={c.section}>
@@ -907,19 +871,19 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
             <div style={c.fieldGroup}>
               <label style={c.labelTop}>{t.searchScope}</label>
-              <select value={searchScope} onChange={(e) => setSearchScope(e.target.value as "available" | "selected")} style={{ ...c.input, width: "100%" }}>
-                <option value="available">{t.scopeAll}</option>
-                <option value="selected">{t.scopeSelected}</option>
-              </select>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button style={scopeButtonStyle(searchScope === "available")} onClick={() => setSearchScope("available")}>{t.scopeAll}</button>
+                <button style={scopeButtonStyle(searchScope === "selected")} onClick={() => setSearchScope("selected")}>{t.scopeSelected}</button>
+              </div>
             </div>
             <textarea value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder={t.searchPlaceholder} style={{ ...c.textarea, height: 200 }} />
             <div style={c.controls}>
               <button style={c.btn} onClick={searchAndSelect} disabled={busy || !searchInput.trim()}>{busy ? t.searching : t.searchButton}</button>
               {busy && <button style={c.btnGhost} onClick={cancelSearch}>{t.cancelSearch}</button>}
-              <button style={c.btnGhost} onClick={() => { setSearchInput(""); setSearchResults([]); }}>{t.clear}</button>
+              <button style={c.btnGhost} onClick={() => { setSearchInput(""); setSearchResults([]); setSearchMsg(""); }}>{t.clear}</button>
             </div>
             {!!progress.total && progress.total > 1 && <div style={c.small}>{t.searchProgress} {progress.current}/{progress.total} {t.models}</div>}
-            {searchMsg && <div style={c.note}>{searchMsg}</div>}
+            {searchMsg && <div style={searchNoteStyle}>{searchMsg}</div>}
             {searchResults.length > 0 && (
               <div style={c.resultsBox}>
                 <h4 style={c.resultsHeading}>{t.results} ({searchResults.length})</h4>
@@ -933,7 +897,6 @@ export default function AssemblyExporter({ api }: Props) {
             )}
           </div>
         )}
-
         {tab === "discover" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.discoverFields}</h3>
@@ -975,7 +938,6 @@ export default function AssemblyExporter({ api }: Props) {
             {discoverMsg && <div style={c.note}>{discoverMsg}</div>}
           </div>
         )}
-
         {tab === "export" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.exportData}</h3>
@@ -1008,12 +970,11 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btn} onClick={() => { setExportFormat("clipboard"); exportData(); }} disabled={!rows.length || !selected.size}>{t.clipboard}</button>
               <button style={c.btn} onClick={() => { setExportFormat("csv"); exportData(); }} disabled={!rows.length || !selected.size}>{t.csv}</button>
               <button style={c.btn} onClick={() => { setExportFormat("excel"); exportData(); }} disabled={!rows.length || !selected.size}>{t.excel}</button>
-              <button style={c.btnPrimary} onClick={sendToGoogleSheet} disabled={busy || !rows.length || !selected.size}>{busy ? t.sending : t.googleSheets}</button>
+              <button style={c.btnPrimary} onClick={sendToGoogleSheet} disabled={busy || !rows.length || !selected.size || !settings.scriptUrl || !settings.secret}>{busy ? t.sending : t.googleSheets}</button>
             </div>
             {exportMsg && <div style={c.note}>{exportMsg}</div>}
           </div>
         )}
-
         {tab === "settings" && (
           <div style={c.section}>
             <div style={c.row}>
@@ -1030,15 +991,18 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
             <div style={c.row}>
               <label style={c.label} title={t.colorTooltip}>{t.color}</label>
-              <select value={Object.keys(DEFAULT_COLORS).find(k => { const current = settings.colorizeColor ?? DEFAULT_COLORS.darkRed; const col = DEFAULT_COLORS[k as keyof typeof DEFAULT_COLORS]; return col.r === current.r && col.g === current.g && col.b === current.b; }) || "darkRed"} onChange={(e) => { const colorKey = e.target.value as keyof typeof DEFAULT_COLORS; updateSettings({ colorizeColor: DEFAULT_COLORS[colorKey] }); }} style={c.input} title={t.colorTooltip}>
-                <option value="darkRed">{t.darkRed}</option>
-                <option value="red">{t.red}</option>
-                <option value="orange">{t.orange}</option>
-                <option value="yellow">{t.yellow}</option>
-                <option value="green">{t.green}</option>
-                <option value="blue">{t.blue}</option>
-                <option value="purple">{t.purple}</option>
-              </select>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <select value={Object.keys(DEFAULT_COLORS).find(k => { const current = settings.colorizeColor ?? DEFAULT_COLORS.darkRed; const col = DEFAULT_COLORS[k as keyof typeof DEFAULT_COLORS]; return col.r === current.r && col.g === current.g && col.b === current.b; }) || "darkRed"} onChange={(e) => { const colorKey = e.target.value as keyof typeof DEFAULT_COLORS; updateSettings({ colorizeColor: DEFAULT_COLORS[colorKey] }); }} style={c.input} title={t.colorTooltip}>
+                  <option value="darkRed">{t.darkRed}</option>
+                  <option value="red">{t.red}</option>
+                  <option value="orange">{t.orange}</option>
+                  <option value="yellow">{t.yellow}</option>
+                  <option value="green">{t.green}</option>
+                  <option value="blue">{t.blue}</option>
+                  <option value="purple">{t.purple}</option>
+                </select>
+                <span style={{ fontSize: 11, opacity: 0.7 }}>{t.colorTooltip}</span>
+              </div>
             </div>
             <div style={c.row}>
               <label style={c.label}>{t.defaultPreset}</label>
@@ -1055,7 +1019,6 @@ export default function AssemblyExporter({ api }: Props) {
             {settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
         )}
-
         {tab === "about" && (
           <div style={c.section}>
             <div style={c.small}>
@@ -1066,11 +1029,16 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
           </div>
         )}
+        <div style={{ padding: 10, textAlign: "center", fontSize: 11, opacity: 0.5 }}>{t.author}</div>
+        <div style={{ display: "flex", justifyContent: "center", paddingBottom: 10 }}>
+          <button style={{ ...c.tab }} onClick={() => updateSettings({ language: settings.language === "et" ? "en" : "et" })}>
+            {settings.language === "et" ? "🇬🇧 EN" : "🇪🇪 ET"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
-
 const styles: Record<string, CSSProperties> = {
   shell: { height: "100vh", display: "flex", flexDirection: "column", background: "#fff", color: "#111", fontFamily: "Inter, system-ui, Arial, sans-serif", fontSize: 13, lineHeight: 1.25 },
   topbar: { display: "flex", gap: 2, background: "#0a3a67", padding: "8px 10px", position: "sticky", top: 0, zIndex: 100, flexWrap: "wrap" as any },
