@@ -264,18 +264,18 @@ const DEFAULT_COLORS = {
 
 function useSettings() {
   const DEFAULTS: AppSettings = {
-    scriptUrl: localStorage.getItem("sheet_webapp") || "",
-    secret: localStorage.getItem("sheet_secret") || "",
+    scriptUrl: "",
+    secret: "",
     autoColorize: true,
     defaultPreset: "recommended",
     colorizeColor: DEFAULT_COLORS.darkRed,
     language: "et",
-    ocrWebhookUrl: localStorage.getItem("ocr_webhook") || "",
-    ocrSecret: localStorage.getItem("ocr_secret") || "",
+    ocrWebhookUrl: "",
+    ocrSecret: "",
     ocrPrompt: "",
   };
   const [settings, setSettings] = useState<AppSettings>(() => {
-    const raw = localStorage.getItem("assemblyExporterSettings");
+    const raw = window.localStorage?.getItem?.("assemblyExporterSettings");
     if (!raw) return DEFAULTS;
     try {
       const parsed = JSON.parse(raw) as Partial<AppSettings>;
@@ -287,11 +287,7 @@ function useSettings() {
   const update = useCallback((patch: Partial<AppSettings>) => {
     setSettings(prev => {
       const next = { ...prev, ...patch };
-      localStorage.setItem("assemblyExporterSettings", JSON.stringify(next));
-      localStorage.setItem("sheet_webapp", next.scriptUrl || "");
-      localStorage.setItem("sheet_secret", next.secret || "");
-      localStorage.setItem("ocr_webhook", next.ocrWebhookUrl || "");
-      localStorage.setItem("ocr_secret", next.ocrSecret || "");
+      window.localStorage?.setItem?.("assemblyExporterSettings", JSON.stringify(next));
       return next;
     });
   }, []);
@@ -433,8 +429,11 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
 }
 
 const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => (
-  <div style={{ ...styles.resultRow, ...(result.status === 'found' ? styles.resultRowFound : styles.resultRowNotFound) }}>
-    <span style={styles.resultStatus}>{result.status === 'found' ? '✅' : '❌'}</span>
+  <div style={{ 
+    ...styles.resultRow, 
+    ...(result.status === 'found' ? (result.isPartial ? styles.resultRowPartial : styles.resultRowFound) : styles.resultRowNotFound) 
+  }}>
+    <span style={styles.resultStatus}>{result.status === 'found' ? (result.isPartial ? '⚠️' : '✅') : '❌'}</span>
     <span style={styles.resultValue} title={result.originalValue}>{result.originalValue}</span>
     <span style={styles.resultCount}>{result.status === 'found' ? `${result.ids?.length || 0}x` : '-'}</span>
     <div style={styles.resultActions}>
@@ -453,7 +452,7 @@ export default function AssemblyExporter({ api }: Props) {
   const t = translations[settings.language];
   const [tab, setTab] = useState<Tab>("search");
   const [rows, setRows] = useState<Row[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set(JSON.parse(localStorage.getItem("fieldSel") || "[]")));
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [debouncedFilter, setDebouncedFilter] = useState("");
@@ -462,6 +461,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [searchFieldFilter, setSearchFieldFilter] = useState("Kooste märk (BLOCK)");
   const [isSearchFieldDropdownOpen, setIsSearchFieldDropdownOpen] = useState(false);
   const [searchScope, setSearchScope] = useState<"available" | "selected">("available");
+  const [fuzzySearch, setFuzzySearch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [discoverMsg, setDiscoverMsg] = useState("");
   const [exportMsg, setExportMsg] = useState("");
@@ -481,7 +481,6 @@ export default function AssemblyExporter({ api }: Props) {
     return () => clearTimeout(tmr);
   }, [filter]);
 
-  useEffect(() => { localStorage.setItem("fieldSel", JSON.stringify(Array.from(selected))); }, [selected]);
   useEffect(() => { if (discoverMsg) { const t = setTimeout(() => setDiscoverMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [discoverMsg]);
   useEffect(() => { if (exportMsg) { const t = setTimeout(() => setExportMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [exportMsg]);
   useEffect(() => { if (settingsMsg) { const t = setTimeout(() => setSettingsMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [settingsMsg]);
@@ -623,7 +622,7 @@ export default function AssemblyExporter({ api }: Props) {
       let mos = searchScope === "selected" ? await viewer?.getObjects({ selected: true }) : await viewer?.getObjects();
       if (!Array.isArray(mos)) { if (abortController.signal.aborted) return; setSearchMsg(t.cannotRead); setBusy(false); return; }
       const found: Array<{ modelId: string; ids: number[] }> = [];
-      const foundValues = new Map<string, { original: string; modelId: string; ids: number[] }>();
+      const foundValues = new Map<string, { original: string; modelId: string; ids: number[]; isPartial: boolean }>();
       setProgress({ current: 0, total: mos.length });
       for (let mIdx = 0; mIdx < mos.length; mIdx++) {
         if (abortController.signal.aborted) return;
@@ -710,10 +709,18 @@ export default function AssemblyExporter({ api }: Props) {
             }
           }
           const matchLower = matchValue.toLowerCase();
-          const originalMatch = uniqueSearchValues.find(v => v.toLowerCase() === matchLower);
-          if (originalMatch && searchLower.has(matchLower)) {
+          const originalMatch = uniqueSearchValues.find(v => {
+            const vLower = v.toLowerCase();
+            if (fuzzySearch) {
+              return matchLower.includes(vLower) || vLower.includes(matchLower);
+            } else {
+              return vLower === matchLower;
+            }
+          });
+          if (originalMatch && (fuzzySearch || searchLower.has(matchLower))) {
             matchIds.push(objId);
-            if (!foundValues.has(matchLower)) foundValues.set(matchLower, { original: originalMatch, modelId, ids: [] });
+            const isPartial = fuzzySearch && originalMatch.toLowerCase() !== matchLower;
+            if (!foundValues.has(matchLower)) foundValues.set(matchLower, { original: originalMatch, modelId, ids: [], isPartial });
             foundValues.get(matchLower)!.ids.push(objId);
           }
         }
@@ -731,7 +738,7 @@ export default function AssemblyExporter({ api }: Props) {
               const runtimeIds = await api.viewer.convertToObjectRuntimeIds(modelId, [originalValue]);
               if (runtimeIds.length > 0) {
                 found.push({ modelId, ids: runtimeIds.map((id: any) => Number(id)) });
-                foundValues.set(value, { original: originalValue, modelId, ids: runtimeIds.map((id: any) => Number(id)) });
+                foundValues.set(value, { original: originalValue, modelId, ids: runtimeIds.map((id: any) => Number(id)), isPartial: false });
               }
             } catch {}
           }
@@ -742,7 +749,7 @@ export default function AssemblyExporter({ api }: Props) {
         const lower = originalValue.toLowerCase();
         if (foundValues.has(lower)) {
           const data = foundValues.get(lower)!;
-          results.push({ originalValue: data.original, value: lower, status: 'found', modelId: data.modelId, ids: data.ids });
+          results.push({ originalValue: data.original, value: lower, status: 'found', modelId: data.modelId, ids: data.ids, isPartial: data.isPartial });
         } else {
           results.push({ originalValue, value: lower, status: 'notfound' });
         }
@@ -952,8 +959,8 @@ export default function AssemblyExporter({ api }: Props) {
             <h3 style={c.heading}>{t.searchAndSelect}</h3>
             <div style={c.fieldGroup}>
               <label style={c.labelTop}>{t.searchBy}</label>
-              <div style={{ position: "relative" }} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setTimeout(() => setIsSearchFieldDropdownOpen(false), 200); }}>
-                <input type="text" value={searchFieldFilter} onChange={(e) => setSearchFieldFilter(e.target.value)} onFocus={() => setIsSearchFieldDropdownOpen(true)} placeholder="Tippige filtriks või valige..." style={c.input} />
+              <div style={{ position: "relative", width: "100%" }} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setTimeout(() => setIsSearchFieldDropdownOpen(false), 200); }}>
+                <input type="text" value={searchFieldFilter} onChange={(e) => setSearchFieldFilter(e.target.value)} onFocus={() => setIsSearchFieldDropdownOpen(true)} placeholder="Tippige filtriks või valige..." style={{...c.input, width: "100%"}} />
                 {isSearchFieldDropdownOpen && (
                   <div style={c.dropdown}>
                     {searchFieldOptions.length === 0 ? <div style={c.dropdownItem}>{t.noResults}</div> : searchFieldOptions.map(opt => (
@@ -969,6 +976,12 @@ export default function AssemblyExporter({ api }: Props) {
                 <button style={scopeButtonStyle(searchScope === "available")} onClick={() => setSearchScope("available")}>{t.scopeAll}</button>
                 <button style={scopeButtonStyle(searchScope === "selected")} onClick={() => setSearchScope("selected")}>{t.scopeSelected}</button>
               </div>
+            </div>
+            <div style={c.fieldGroup}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={fuzzySearch} onChange={(e) => setFuzzySearch(e.target.checked)} />
+                <span>{settings.language === "et" ? "Otsi sarnaseid (osaline vaste)" : "Fuzzy search (partial match)"}</span>
+              </label>
             </div>
             <textarea value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder={t.searchPlaceholder} style={{ ...c.textarea, height: 200 }} />
             <div style={c.controls}>
@@ -1157,7 +1170,7 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
             <div style={{ ...c.row, justifyContent: "flex-end" }}>
               <button style={c.btn} onClick={() => setSettingsMsg(t.saved)}>{t.save}</button>
-              <button style={c.btnGhost} onClick={() => { localStorage.removeItem("assemblyExporterSettings"); window.location.reload(); }}>{t.reset}</button>
+              <button style={c.btnGhost} onClick={() => { window.localStorage?.removeItem?.("assemblyExporterSettings"); window.location.reload(); }}>{t.reset}</button>
             </div>
             {settingsMsg && <div style={c.note}>{settingsMsg}</div>}
           </div>
@@ -1220,8 +1233,9 @@ const styles: Record<string, CSSProperties> = {
   resultsBox: { marginTop: 12, border: "1px solid #e5e9f0", borderRadius: 8, padding: 12, background: "#fafbfc" },
   resultsHeading: { margin: "0 0 8px 0", fontSize: 14, fontWeight: 600, color: "#0a3a67" },
   resultsTable: { display: "flex", flexDirection: "column", gap: 4 },
-  resultRow: { display: "grid", gridTemplateColumns: "30px 1fr 50px auto", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, fontSize: 12 },
+  resultRow: { display: "grid", gridTemplateColumns: "24px 1fr 40px auto", alignItems: "center", gap: 4, padding: "6px 8px", borderRadius: 6, fontSize: 12 },
   resultRowFound: { background: "#e8f5e9", border: "1px solid #a5d6a7" },
+  resultRowPartial: { background: "#fff9c4", border: "1px solid #ffd54f" },
   resultRowNotFound: { background: "#ffebee", border: "1px solid #ef9a9a" },
   resultStatus: { fontSize: 16, textAlign: "center" as any },
   resultValue: { fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
