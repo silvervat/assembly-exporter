@@ -16,13 +16,13 @@ const translations = {
     about: "INFO",
     scan: "SCAN",
     searchAndSelect: "Otsi ja vali",
-    searchBy: "Otsitav väli:",
+    searchBy: "Otsingu sihtpunkt:",
     searchScope: "Otsi ulatus:",
     scopeAll: "Kõik saadaval",
     scopeSelected: "Valitud",
     searchPlaceholder: "Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)\nNäiteks:\nBM-3\n2COL23\nRBP-111",
     searching: "Otsin…",
-    searchButton: "Otsi ja vali",
+    searchButton: "Mitmik otsing | Otsi mitu väärtust korraga ",
     cancelSearch: "Katkesta otsing",
     clear: "Tühjenda",
     searchProgress: "Otsingu progress:",
@@ -489,7 +489,7 @@ export default function AssemblyExporter({ api }: Props) {
   
   const searchFieldOptions = useMemo(() => {
     const base = [
-      { value: "AssemblyMark", label: "Kooste märk (BLOCK)" },
+      { value: "AssemblyMark", label: "Assembly Mark" },
       { value: "GUID_IFC", label: "IFC GUID" },
       { value: "GUID_MS", label: "MS/Tekla GUID" },
       { value: "Name", label: "Nimi" },
