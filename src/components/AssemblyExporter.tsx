@@ -9,7 +9,7 @@ type ExportFormat = "clipboard" | "excel" | "csv";
 const translations = {
   et: {
     search: "OTSI",
-    discover: "DISCOVER",
+    discover: "AVASTA",
     export: "EXPORT",
     settings: "SEADED",
     about: "INFO",
@@ -29,15 +29,15 @@ const translations = {
     zoom: "🔍 Zoom",
     remove: "✕",
     selectAll: "Vali kõik",
-    discoverFields: "Discover Fields",
-    resetColors: "Reset colors",
+    discoverFields: "Avasta väljad",
+    resetColors: "Lähtesta värvid",
     progress: "Progress:",
-    filterColumns: "Filter veerge…",
+    filterColumns: "Filtreeri veerge…",
     deselectAll: "Tühjenda",
     selected: "Valitud:",
     noData: "Vali objektid 3D vaates (auto-discover).",
-    presets: "Presets:",
-    recommended: "Recommended",
+    presets: "Eelseaded:",
+    recommended: "Soovitatud",
     tekla: "Tekla",
     ifc: "IFC",
     exportData: "Export Data",
@@ -62,9 +62,9 @@ const translations = {
     green: "Roheline",
     blue: "Sinine",
     purple: "Lilla",
-    defaultPreset: "Default preset",
+    defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
-    reset: "Reset",
+    reset: "Lähtesta",
     version: "Assembly Exporter v5.0 – Trimble Connect",
     features: "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
     author: "Loodud: Silver Vatsel",
@@ -99,7 +99,24 @@ const translations = {
     saved: "✅ Salvestatud.",
     models: "mudelit",
     includeHeaders: "Kaasa veergude nimed",
-    inDevelopment: "Arenduses..."
+    inDevelopment: "Arenduses...",
+    scanTitle: "OCR Skännimine",
+    uploadFiles: "Lae üles pilt või PDF",
+    orPasteText: "Või kleebi OCR tekst",
+    pasteHint: "Kleepi siia tekst...",
+    runOcr: "🔍 Käivita OCR",
+    parseToTable: "⚡ Parsi tabelisse",
+    usingOcr: "Kasutan OCR-i...",
+    columnMapping: "Veerud",
+    markColumn: "Mark (1. veerg)",
+    qtyColumn: "Kogus (2. veerg)",
+    reviewRows: "Kontrolli {count} rida",
+    confirmAndSearch: "✅ Kinnita ja otsi",
+    targetColumns: "Milliseid veerge skännida?",
+    targetColumnsHint: "Kui veeru nimesid pole näha, kasuta numbreid: '1, 2, 3'",
+    ocrWebhookUrl: "OCR Webhook URL",
+    ocrWebhookSecret: "OCR Secret",
+    ocrPrompt: "Lisa OCR juhised"
   },
   en: {
     search: "SEARCH",
@@ -193,7 +210,24 @@ const translations = {
     saved: "✅ Saved.",
     models: "models",
     includeHeaders: "Include headers",
-    inDevelopment: "In development..."
+    inDevelopment: "In development...",
+    scanTitle: "OCR Scanning",
+    uploadFiles: "Upload image or PDF",
+    orPasteText: "Or paste OCR text",
+    pasteHint: "Paste text here...",
+    runOcr: "🔍 Run OCR",
+    parseToTable: "⚡ Parse to table",
+    usingOcr: "Using OCR...",
+    columnMapping: "Columns",
+    markColumn: "Mark (1st column)",
+    qtyColumn: "Quantity (2nd column)",
+    reviewRows: "Review {count} rows",
+    confirmAndSearch: "✅ Confirm and search",
+    targetColumns: "Which columns to scan?",
+    targetColumnsHint: "If column names not visible, use numbers: '1, 2, 3'",
+    ocrWebhookUrl: "OCR Webhook URL",
+    ocrWebhookSecret: "OCR Secret",
+    ocrPrompt: "Additional OCR instructions"
   }
 };
 const LOCKED_ORDER = ["GUID", "GUID_IFC", "GUID_MS", "Project", "ModelId", "FileName", "Name", "Type"] as const;
@@ -209,6 +243,9 @@ interface AppSettings {
   defaultPreset: DefaultPreset;
   colorizeColor: { r: number; g: number; b: number };
   language: Language;
+  ocrWebhookUrl: string;
+  ocrSecret: string;
+  ocrPrompt: string;
 }
 const DEFAULT_COLORS = {
   darkRed: { r: 140, g: 0, b: 0 },
@@ -227,6 +264,9 @@ function useSettings() {
     defaultPreset: "recommended",
     colorizeColor: DEFAULT_COLORS.darkRed,
     language: "et",
+    ocrWebhookUrl: localStorage.getItem("ocr_webhook") || "",
+    ocrSecret: localStorage.getItem("ocr_secret") || "",
+    ocrPrompt: "",
   };
   const [settings, setSettings] = useState<AppSettings>(() => {
     const raw = localStorage.getItem("assemblyExporterSettings");
@@ -244,6 +284,8 @@ function useSettings() {
       localStorage.setItem("assemblyExporterSettings", JSON.stringify(next));
       localStorage.setItem("sheet_webapp", next.scriptUrl || "");
       localStorage.setItem("sheet_secret", next.secret || "");
+      localStorage.setItem("ocr_webhook", next.ocrWebhookUrl || "");
+      localStorage.setItem("ocr_secret", next.ocrSecret || "");
       return next;
     });
   }, []);
@@ -991,8 +1033,26 @@ export default function AssemblyExporter({ api }: Props) {
         )}
         {tab === "scan" && (
           <div style={c.section}>
-            <h3 style={c.heading}>{t.scan}</h3>
-            <ScanApp api={api} />
+            <h3 style={c.heading}>{t.scanTitle}</h3>
+            <ScanApp 
+              api={api}
+              settings={{
+                ocrWebhookUrl: settings.ocrWebhookUrl,
+                ocrSecret: settings.ocrSecret,
+                ocrPrompt: settings.ocrPrompt,
+                language: settings.language
+              }}
+              translations={t}
+              styles={c}
+              onConfirm={(marks, rows, markKey, qtyKey) => {
+                setTab("search");
+                setSearchField("AssemblyMark");
+                setSearchFieldFilter("Kooste märk (BLOCK)");
+                setSearchScope("available");
+                setSearchInput(marks.join("\n"));
+                setTimeout(() => { searchAndSelect(); }, 100);
+              }}
+            />
           </div>
         )}
         {tab === "settings" && (
@@ -1011,6 +1071,18 @@ export default function AssemblyExporter({ api }: Props) {
             <div style={c.row}>
               <label style={c.label}>{t.sharedSecret}</label>
               <input type="password" value={settings.secret} onChange={(e) => updateSettings({ secret: e.target.value })} style={{...c.input, flex:1}} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.ocrWebhookUrl}</label>
+              <input value={settings.ocrWebhookUrl} onChange={(e) => updateSettings({ ocrWebhookUrl: e.target.value })} placeholder="https://script.google.com/..." style={{...c.input, flex:1}} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.ocrWebhookSecret}</label>
+              <input type="password" value={settings.ocrSecret} onChange={(e) => updateSettings({ ocrSecret: e.target.value })} style={{...c.input, flex:1}} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.ocrPrompt}</label>
+              <textarea value={settings.ocrPrompt} onChange={(e) => updateSettings({ ocrPrompt: e.target.value })} placeholder={t.pasteHint} style={{...c.textarea, height: 80, flex:1}} />
             </div>
             <div style={c.row}>
               <label style={c.label}>{t.autoColorize}</label>
