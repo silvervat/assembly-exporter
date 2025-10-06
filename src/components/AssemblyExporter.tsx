@@ -66,7 +66,7 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v5.1 – Trimble Connect",
+    version: "Assembly Exporter v5.0 – Trimble Connect",
     features: "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
     author: "Created by: Silver Vatsel",
     noResults: "Tulemusi ei leitud",
@@ -731,10 +731,15 @@ export default function AssemblyExporter({ api }: Props) {
             }
           }
           const matchLower = matchValue.toLowerCase();
+          
+          // Ignoreeri tühje väärtusi
+          if (!matchValue || !matchLower) continue;
+          
           const originalMatch = uniqueSearchValues.find(v => {
             const vLower = v.toLowerCase();
             if (fuzzySearch) {
-              return matchLower.includes(vLower) || vLower.includes(matchLower);
+              // Osaline vaste - aga mitte tühja stringiga
+              return vLower && matchLower && (matchLower.includes(vLower) || vLower.includes(matchLower));
             } else {
               return vLower === matchLower;
             }
