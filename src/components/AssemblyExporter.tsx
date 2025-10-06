@@ -101,7 +101,7 @@ const translations = {
     models: "mudelit",
     includeHeaders: "Kaasa veergude nimed",
     inDevelopment: "Arenduses...",
-    scanTitle: "OCR | SCANNI SAATELEHELT TOOTED,
+    scanTitle: "OCR | SCANNI SAATELEHELT TOOTED",
     uploadFiles: "Lae üles pilt või PDF",
     orPasteText: "Või kleebi OCR tekst",
     pasteHint: "Kleepi siia tekst...",
