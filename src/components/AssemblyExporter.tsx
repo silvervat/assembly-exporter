@@ -888,8 +888,7 @@ export default function AssemblyExporter({ api }: Props) {
     flex: 1,
   });
   const searchNoteStyle = { ...c.note, fontSize: 11 };
-const ScanAppLazy = React.lazy(() => import('./ScanApp.tsx').catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> })));  return (
-    <div style={c.shell}>
+const ScanAppLazy = React.lazy(() => import('./components/ScanApp.tsx').catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> })));    <div style={c.shell}>
       <div style={c.topbar}>
         <button style={{ ...c.tab, ...(tab === "search" ? c.tabActive : {}) }} onClick={() => setTab("search")}>{t.search}</button>
         <button style={{ ...c.tab, ...(tab === "discover" ? c.tabActive : {}) }} onClick={() => setTab("discover")}>{t.discover}</button>
