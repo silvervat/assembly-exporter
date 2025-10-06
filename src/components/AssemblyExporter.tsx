@@ -64,7 +64,7 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v5.6 – Trimble Connect",
+    version: "Assembly Exporter v5.7 – Trimble Connect",
     features: "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
     author: "Created by: Silver Vatsel",
     noResults: "Tulemusi ei leitud",
@@ -117,8 +117,9 @@ const translations = {
     ocrWebhookSecret: "OCR Secret",
     ocrPrompt: "Lisa OCR juhised",
     saveToView: "SALVESTA TULEM VAATESSE",
-    viewPrompt: "Mis nimega salvestada vaade?",
-    defaultViewName: "otsing {date}",
+    viewNameLabel: "Vaate nimi:",
+    saveViewButton: "Salvesta vaade",
+    cancel: "Tühista",
     viewSaved: "✅ Vaade salvestatud: {name}",
     viewSaveError: "❌ Viga vaate salvestamisel: {error}",
   },
@@ -182,7 +183,7 @@ const translations = {
     reset: "Reset",
     version: "Assembly Exporter v5.0 – Trimble Connect",
     features: "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
-    author: "silver.vatsel@rivest.ee",
+    author: "Created by: Silver Vatsel",
     noResults: "No results found",
     enterValue: "⚠️ Enter at least one value.",
     cannotRead: "❌ Cannot read objects.",
@@ -233,8 +234,9 @@ const translations = {
     ocrWebhookSecret: "OCR Secret",
     ocrPrompt: "Additional OCR instructions",
     saveToView: "Save result to view",
-    viewPrompt: "What name to save the view as?",
-    defaultViewName: "search {date}",
+    viewNameLabel: "View name:",
+    saveViewButton: "Save view",
+    cancel: "Cancel",
     viewSaved: "✅ View saved: {name}",
     viewSaveError: "❌ Error saving view: {error}",
   }
@@ -474,6 +476,8 @@ export default function AssemblyExporter({ api }: Props) {
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
   const [searchResults, setSearchResults] = useState<Array<any>>([]);
   const [includeHeaders, setIncludeHeaders] = useState(true);
+  const [showViewSave, setShowViewSave] = useState(false);
+  const [viewName, setViewName] = useState("");
   const abortControllerRef = useRef<AbortController | null>(null);
   useEffect(() => {
     const tmr = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
@@ -864,26 +868,33 @@ export default function AssemblyExporter({ api }: Props) {
       console.error("Zoom error:", e);
     }
   }, [api]);
-  const saveToView = useCallback(async () => {
-    if (!lastSelection.length) return;
+  const initSaveView = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, '0');
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const yy = String(now.getFullYear() % 100).padStart(2, '0');
     const hh = String(now.getHours()).padStart(2, '0');
     const min = String(now.getMinutes()).padStart(2, '0');
-    const defaultName = t.defaultViewName.replace('{date}', `${dd}.${mm}.${yy}.${hh}.${min}`);
-    const name = window.prompt(t.viewPrompt, defaultName);
-    if (!name) return;
+    const defaultName = `otsing ${dd}.${mm}.${yy}.${hh}.${min}`;
+    setViewName(defaultName);
+    setShowViewSave(true);
+  }, []);
+  const saveView = useCallback(async () => {
+    if (!lastSelection.length || !viewName.trim()) return;
     try {
       const modelObjectIds = lastSelection.map(f => ({ modelId: f.modelId, objectRuntimeIds: f.ids }));
-      await api.view.createView({ name, modelObjectIds });
-      setSearchMsg(t.viewSaved.replace('{name}', name));
+      await api.view.createView({ name: viewName, modelObjectIds });
+      setSearchMsg(t.viewSaved.replace('{name}', viewName));
+      setShowViewSave(false);
     } catch (e: any) {
       console.error("Save view error:", e);
       setSearchMsg(t.viewSaveError.replace('{error}', e?.message || t.unknownError));
     }
-  }, [lastSelection, api, t]);
+  }, [lastSelection, viewName, api, t]);
+  const cancelSaveView = useCallback(() => {
+    setShowViewSave(false);
+    setViewName("");
+  }, []);
   const moveColumn = useCallback((from: number, to: number) => {
     const newOrder = [...columnOrder];
     const [moved] = newOrder.splice(from, 1);
@@ -1069,8 +1080,18 @@ export default function AssemblyExporter({ api }: Props) {
                 </div>
                 <div style={{ ...c.controls, marginTop: 8, justifyContent: "flex-end" }}>
                   <button style={c.btn} onClick={selectAllFound} disabled={totalFoundCount === 0}>{t.selectAll} ({totalFoundCount}x)</button>
-                  <button style={c.btn} onClick={saveToView} disabled={totalFoundCount === 0}>{t.saveToView}</button>
+                  <button style={c.btn} onClick={initSaveView} disabled={totalFoundCount === 0}>{t.saveToView}</button>
                 </div>
+                {showViewSave && (
+                  <div style={{ marginTop: 12, padding: 8, border: "1px solid #cfd6df", borderRadius: 8, background: "#f6f8fb" }}>
+                    <label style={c.labelTop}>{t.viewNameLabel}</label>
+                    <input type="text" value={viewName} onChange={(e) => setViewName(e.target.value)} style={c.input} />
+                    <div style={{ ...c.controls, marginTop: 8 }}>
+                      <button style={c.btn} onClick={saveView} disabled={!viewName.trim()}>{t.saveViewButton}</button>
+                      <button style={c.btnGhost} onClick={cancelSaveView}>{t.cancel}</button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
