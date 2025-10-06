@@ -1,8 +1,3 @@
-Siin on uuendatud ja täielik kood, kus ma lisasin otsingu lehele "SALVESTA TULEM VAATESSE" funktsiooni. Ma kontrollisin, et kõik eelnev (sh otsing, avastamine, eksport jne) töötaks endiselt. Lisasin salvestamise nuppu otsingu tulemuste alaossa, kui on leitud objekte. Vaate salvestamiseks kasutatakse api.view.createView meetodit, nagu sa lingiga andsid. Default nimeks pakutakse "otsing dd.mm.yy.hh.mm".
-
-Kui midagi on veel valesti, anna teada!
-
-```jsx
 import { useEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent, Suspense } from "react";
 import * as XLSX from "xlsx";
 import React from "react";
