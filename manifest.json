@@ -1,0 +1,79 @@
+{
+  "manifestVersion": 2,
+  "id": "assembly-exporter",
+  "version": "5.0.0",
+  "productName": "Assembly Exporter",
+  "publisher": "Silver Vatsel",
+  "description": {
+    "en": "Export assembly data from Trimble Connect models with advanced search, OCR scanning, and Google Sheets integration",
+    "et": "Ekspordi kooste andmed Trimble Connect mudelitest koos otsingu, OCR skännimise ja Google Sheets integratsiooniga"
+  },
+  "supportedPlatforms": [
+    "web"
+  ],
+  "extensions": [
+    {
+      "type": "panel",
+      "name": "Assembly Exporter",
+      "description": {
+        "en": "Search, discover and export assembly data",
+        "et": "Otsi, avasta ja ekspordi kooste andmed"
+      },
+      "icon": "src/ikoon.png",
+      "autoLoad": false,
+      "main": "index.html",
+      "defaultDimensions": {
+        "width": 450,
+        "height": 800
+      },
+      "minDimensions": {
+        "width": 400,
+        "height": 600
+      },
+      "permissions": [
+        "viewer.read",
+        "viewer.write",
+        "project.read",
+        "model.read"
+      ]
+    }
+  ],
+  "author": {
+    "name": "Silver Vatsel",
+    "email": "silver@example.com"
+  },
+  "homepage": "https://github.com/silvervat/assembly-exporter",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/silvervat/assembly-exporter.git"
+  },
+  "license": "MIT",
+  "categories": [
+    "productivity",
+    "data-management",
+    "bim"
+  ],
+  "keywords": [
+    "assembly",
+    "export",
+    "excel",
+    "csv",
+    "search",
+    "ocr",
+    "tekla",
+    "ifc",
+    "google-sheets"
+  ],
+  "screenshots": [],
+  "changelog": {
+    "5.0.0": [
+      "Auto-discover on selection change",
+      "Product Name support",
+      "Bilingual EST/ENG interface",
+      "Performance optimized with React.memo & useMemo",
+      "OCR scanning for transport sheets",
+      "Model search integration",
+      "Advanced GUID search (IFC/MS)"
+    ]
+  }
+}
