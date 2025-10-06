@@ -66,7 +66,7 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v5.0 – Trimble Connect",
+    version: "Assembly Exporter v5.1 – Trimble Connect",
     features: "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
     author: "Created by: Silver Vatsel",
     noResults: "Tulemusi ei leitud",
@@ -434,7 +434,7 @@ const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => (
     ...(result.status === 'found' ? (result.isPartial ? styles.resultRowPartial : styles.resultRowFound) : styles.resultRowNotFound) 
   }}>
     <span style={styles.resultStatus}>{result.status === 'found' ? (result.isPartial ? '⚠️' : '✅') : '❌'}</span>
-    <span style={styles.resultValue} title={result.originalValue}>{result.originalValue}</span>
+    <span style={styles.resultValue} title={result.originalValue + (result.matchInfo || "")}>{result.originalValue}{result.matchInfo || ""}</span>
     <span style={styles.resultCount}>{result.status === 'found' ? `${result.ids?.length || 0}x` : '-'}</span>
     <div style={styles.resultActions}>
       {result.status === 'found' && result.modelId && result.ids && (
@@ -739,11 +739,15 @@ export default function AssemblyExporter({ api }: Props) {
               return vLower === matchLower;
             }
           });
-          if (originalMatch && (fuzzySearch || searchLower.has(matchLower))) {
+          if (originalMatch) {
             matchIds.push(objId);
             const isPartial = fuzzySearch && originalMatch.toLowerCase() !== matchLower;
-            if (!foundValues.has(matchLower)) foundValues.set(matchLower, { original: originalMatch, modelId, ids: [], isPartial });
-            foundValues.get(matchLower)!.ids.push(objId);
+            const lookupKey = fuzzySearch ? originalMatch.toLowerCase() : matchLower;
+            if (!foundValues.has(lookupKey)) foundValues.set(lookupKey, { original: originalMatch, modelId, ids: [], isPartial, allMatches: [] });
+            foundValues.get(lookupKey)!.ids.push(objId);
+            if (!foundValues.get(lookupKey)!.allMatches.includes(matchValue)) {
+              foundValues.get(lookupKey)!.allMatches.push(matchValue);
+            }
           }
         }
         if (matchIds.length) found.push({ modelId, ids: matchIds });
@@ -779,9 +783,20 @@ export default function AssemblyExporter({ api }: Props) {
       const results = [];
       for (const originalValue of uniqueSearchValues) {
         const lower = originalValue.toLowerCase();
-        if (foundValues.has(lower)) {
-          const data = foundValues.get(lower)!;
-          results.push({ originalValue: data.original, value: lower, status: 'found', modelId: data.modelId, ids: data.ids, isPartial: data.isPartial });
+        const lookupKey = fuzzySearch ? lower : lower;
+        if (foundValues.has(lookupKey)) {
+          const data = foundValues.get(lookupKey)!;
+          const matchInfo = fuzzySearch && data.allMatches && data.allMatches.length > 0 ? 
+            ` (${data.allMatches.slice(0, 3).join(", ")}${data.allMatches.length > 3 ? "..." : ""})` : "";
+          results.push({ 
+            originalValue: data.original, 
+            value: lower, 
+            status: 'found', 
+            modelId: data.modelId, 
+            ids: data.ids, 
+            isPartial: data.isPartial,
+            matchInfo 
+          });
         } else {
           results.push({ originalValue, value: lower, status: 'notfound' });
         }
