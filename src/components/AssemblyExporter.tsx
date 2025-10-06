@@ -66,7 +66,7 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v5.3 – Trimble Connect",
+    version: "Assembly Exporter v5.0 – Trimble Connect",
     features: "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
     author: "Created by: Silver Vatsel",
     noResults: "Tulemusi ei leitud",
@@ -428,22 +428,30 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   return map;
 }
 
-const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => (
-  <div style={{ 
-    ...styles.resultRow, 
-    ...(result.status === 'found' ? (result.isPartial ? styles.resultRowPartial : styles.resultRowFound) : styles.resultRowNotFound) 
-  }}>
-    <span style={styles.resultStatus}>{result.status === 'found' ? (result.isPartial ? '⚠️' : '✅') : '❌'}</span>
-    <span style={styles.resultValue} title={result.originalValue + (result.matchInfo || "")}>{result.originalValue}{result.matchInfo || ""}</span>
-    <span style={styles.resultCount}>{result.status === 'found' ? `${result.ids?.length || 0}x` : '-'}</span>
-    <div style={styles.resultActions}>
-      {result.status === 'found' && result.modelId && result.ids && (
-        <button style={styles.miniBtn} onClick={() => onZoom(result.modelId, result.ids)} title="Zoom">{t.zoom}</button>
-      )}
-      <button style={{ ...styles.miniBtn, background: "#ffdddd", color: "#cc0000" }} onClick={onRemove} title="Remove">{t.remove}</button>
+const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => {
+  const displayValue = result.actualValue || result.originalValue;
+  const isPartialMatch = result.isPartial && result.actualValue && result.actualValue !== result.originalValue;
+  
+  return (
+    <div style={{ 
+      ...styles.resultRow, 
+      ...(result.status === 'found' ? (result.isPartial ? styles.resultRowPartial : styles.resultRowFound) : styles.resultRowNotFound) 
+    }}>
+      <span style={styles.resultStatus}>{result.status === 'found' ? (result.isPartial ? '⚠️' : '✅') : '❌'}</span>
+      <span style={styles.resultValue} title={isPartialMatch ? `Otsisin: ${result.originalValue} → Leidsin: ${displayValue}` : displayValue}>
+        {displayValue}
+        {isPartialMatch && <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>← {result.originalValue}</span>}
+      </span>
+      <span style={styles.resultCount}>{result.status === 'found' ? `${result.ids?.length || 0}x` : '-'}</span>
+      <div style={styles.resultActions}>
+        {result.status === 'found' && result.modelId && result.ids && (
+          <button style={styles.miniBtn} onClick={() => onZoom(result.modelId, result.ids)} title="Zoom">{t.zoom}</button>
+        )}
+        <button style={{ ...styles.miniBtn, background: "#ffdddd", color: "#cc0000" }} onClick={onRemove} title="Remove">{t.remove}</button>
+      </div>
     </div>
-  </div>
-));
+  );
+});
 
 type Props = { api: any };
 
@@ -747,12 +755,19 @@ export default function AssemblyExporter({ api }: Props) {
           if (originalMatch) {
             matchIds.push(objId);
             const isPartial = fuzzySearch && originalMatch.toLowerCase() !== matchLower;
-            const lookupKey = fuzzySearch ? originalMatch.toLowerCase() : matchLower;
-            if (!foundValues.has(lookupKey)) foundValues.set(lookupKey, { original: originalMatch, modelId, ids: [], isPartial, allMatches: [] });
-            foundValues.get(lookupKey)!.ids.push(objId);
-            if (!foundValues.get(lookupKey)!.allMatches.includes(matchValue)) {
-              foundValues.get(lookupKey)!.allMatches.push(matchValue);
+            
+            // Grupeeri iga unikaalse leitud väärtuse järgi eraldi
+            const uniqueKey = `${originalMatch.toLowerCase()}|||${matchLower}`;
+            if (!foundValues.has(uniqueKey)) {
+              foundValues.set(uniqueKey, { 
+                original: originalMatch, 
+                actualValue: matchValue,
+                modelId, 
+                ids: [], 
+                isPartial 
+              });
             }
+            foundValues.get(uniqueKey)!.ids.push(objId);
           }
         }
         if (matchIds.length) found.push({ modelId, ids: matchIds });
@@ -786,24 +801,43 @@ export default function AssemblyExporter({ api }: Props) {
         }
       }
       const results = [];
-      for (const originalValue of uniqueSearchValues) {
-        const lower = originalValue.toLowerCase();
-        const lookupKey = fuzzySearch ? lower : lower;
-        if (foundValues.has(lookupKey)) {
-          const data = foundValues.get(lookupKey)!;
-          const matchInfo = fuzzySearch && data.allMatches && data.allMatches.length > 0 ? 
-            ` (${data.allMatches.slice(0, 3).join(", ")}${data.allMatches.length > 3 ? "..." : ""})` : "";
+      
+      // Kui fuzzy search, loo rida iga unikaalse leitud väärtuse kohta
+      if (fuzzySearch) {
+        for (const [key, data] of foundValues) {
           results.push({ 
-            originalValue: data.original, 
-            value: lower, 
+            originalValue: data.original,
+            actualValue: data.actualValue,
+            value: data.actualValue.toLowerCase(), 
             status: 'found', 
             modelId: data.modelId, 
             ids: data.ids, 
-            isPartial: data.isPartial,
-            matchInfo 
+            isPartial: data.isPartial
           });
-        } else {
-          results.push({ originalValue, value: lower, status: 'notfound' });
+        }
+      } else {
+        // Täpne otsing - grupeeri otsinguterminiga
+        for (const originalValue of uniqueSearchValues) {
+          const lower = originalValue.toLowerCase();
+          let found = false;
+          for (const [key, data] of foundValues) {
+            if (data.original.toLowerCase() === lower) {
+              results.push({ 
+                originalValue: data.original, 
+                actualValue: data.actualValue,
+                value: lower, 
+                status: 'found', 
+                modelId: data.modelId, 
+                ids: data.ids, 
+                isPartial: false 
+              });
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            results.push({ originalValue, value: lower, status: 'notfound' });
+          }
         }
       }
       setSearchResults(results);
