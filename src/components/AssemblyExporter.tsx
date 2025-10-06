@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent, Suspense } from "react";
 import * as XLSX from "xlsx";
+import React from "react";
 
 type Language = "et" | "en";
 type Tab = "search" | "discover" | "export" | "settings" | "about" | "scan";
@@ -230,12 +231,15 @@ const translations = {
     ocrPrompt: "Additional OCR instructions"
   }
 };
+
 const LOCKED_ORDER = ["GUID", "GUID_IFC", "GUID_MS", "Project", "ModelId", "FileName", "Name", "Type"] as const;
 const FORCE_TEXT_KEYS = new Set(["Tekla_Assembly.AssemblyCast_unit_top_elevation", "Tekla_Assembly.AssemblyCast_unit_bottom_elevation"]);
 const DEBOUNCE_MS = 300;
 const HIGHLIGHT_DURATION_MS = 2000;
 const MESSAGE_DURATION_MS = 3000;
+
 type DefaultPreset = "recommended" | "tekla" | "ifc";
+
 interface AppSettings {
   scriptUrl: string;
   secret: string;
@@ -247,6 +251,7 @@ interface AppSettings {
   ocrSecret: string;
   ocrPrompt: string;
 }
+
 const DEFAULT_COLORS = {
   darkRed: { r: 140, g: 0, b: 0 },
   red: { r: 255, g: 0, b: 0 },
@@ -256,6 +261,7 @@ const DEFAULT_COLORS = {
   blue: { r: 0, g: 100, b: 255 },
   purple: { r: 160, g: 0, b: 200 },
 };
+
 function useSettings() {
   const DEFAULTS: AppSettings = {
     scriptUrl: localStorage.getItem("sheet_webapp") || "",
@@ -291,9 +297,11 @@ function useSettings() {
   }, []);
   return [settings, update] as const;
 }
+
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
 }
+
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
@@ -301,7 +309,9 @@ function groupSortKey(group: string) {
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
+
 type Grouped = Record<string, string[]>;
+
 function groupKeys(keys: string[]): Grouped {
   const g: Grouped = {};
   for (const k of keys) {
@@ -313,12 +323,14 @@ function groupKeys(keys: string[]): Grouped {
   for (const arr of Object.values(g)) arr.sort((a, b) => a.localeCompare(b));
   return g;
 }
+
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
   if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
   if (/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(s) || /^[0-9A-Fa-f]{32}$/.test(s)) return "MS";
   return "UNKNOWN";
 }
+
 async function flattenProps(obj: any, modelId: string, projectName: string, modelNameById: Map<string, string>, api: any): Promise<Row> {
   const out: Row = {
     GUID: "", GUID_IFC: "", GUID_MS: "", Project: String(projectName || ""),
@@ -393,12 +405,14 @@ async function getProjectName(api: any): Promise<string> {
     return "";
   }
 }
+
 async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
   const viewer: any = api?.viewer;
   const mos = await viewer?.getObjects?.({ selected: true });
   if (!Array.isArray(mos) || !mos.length) return [];
   return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
 }
+
 async function buildModelNameMap(api: any, modelIds: string[]) {
   const map = new Map<string, string>();
   try {
@@ -417,6 +431,7 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   }
   return map;
 }
+
 const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => (
   <div style={{ ...styles.resultRow, ...(result.status === 'found' ? styles.resultRowFound : styles.resultRowNotFound) }}>
     <span style={styles.resultStatus}>{result.status === 'found' ? '✅' : '❌'}</span>
@@ -430,7 +445,9 @@ const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => (
     </div>
   </div>
 ));
+
 type Props = { api: any };
+
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
   const t = translations[settings.language];
@@ -458,15 +475,19 @@ export default function AssemblyExporter({ api }: Props) {
   const [searchResults, setSearchResults] = useState<Array<any>>([]);
   const [includeHeaders, setIncludeHeaders] = useState(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
     const tmr = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(tmr);
   }, [filter]);
+
   useEffect(() => { localStorage.setItem("fieldSel", JSON.stringify(Array.from(selected))); }, [selected]);
   useEffect(() => { if (discoverMsg) { const t = setTimeout(() => setDiscoverMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [discoverMsg]);
   useEffect(() => { if (exportMsg) { const t = setTimeout(() => setExportMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [exportMsg]);
   useEffect(() => { if (settingsMsg) { const t = setTimeout(() => setSettingsMsg(""), MESSAGE_DURATION_MS); return () => clearTimeout(t); } }, [settingsMsg]);
+
   const allKeys = useMemo(() => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(), [rows]);
+  
   const searchFieldOptions = useMemo(() => {
     const base = [
       { value: "AssemblyMark", label: "Kooste märk (BLOCK)" },
@@ -480,27 +501,33 @@ export default function AssemblyExporter({ api }: Props) {
     const f = searchFieldFilter.toLowerCase();
     return all.filter(opt => opt.label.toLowerCase().includes(f) || opt.value.toLowerCase().includes(f));
   }, [allKeys, searchFieldFilter]);
+
   const groupedUnsorted = useMemo(() => groupKeys(allKeys), [allKeys]);
   const groupedSortedEntries = useMemo(() => (Object.entries(groupedUnsorted) as [string, string[]][]).sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])), [groupedUnsorted]);
+  
   const filteredKeysSet = useMemo(() => {
     if (!debouncedFilter) return new Set(allKeys);
     const f = debouncedFilter.toLowerCase();
     return new Set(allKeys.filter(k => k.toLowerCase().includes(f)));
   }, [allKeys, debouncedFilter]);
+
   const exportableColumns = useMemo(() => columnOrder.filter(k => allKeys.includes(k)), [columnOrder, allKeys]);
   const totalFoundCount = useMemo(() => searchResults.reduce((sum, r) => sum + (r.status === 'found' ? r.ids?.length || 0 : 0), 0), [searchResults]);
+
   useEffect(() => {
     if (!rows.length || selected.size) return;
     if (settings.defaultPreset === "tekla") presetTekla();
     else if (settings.defaultPreset === "ifc") presetIFC();
     else presetRecommended();
   }, [rows, settings.defaultPreset]);
+
   useEffect(() => {
     const currentSet = new Set(columnOrder);
     const missingKeys = allKeys.filter(k => !currentSet.has(k));
     if (missingKeys.length > 0) setColumnOrder(prev => [...prev, ...missingKeys]);
     else if (!columnOrder.length && allKeys.length) setColumnOrder([...LOCKED_ORDER, ...allKeys.filter(k => !LOCKED_ORDER.includes(k as any))]);
   }, [allKeys]);
+
   useEffect(() => {
     if (!api?.viewer) return;
     let selectionTimeout: NodeJS.Timeout;
@@ -514,12 +541,15 @@ export default function AssemblyExporter({ api }: Props) {
       try { api.viewer.off?.('selectionChanged', handleSelectionChange); } catch {}
     };
   }, [api, busy]);
+
   useEffect(() => { if (tab === "export" && !busy) discover(); }, [tab]);
   useEffect(() => { if (tab === "discover" && !busy) discover(); }, [tab]);
+
   const matches = useCallback((k: string) => filteredKeysSet.has(k), [filteredKeysSet]);
   const toggle = useCallback((k: string) => setSelected(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; }), []);
   const toggleGroup = useCallback((keys: string[], on: boolean) => setSelected(s => { const n = new Set(s); for (const k of keys) on ? n.add(k) : n.delete(k); return n; }), []);
   const selectAll = useCallback((on: boolean) => setSelected(() => (on ? new Set(allKeys) : new Set())), [allKeys]);
+
   function presetRecommended() {
     const wanted = new Set([...LOCKED_ORDER, "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
@@ -529,6 +559,7 @@ export default function AssemblyExporter({ api }: Props) {
     const wanted = new Set(["GUID_IFC", "GUID_MS", "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
+
   async function discover() {
     if (!api?.viewer) { setDiscoverMsg(t.apiError); return; }
     try {
@@ -565,6 +596,7 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(t.error.replace('{error}', e?.message || t.unknownError));
     } finally { setBusy(false); }
   }
+
   const cancelSearch = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -573,6 +605,7 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }, [t]);
+
   async function searchAndSelect() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -736,6 +769,7 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }
+
   const selectAllFound = useCallback(async () => {
     try {
       const allFound = searchResults.filter(r => r.status === 'found' && r.modelId && r.ids).map(r => ({ modelId: r.modelId, ids: r.ids }));
@@ -750,6 +784,7 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(t.selectAllError);
     }
   }, [searchResults, api, t]);
+
   const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
     try {
       const viewer = api?.viewer;
@@ -760,6 +795,7 @@ export default function AssemblyExporter({ api }: Props) {
       console.error("Zoom error:", e);
     }
   }, [api]);
+
   const moveColumn = useCallback((from: number, to: number) => {
     const newOrder = [...columnOrder];
     const [moved] = newOrder.splice(from, 1);
@@ -768,20 +804,23 @@ export default function AssemblyExporter({ api }: Props) {
     setHighlightedColumn(moved);
     setTimeout(() => setHighlightedColumn(null), HIGHLIGHT_DURATION_MS);
   }, [columnOrder]);
-  const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
+    const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/html", e.currentTarget.innerHTML);
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "0.4";
   }, []);
+
   const handleDragEnd = useCallback((e: DragEvent<HTMLDivElement>) => {
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "1";
     setDraggedIndex(null);
   }, []);
+
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }, []);
+
   const handleDrop = useCallback((e: DragEvent<HTMLDivElement>, dropIndex: number) => {
     e.preventDefault();
     if (draggedIndex === null || draggedIndex === dropIndex) return;
@@ -792,8 +831,9 @@ export default function AssemblyExporter({ api }: Props) {
     setHighlightedColumn(moved);
     setTimeout(() => setHighlightedColumn(null), HIGHLIGHT_DURATION_MS);
   }, [draggedIndex, columnOrder]);
+
   async function exportData() {
-    await discover(); // Uuenda andmed enne ekspordit
+    await discover();
     if (!rows.length) { setExportMsg(t.noDataExport); return; }
     const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
     if (!exportCols.length) { setExportMsg(t.selectColumn); return; }
@@ -831,10 +871,11 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(t.exportError.replace('{error}', e?.message || e));
     }
   }
+
   async function sendToGoogleSheet() {
     const { scriptUrl, secret, autoColorize } = settings;
     if (!scriptUrl || !secret) { setTab("settings"); setSettingsMsg(t.fillSettings); return; }
-    await discover(); // Uuenda andmed enne saatmist
+    await discover();
     if (!rows.length) { setExportMsg(t.noDataExport); return; }
     const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
     const payload = rows.map(r => { const obj: Row = {}; for (const k of exportCols) obj[k] = r[k] ?? ""; return obj; });
@@ -853,6 +894,7 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(t.exportError.replace('{error}', e?.message || e));
     } finally { setBusy(false); }
   }
+
   async function colorLastSelection() {
     const viewer = api?.viewer;
     let blocks = lastSelection;
@@ -868,6 +910,7 @@ export default function AssemblyExporter({ api }: Props) {
       await viewer?.setObjectState?.(selector, { color: { r, g, b, a: 255 } });
     }
   }
+
   async function resetState() {
     try {
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
@@ -876,7 +919,9 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(t.resetFailed.replace('{error}', e?.message || e));
     }
   }
+
   const removeResult = useCallback((index: number) => setSearchResults(prev => prev.filter((_, i) => i !== index)), []);
+
   const c = styles;
   const scopeButtonStyle = (isActive: boolean): CSSProperties => ({
     padding: "6px 10px",
@@ -888,7 +933,11 @@ export default function AssemblyExporter({ api }: Props) {
     flex: 1,
   });
   const searchNoteStyle = { ...c.note, fontSize: 11 };
-const ScanAppLazy = React.lazy(() => import('./components/ScanApp.tsx').catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> })));    <div style={c.shell}>
+
+  const ScanAppLazy = React.lazy(() => import('./components/ScanApp.tsx').catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> })));
+
+  return (
+    <div style={c.shell}>
       <div style={c.topbar}>
         <button style={{ ...c.tab, ...(tab === "search" ? c.tabActive : {}) }} onClick={() => setTab("search")}>{t.search}</button>
         <button style={{ ...c.tab, ...(tab === "discover" ? c.tabActive : {}) }} onClick={() => setTab("discover")}>{t.discover}</button>
@@ -904,11 +953,11 @@ const ScanAppLazy = React.lazy(() => import('./components/ScanApp.tsx').catch(()
             <div style={c.fieldGroup}>
               <label style={c.labelTop}>{t.searchBy}</label>
               <div style={{ position: "relative" }} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setTimeout(() => setIsSearchFieldDropdownOpen(false), 200); }}>
-                <input type="text" value={searchFieldFilter} onChange={(e) => setSearchFieldFilter(e.target.value)} onFocus={() => setIsSearchFieldDropdownOpen(true)} placeholder="Tippige filtriks või valige..." title={searchFieldFilter} style={{ ...c.input, width: "100%" }} />
+                <input type="text" value={searchFieldFilter} onChange={(e) => setSearchFieldFilter(e.target.value)} onFocus={() => setIsSearchFieldDropdownOpen(true)} placeholder="Tippige filtriks või valige..." style={c.input} />
                 {isSearchFieldDropdownOpen && (
                   <div style={c.dropdown}>
                     {searchFieldOptions.length === 0 ? <div style={c.dropdownItem}>{t.noResults}</div> : searchFieldOptions.map(opt => (
-                      <div key={opt.value} style={{ ...c.dropdownItem, ...(searchField === opt.value ? c.dropdownItemSelected : {}) }} onMouseEnter={(e) => { e.currentTarget.style.background = "#f5f5f5"; }} onMouseLeave={(e) => { if (searchField !== opt.value) e.currentTarget.style.background = "transparent"; }} onClick={() => { setSearchField(opt.value); setSearchFieldFilter(opt.label); setIsSearchFieldDropdownOpen(false); }}>{opt.label}</div>
+                      <div key={opt.value} style={{ ...c.dropdownItem, ...(searchField === opt.value ? c.dropdownItemSelected : {}) }} onMouseEnter={(e) => { e.currentTarget.style.background = "#f5f5f5"; }} onMouseLeave={(e) => { e.currentTarget.style.background = searchField === opt.value ? "#e7f3ff" : ""; }} onClick={() => { setSearchField(opt.value); setSearchFieldFilter(opt.label); setIsSearchFieldDropdownOpen(false); }}>{opt.label}</div>
                     ))}
                   </div>
                 )}
@@ -1086,7 +1135,7 @@ const ScanAppLazy = React.lazy(() => import('./components/ScanApp.tsx').catch(()
             <div style={c.row}>
               <label style={c.label} title={t.colorTooltip}>{t.color}</label>
               <div style={{ display: "flex", flexDirection: "column", gap: 4, flex:1 }}>
-                <select value={Object.keys(DEFAULT_COLORS).find(k => { const current = settings.colorizeColor ?? DEFAULT_COLORS.darkRed; const col = DEFAULT_COLORS[k as keyof typeof DEFAULT_COLORS]; return col.r === current.r && col.g === current.g && col.b === current.b; }) || "darkRed"} onChange={(e) => { const colorKey = e.target.value as keyof typeof DEFAULT_COLORS; updateSettings({ colorizeColor: DEFAULT_COLORS[colorKey] }); }} style={{...c.input}} title={t.colorTooltip}>
+                <select value={Object.keys(DEFAULT_COLORS).find(k => { const current = settings.colorizeColor ?? DEFAULT_COLORS.darkRed; const col = DEFAULT_COLORS[k as keyof typeof DEFAULT_COLORS]; return current.r === col.r && current.g === col.g && current.b === col.b; }) || "darkRed"} onChange={(e) => updateSettings({ colorizeColor: DEFAULT_COLORS[e.target.value as keyof typeof DEFAULT_COLORS] })} style={c.input}>
                   <option value="darkRed">{t.darkRed}</option>
                   <option value="red">{t.red}</option>
                   <option value="orange">{t.orange}</option>
@@ -1128,6 +1177,7 @@ const ScanAppLazy = React.lazy(() => import('./components/ScanApp.tsx').catch(()
     </div>
   );
 }
+
 const styles: Record<string, CSSProperties> = {
   shell: { height: "100vh", display: "flex", flexDirection: "column", background: "#fff", color: "#111", fontFamily: "Inter, system-ui, Arial, sans-serif", fontSize: 13, lineHeight: 1.25 },
   topbar: { display: "flex", gap: 2, background: "#0a3a67", padding: "8px 10px", position: "sticky", top: 0, zIndex: 100, flexWrap: "wrap" as any },
@@ -1160,11 +1210,11 @@ const styles: Record<string, CSSProperties> = {
   note: { fontSize: 12, opacity: 0.9, padding: "6px 8px", background: "#f0f4f8", borderRadius: 6, position: "relative", zIndex: 1 },
   helpBox: { fontSize: 12, padding: "8px 10px", background: "#e7f3ff", border: "1px solid #90caf9", borderRadius: 6, color: "#0d47a1" },
   columnListNoscroll: { display: "flex", flexDirection: "column", gap: 4, border: "1px solid #edf0f4", borderRadius: 8, padding: 8, background: "#fafbfc" },
-  columnItem: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", background: "#fff", border: "1px solid #e5e9f0", borderRadius: 6, fontSize: 12, transition: "all 0.3s ease-out", cursor: "move", width: "100%" },
+  columnItem: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", background: "#fff", border: "1px solid #e5e9f0", borderRadius: 6, fontSize: 12, transition: "all 0.2s" },
   columnItemHighlight: { background: "#fff3cd", border: "2px solid #ffc107", boxShadow: "0 0 12px rgba(255, 193, 7, 0.4)", transform: "scale(1.02)" },
   columnItemDragging: { opacity: 0.4, cursor: "grabbing" },
   dragHandle: { fontSize: 16, color: "#999", userSelect: "none" as any, lineHeight: 1 },
-  dropdown: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: "#fff", border: "1px solid #cfd6df", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", maxHeight: 300, overflowY: "auto", zIndex: 1000 },
+  dropdown: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: "#fff", border: "1px solid #cfd6df", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", maxHeight: 300, overflow: "auto", zIndex: 1000 },
   dropdownItem: { padding: "8px 12px", cursor: "pointer", fontSize: 13, transition: "background 0.15s" },
   dropdownItemSelected: { background: "#e7f3ff", color: "#0a3a67", fontWeight: 600 },
   resultsBox: { marginTop: 12, border: "1px solid #e5e9f0", borderRadius: 8, padding: 12, background: "#fafbfc" },
