@@ -6,4 +6,7 @@ export default defineConfig({
   base: "/assembly-exporter/",
   build: { outDir: "dist", emptyOutDir: true },
   optimizeDeps: { include: ["xlsx"] },
+  resolve: {
+    extensions: ['.js', '.jsx', '.ts', '.tsx'],  // Lisa see, et impordid leiaksid .tsx automaatselt
+  },
 });
