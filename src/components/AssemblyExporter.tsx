@@ -888,7 +888,7 @@ export default function AssemblyExporter({ api }: Props) {
     flex: 1,
   });
   const searchNoteStyle = { ...c.note, fontSize: 11 };
-  const ScanAppLazy = React.lazy(() => import('./ScanApp').catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> })));
+  const ScanAppLazy = React.lazy(() => import('./ScanApp.tsx').catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> })));
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
