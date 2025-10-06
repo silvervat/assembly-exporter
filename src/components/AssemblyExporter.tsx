@@ -383,11 +383,13 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }, [exportMsg]);
   useEffect(() => {
-    if (searchMsg && !busy) {
+    if (searchMsg && !busy && searchInput.trim()) {
+      // Ära kustuta, kui otsing on tehtud
+    } else if (searchMsg && !busy) {
       const timer = setTimeout(() => setSearchMsg(""), MESSAGE_DURATION_MS);
       return () => clearTimeout(timer);
     }
-  }, [searchMsg, busy]);
+  }, [searchMsg, busy, searchInput]);
   useEffect(() => {
     if (!api?.viewer) return;
   
@@ -566,7 +568,7 @@ export default function AssemblyExporter({ api }: Props) {
         const visibleMos = [];
         for (const mo of allMos || []) {
           const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter(n => Number.isFinite(n));
-          const states = await viewer.getObjectState(mo.modelId, objectRuntimeIds);
+          const states = await viewer.getObjectStates(mo.modelId, objectRuntimeIds);
           const visibleObjects = mo.objects.filter((_, idx) => states[idx]?.visible !== false);
           if (visibleObjects.length) visibleMos.push({ ...mo, objects: visibleObjects });
         }
@@ -1086,6 +1088,9 @@ export default function AssemblyExporter({ api }: Props) {
   
     setBusy(false);
   }
+  const removeResult = (index: number) => {
+    setSearchResults(prev => prev.filter((_, i) => i !== index));
+  };
   const c = styles;
   const exportableColumns = columnOrder.filter(k => allKeys.includes(k));
   const totalFoundCount = searchResults.reduce((sum, r) => sum + (r.status === 'found' ? r.ids?.length || 0 : 0), 0);
@@ -1121,7 +1126,7 @@ export default function AssemblyExporter({ api }: Props) {
                   style={{ ...c.input, textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" }}
                 />
                 {isSearchFieldDropdownOpen && (
-                  <div style={c.dropdown}>
+                  <div style={{ ...c.dropdown, minWidth: "300px" }}>
                     {searchFieldOptions.length === 0 ? (
                       <div style={c.dropdownItem}>Tulemusi ei leitud</div>
                     ) : (
@@ -1229,6 +1234,13 @@ export default function AssemblyExporter({ api }: Props) {
                             </button>
                           </>
                         )}
+                        <button
+                          style={{ ...c.miniBtn, background: "#ffdddd", color: "#ff0000" }}
+                          onClick={() => removeResult(idx)}
+                          title="Eemalda see tulemus"
+                        >
+                          X
+                        </button>
                       </div>
                     </div>
                   ))}
