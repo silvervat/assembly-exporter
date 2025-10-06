@@ -66,7 +66,7 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v5.0 – Trimble Connect",
+    version: "Assembly Exporter v5.3 – Trimble Connect",
     features: "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
     author: "Created by: Silver Vatsel",
     noResults: "Tulemusi ei leitud",
