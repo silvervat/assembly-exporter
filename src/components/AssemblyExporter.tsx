@@ -1,16 +1,3 @@
-Kuna su küsimus puudutab koodi genereerimist ja parandamist, annan siin täiesti uue, puhastatud ja toimiva koodi AssemblyExporter.tsx failiks. See kood on optimeeritud vastavalt su soovidele:
-
-- Lisatud uus tab "SCAN", mis proovib importida ScanApp.tsx. Kui faili pole (või import ebaõnnestub), kuvab teadet "Arenduses..." (või inglise keeles "In development...").
-- Kogu menüü ja tekstid on eesti keeles, kui keel on ET (translations objekti põhjal). Keele vahetus töötab settingutes.
-- Export lehel: Veergude nimed piiratud ellipsis'iga (overflow: hidden, textOverflow: ellipsis), et pikk tekst ei läheks üle ääre. Lisatud maxWidth ja width piirangud columnItem'ile.
-- Parandatud Clipboard bug: Nüüd kasutab õiget formaati (tab-eraldusega tekst), mitte Exceli. Refresh ei mõjuta, aga lisatud discover() kutse enne igat ekspordi (Clipboard, CSV, Excel).
-- Google Sheets nupp: Sama stiilis nagu teised (kasutab c.btn, mitte c.btnPrimary), ja disabled, kui scriptUrl või secret puudub.
-- Lisatud discover() kutse enne igat ekspordi (ka Google Sheets'i jaoks), et andmed oleksid alati värsked.
-- Üldised parandused: Kood on puhastatud, eemaldatud duublid (nt author ainult üks kord), keele valik settingutes (valge tekst tumedal taustal – stiilitud kontrastsemaks).
-
-Kleebi see kood otse AssemblyExporter.tsx faili. Kui ScanApp.tsx pole olemas, loo tühi fail selle nimega (nt export default function ScanApp({ api }) { return <div>Scan content</div>; }).
-
-```tsx:disable-run
 import { useEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent } from "react";
 import * as XLSX from "xlsx";
 
