@@ -16,13 +16,13 @@ const translations = {
     about: "INFO",
     scan: "SCAN",
     searchAndSelect: "Otsi ja vali",
-    searchBy: "Otsingu sihtpunkt:",
+    searchBy: "Otsitav väli:",
     searchScope: "Otsi ulatus:",
     scopeAll: "Kõik saadaval",
     scopeSelected: "Valitud",
     searchPlaceholder: "Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)\nNäiteks:\nBM-3\n2COL23\nRBP-111",
     searching: "Otsin…",
-    searchButton: "Mitmik otsing | Otsi mitu väärtust korraga ",
+    searchButton: "Otsi ja vali",
     cancelSearch: "Katkesta otsing",
     clear: "Tühjenda",
     searchProgress: "Otsingu progress:",
@@ -467,7 +467,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [exportMsg, setExportMsg] = useState("");
   const [searchMsg, setSearchMsg] = useState("");
   const [settingsMsg, setSettingsMsg] = useState("");
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [progress, setProgress] = useState({ current: 0, total: 0, objects: 0, totalObjects: 0 });
   const [searchInput, setSearchInput] = useState("");
   const [searchField, setSearchField] = useState("AssemblyMark");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("clipboard");
@@ -489,7 +489,7 @@ export default function AssemblyExporter({ api }: Props) {
   
   const searchFieldOptions = useMemo(() => {
     const base = [
-      { value: "AssemblyMark", label: "Assembly Mark" },
+      { value: "AssemblyMark", label: "Kooste märk (BLOCK)" },
       { value: "GUID_IFC", label: "IFC GUID" },
       { value: "GUID_MS", label: "MS/Tekla GUID" },
       { value: "Name", label: "Nimi" },
@@ -572,10 +572,14 @@ export default function AssemblyExporter({ api }: Props) {
       const nameMap = await buildModelNameMap(api, modelIds);
       const out: Row[] = [];
       const lastSel: Array<{ modelId: string; ids: number[] }> = [];
-      setProgress({ current: 0, total: selectedWithBasic.length });
+      const totalObjs = selectedWithBasic.reduce((sum, m) => sum + (m.objects?.length || 0), 0);
+      setProgress({ current: 0, total: selectedWithBasic.length, objects: 0, totalObjects: totalObjs });
+      let processedObjects = 0;
+      
       for (let i = 0; i < selectedWithBasic.length; i++) {
         const { modelId, objects } = selectedWithBasic[i];
-        setDiscoverMsg(t.processing.replace('{current}', String(i + 1)).replace('{total}', String(selectedWithBasic.length)));
+        setDiscoverMsg(t.processing.replace('{current}', String(i + 1)).replace('{total}', String(selectedWithBasic.length)) + 
+          ` (${processedObjects}/${totalObjs} ${settings.language === "et" ? "objekti" : "objects"})`);
         const objectRuntimeIds = objects.map((o: any) => Number(o?.id)).filter(n => Number.isFinite(n));
         let fullObjects = objects;
         try {
@@ -585,7 +589,8 @@ export default function AssemblyExporter({ api }: Props) {
         const flattened = await Promise.all(fullObjects.map(o => flattenProps(o, modelId, projectName, nameMap, api)));
         out.push(...flattened);
         lastSel.push({ modelId, ids: objectRuntimeIds });
-        setProgress({ current: i + 1, total: selectedWithBasic.length });
+        processedObjects += objects.length;
+        setProgress({ current: i + 1, total: selectedWithBasic.length, objects: processedObjects, totalObjects: totalObjs });
       }
       setRows(out);
       setLastSelection(lastSel);
@@ -612,7 +617,7 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(true);
       setSearchMsg(t.searching);
       setSearchResults([]);
-      setProgress({ current: 0, total: 0 });
+      setProgress({ current: 0, total: 0, objects: 0, totalObjects: 0 });
       const searchValues = searchInput.split(/[\n,;\t]+/).map(s => s.trim()).filter(Boolean);
       const uniqueSearchValues = [...new Set(searchValues)];
       const hasDuplicates = searchValues.length > uniqueSearchValues.length;
@@ -621,9 +626,17 @@ export default function AssemblyExporter({ api }: Props) {
       const viewer = api?.viewer;
       let mos = searchScope === "selected" ? await viewer?.getObjects({ selected: true }) : await viewer?.getObjects();
       if (!Array.isArray(mos)) { if (abortController.signal.aborted) return; setSearchMsg(t.cannotRead); setBusy(false); return; }
+      
+      // Loe ette kokku, mitu objekti on
+      const totalObjs = mos.reduce((sum, mo) => sum + (mo.objects?.length || 0), 0);
+      
       const found: Array<{ modelId: string; ids: number[] }> = [];
       const foundValues = new Map<string, { original: string; modelId: string; ids: number[]; isPartial: boolean }>();
-      setProgress({ current: 0, total: mos.length });
+      setProgress({ current: 0, total: mos.length, objects: 0, totalObjects: totalObjs });
+      
+      const MAX_RESULTS = 500; // Peata kui leidsin 500 vastet
+      let processedObjects = 0;
+      
       for (let mIdx = 0; mIdx < mos.length; mIdx++) {
         if (abortController.signal.aborted) return;
         const mo = mos[mIdx];
@@ -641,6 +654,15 @@ export default function AssemblyExporter({ api }: Props) {
         const matchIds: number[] = [];
         for (let i = 0; i < fullProperties.length; i++) {
           if (abortController.signal.aborted) return;
+          
+          // Early exit kui leidsin juba piisavalt
+          if (found.reduce((sum, f) => sum + f.ids.length, 0) >= MAX_RESULTS) {
+            setSearchMsg(settings.language === "et" ? 
+              `⚠️ Peatatud: leidsin ${MAX_RESULTS}+ vastet. Täpsusta otsingut.` : 
+              `⚠️ Stopped: found ${MAX_RESULTS}+ matches. Refine search.`);
+            break;
+          }
+          
           const obj = fullProperties[i];
           const objId = objectRuntimeIds[i];
           let matchValue = "";
@@ -725,7 +747,17 @@ export default function AssemblyExporter({ api }: Props) {
           }
         }
         if (matchIds.length) found.push({ modelId, ids: matchIds });
-        setProgress({ current: mIdx + 1, total: mos.length });
+        
+        processedObjects += fullProperties.length;
+        setProgress({ current: mIdx + 1, total: mos.length, objects: processedObjects, totalObjects: totalObjs });
+        setSearchMsg(settings.language === "et" ? 
+          `Otsin... ${processedObjects}/${totalObjs} objekti töödeldud` : 
+          `Searching... ${processedObjects}/${totalObjs} objects processed`);
+        
+        // Early exit kui leidsin piisavalt
+        if (found.reduce((sum, f) => sum + f.ids.length, 0) >= MAX_RESULTS) {
+          break;
+        }
       }
       if (searchField === "GUID_IFC" && found.length === 0) {
         const allModels = await api.viewer.getModels();
@@ -989,7 +1021,7 @@ export default function AssemblyExporter({ api }: Props) {
               {busy && <button style={c.btnGhost} onClick={cancelSearch}>{t.cancelSearch}</button>}
               <button style={c.btnGhost} onClick={() => { setSearchInput(""); setSearchResults([]); setSearchMsg(""); }}>{t.clear}</button>
             </div>
-            {!!progress.total && progress.total > 1 && <div style={c.small}>{t.searchProgress} {progress.current}/{progress.total} {t.models}</div>}
+            {!!progress.total && progress.total > 1 && <div style={c.small}>{t.searchProgress} {progress.current}/{progress.total} {t.models}{progress.totalObjects > 0 ? ` • ${progress.objects}/${progress.totalObjects} objekti` : ""}</div>}
             {searchMsg && <div style={searchNoteStyle}>{searchMsg}</div>}
             {searchResults.length > 0 && (
               <div style={c.resultsBox}>
@@ -1011,7 +1043,7 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btn} onClick={discover} disabled={busy}>{busy ? "…" : t.discoverFields}</button>
               <button style={c.btnGhost} onClick={resetState}>{t.resetColors}</button>
             </div>
-            {!!progress.total && progress.total > 1 && <div style={c.small}>{t.progress} {progress.current}/{progress.total}</div>}
+            {!!progress.total && progress.total > 1 && <div style={c.small}>{t.progress} {progress.current}/{progress.total}{progress.totalObjects > 0 ? ` • ${progress.objects}/${progress.totalObjects} objekti` : ""}</div>}
             <input placeholder={t.filterColumns} value={filter} onChange={(e) => setFilter(e.target.value)} style={c.inputFilter} />
             <div style={c.controls}>
               <button style={c.btnGhost} onClick={() => selectAll(true)} disabled={!rows.length}>{t.selectAll}</button>
