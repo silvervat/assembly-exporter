@@ -12,7 +12,6 @@ const LOCKED_ORDER = [
   "FileName",
   "Name",
   "Type",
-  "BLOCK",
 ] as const;
 type LockedKey = (typeof LOCKED_ORDER)[number];
 const FORCE_TEXT_KEYS = new Set<string>([
@@ -127,7 +126,6 @@ async function flattenProps(
     FileName: modelNameById.get(modelId) || "",
     Name: "",
     Type: "Unknown",
-    BLOCK: "",
   };
   const propMap = new Map<string, string>();
   const keyCounts = new Map<string, number>();
@@ -170,16 +168,6 @@ async function flattenProps(
   if (obj?.id) out.ObjectId = String(obj.id);
   if (obj?.name) out.Name = String(obj.name);
   if (obj?.type) out.Type = String(obj.type);
-  for (const k of [
-    "DATA.BLOCK",
-    "BLOCK.BLOCK",
-    "Tekla_Assembly.AssemblyCast_unit_Mark",
-  ]) {
-    if (propMap.has(k)) {
-      out.BLOCK = propMap.get(k)!;
-      break;
-    }
-  }
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
@@ -299,7 +287,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [searchFieldFilter, setSearchFieldFilter] = useState("Assembly Mark (BLOCK)");
   const [isSearchFieldDropdownOpen, setIsSearchFieldDropdownOpen] = useState(false);
-  const [searchScope, setSearchScope] = useState<"available" | "visible" | "selected">("available"); // Uus state filtreerimiseks
+  const [searchScope, setSearchScope] = useState<"available" | "visible" | "selected">("available");
   useEffect(() => {
     const t = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(t);
@@ -339,7 +327,7 @@ export default function AssemblyExporter({ api }: Props) {
     ];
   
     const customOptions = allKeys
-      .filter(k => !['GUID', 'GUID_IFC', 'GUID_MS', 'Name', 'Type', 'BLOCK', 'Project', 'ModelId', 'FileName', 'ObjectId'].includes(k))
+      .filter(k => !['GUID', 'GUID_IFC', 'GUID_MS', 'Name', 'Type', 'Project', 'ModelId', 'FileName', 'ObjectId'].includes(k))
       .map(k => ({ value: k, label: k }));
   
     const allOptions = [...baseOptions, ...customOptions];
@@ -427,6 +415,11 @@ export default function AssemblyExporter({ api }: Props) {
       } catch {}
     };
   }, [api, busy]);
+  useEffect(() => {
+    if (tab === "export" && !busy) {
+      discover();
+    }
+  }, [tab]);
   const matches = (k: string) => filteredKeysSet.has(k);
   function toggle(k: string) {
     setSelected(s => {
@@ -455,7 +448,7 @@ export default function AssemblyExporter({ api }: Props) {
   }
   function presetTekla() {
     setSelected(new Set(allKeys.filter(k =>
-      k.startsWith("Tekla_Assembly.") || k === "BLOCK" || k === "ReferenceObject.File_Name"
+      k.startsWith("Tekla_Assembly.") || k === "ReferenceObject.File_Name"
     )));
   }
   function presetIFC() {
@@ -824,7 +817,6 @@ export default function AssemblyExporter({ api }: Props) {
   async function closeAndZoom(modelId: string, ids: number[]) {
     try {
       await selectAndZoom(modelId, ids);
-      // Proovi sulgeda paneel
       if (api?.extension?.close) {
         await api.extension.close();
       } else if (api?.extension) {
@@ -1138,7 +1130,9 @@ export default function AssemblyExporter({ api }: Props) {
                           key={opt.value}
                           style={{
                             ...c.dropdownItem,
-                            ...(searchField === opt.value ? c.dropdownItemSelected : {})
+                            ...(searchField === opt.value ? c.dropdownItemSelected : {}),
+                            whiteSpace: "normal",
+                            wordBreak: "break-word",
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.background = "#f5f5f5";
