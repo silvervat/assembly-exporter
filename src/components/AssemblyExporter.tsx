@@ -57,8 +57,7 @@ const translations = {
     sharedSecret: "Shared Secret",
     autoColorize: "Auto colorize",
     color: "Värv",
-    colorTooltip:
-      "Vali värv, millega märgitakse 3D vaates eksporditavad objektid",
+    colorTooltip: "Vali värv, millega märgitakse 3D vaates eksporditavad objektid",
     darkRed: "Tumepunane",
     red: "Punane",
     orange: "Oranž",
@@ -69,7 +68,7 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v5.8 – Trimble Connect",
+    version: "Assembly Exporter v5.9 – Trimble Connect",
     features:
       "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
     author: "Created by: Silver Vatsel",
@@ -80,8 +79,7 @@ const translations = {
     foundValues: "✅ Leidsin {found}/{total} väärtust.",
     notFound: "Ei leidnud:",
     allFound: "Kõik väärtused leitud ja valitud.",
-    duplicates:
-      "⚠️ Otsingus olid dubleeritud väärtused, arvestati unikaalseid.",
+    duplicates: "⚠️ Otsingus olid dubleeritud väärtused, arvestati unikaalseid.",
     noneFound: "❌ Ei leidnud ühtegi väärtust:",
     selectAllFound: "✅ Valisime kõik leitud objektid.",
     selectAllError: "❌ Viga kõikide valimisel.",
@@ -119,8 +117,7 @@ const translations = {
     reviewRows: "Kontrolli {count} rida",
     confirmAndSearch: "✅ Kinnita ja otsi",
     targetColumns: "Milliseid veerge skännida?",
-    targetColumnsHint:
-      "Kui veeru nimesid pole näha, kasuta numbreid: '1, 2, 3'",
+    targetColumnsHint: "Kui veeru nimesid pole näha, kasuta numbreid: '1, 2, 3'",
     ocrWebhookUrl: "OCR Webhook URL",
     ocrWebhookSecret: "OCR Secret",
     ocrPrompt: "Lisa OCR juhised",
@@ -191,7 +188,7 @@ const translations = {
     defaultPreset: "Default preset",
     save: "Save",
     reset: "Reset",
-    version: "Assembly Exporter v5.8 – Trimble Connect",
+    version: "Assembly Exporter v5.9 – Trimble Connect",
     features:
       "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
     author: "Created by: Silver Vatsel",
@@ -240,8 +237,7 @@ const translations = {
     reviewRows: "Review {count} rows",
     confirmAndSearch: "✅ Confirm and search",
     targetColumns: "Which columns to scan?",
-    targetColumnsHint:
-      "If column names not visible, use numbers: '1, 2, 3'",
+    targetColumnsHint: "If column names not visible, use numbers: '1, 2, 3'",
     ocrWebhookUrl: "OCR Webhook URL",
     ocrWebhookSecret: "OCR Secret",
     ocrPrompt: "Additional OCR instructions",
@@ -251,7 +247,7 @@ const translations = {
     cancel: "Cancel",
     viewSaved: "✅ View saved: {name}",
     viewSaveError: "❌ Error saving view: {error}",
-  }
+  },
 };
 
 const LOCKED_ORDER = ["GUID", "GUID_IFC", "GUID_MS", "Project", "ModelId", "FileName", "Name", "Type"] as const;
@@ -310,12 +306,9 @@ function useSettings() {
     }
   });
   const update = useCallback((patch: Partial<AppSettings>) => {
-    setSettings((prev) => {
+    setSettings(prev => {
       const next = { ...prev, ...patch };
-      window.localStorage?.setItem?.(
-        "assemblyExporterSettings",
-        JSON.stringify(next)
-      );
+      window.localStorage?.setItem?.("assemblyExporterSettings", JSON.stringify(next));
       return next;
     });
   }, []);
@@ -325,7 +318,6 @@ function useSettings() {
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
 }
-
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
@@ -333,7 +325,6 @@ function groupSortKey(group: string) {
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
-
 type Grouped = Record<string, string[]>;
 function groupKeys(keys: string[]): Grouped {
   const g: Grouped = {};
@@ -346,26 +337,19 @@ function groupKeys(keys: string[]): Grouped {
   for (const arr of Object.values(g)) arr.sort((a, b) => a.localeCompare(b));
   return g;
 }
-
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = val.trim();
   if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
   if (
-    /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(
-      s
-    ) || /^[0-9A-Fa-f]{32}$/.test(s)
+    /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(s) ||
+    /^[0-9A-Fa-f]{32}$/.test(s)
   )
     return "MS";
   return "UNKNOWN";
 }
 
-/** ---- NEW: Helpers to fetch layers and reference/meta as fallbacks ---- **/
-
-async function getPresentationLayerString(
-  api: any,
-  modelId: string,
-  runtimeId: number
-): Promise<string> {
+/** ---- Fallback apid: Presentation Layers & Reference Object ---- */
+async function getPresentationLayerString(api: any, modelId: string, runtimeId: number): Promise<string> {
   try {
     const layers =
       (await api?.viewer?.getObjectLayers?.(modelId, [runtimeId])) ??
@@ -382,36 +366,27 @@ async function getReferenceObjectInfo(
   api: any,
   modelId: string,
   runtimeId: number
-): Promise<{
-  fileName?: string;
-  fileFormat?: string;
-  commonType?: string;
-  guidIfc?: string;
-  guidMs?: string;
-}> {
+): Promise<{ fileName?: string; fileFormat?: string; commonType?: string; guidIfc?: string; guidMs?: string }> {
   const out: any = {};
   try {
     const meta =
       (await api?.viewer?.getObjectMetadata?.(modelId, [runtimeId])) ??
       (await api?.viewer?.getObjectInfo?.(modelId, runtimeId));
     const m = Array.isArray(meta) ? meta[0] : meta;
-
     if (m?.file?.name) out.fileName = String(m.file.name);
     if (m?.file?.format) out.fileFormat = String(m.file.format);
     if (m?.commonType) out.commonType = String(m.commonType);
-
+    if (m?.globalId) out.guidMs = String(m.globalId);
     if (!out.guidIfc) {
       try {
         const ext = await api?.viewer?.convertToObjectIds?.(modelId, [runtimeId]);
         if (ext && ext[0]) out.guidIfc = String(ext[0]);
       } catch {}
     }
-    if (!out.guidMs && m?.globalId) out.guidMs = String(m.globalId);
   } catch {}
   return out;
 }
-
-/** ---- flattenProps (augmented with fallbacks) ---- **/
+/** ---------------------------------------------------------------- */
 
 async function flattenProps(
   obj: any,
@@ -433,7 +408,6 @@ async function flattenProps(
 
   const propMap = new Map<string, string>();
   const keyCounts = new Map<string, number>();
-
   const push = (group: string, name: string, val: unknown) => {
     const g = sanitizeKey(group);
     const n = sanitizeKey(name);
@@ -442,16 +416,15 @@ async function flattenProps(
     const count = keyCounts.get(baseKey) || 0;
     if (count > 0) key = `${baseKey}_${count}`;
     keyCounts.set(baseKey, count + 1);
-
     let v: unknown = val;
-    if (Array.isArray(v)) v = v.map((x) => (x == null ? "" : String(x))).join(" | ");
+    if (Array.isArray(v)) v = v.map(x => (x == null ? "" : String(x))).join(" | ");
     else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
     const s = v == null ? "" : String(v);
     propMap.set(key, s);
     out[key] = s;
   };
 
-  // properties – both array-of-sets and map style are supported
+  // Property setid (sh peidetud)
   if (Array.isArray(obj?.properties)) {
     obj.properties.forEach((propSet: any) => {
       const setName = propSet?.name || "Unknown";
@@ -465,22 +438,18 @@ async function flattenProps(
       }
     });
   } else if (typeof obj?.properties === "object" && obj.properties !== null) {
-    Object.entries(obj.properties).forEach(([key, val]) =>
-      push("Properties", key, val)
-    );
+    Object.entries(obj.properties).forEach(([key, val]) => push("Properties", key, val));
   }
 
+  // Standard väljad
   if (obj?.id) out.ObjectId = String(obj.id);
   if (obj?.name) out.Name = String(obj.name);
   if (obj?.type) out.Type = String(obj.type);
-
-  // Product block if present on object
   if (obj?.product?.name) out.ProductName = String(obj.product.name);
-  if (obj?.product?.description)
-    out.ProductDescription = String(obj.product.description);
+  if (obj?.product?.description) out.ProductDescription = String(obj.product.description);
   if (obj?.product?.type) out.ProductType = String(obj.product.type);
 
-  // Determine GUIDs from collected props
+  // GUIDid propidest
   let guidIfc = "";
   let guidMs = "";
   for (const [k, v] of propMap) {
@@ -490,7 +459,7 @@ async function flattenProps(
     if (cls === "MS" && !guidMs) guidMs = v;
   }
 
-  // If no IFC GUID yet, try convert
+  // IFC GUID fallback (runtime->external)
   if (!guidIfc && obj.id) {
     try {
       const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
@@ -501,13 +470,7 @@ async function flattenProps(
     }
   }
 
-  out.GUID_IFC = guidIfc;
-  out.GUID_MS = guidMs;
-  out.GUID = guidIfc || guidMs || "";
-
-  // ---------- NEW: fallbacks to mirror right-panel data ----------
-
-  // Presentation Layers (if not already present in prop sets)
+  // Presentation Layers fallback
   if (![...propMap.keys()].some(k => k.toLowerCase().startsWith("presentation_layers."))) {
     const rid = Number(obj?.id);
     if (Number.isFinite(rid)) {
@@ -520,22 +483,23 @@ async function flattenProps(
     }
   }
 
-  // Reference Object (File Name/Format, Common Type, GUIDs) if missing
-  const hasRef = [...propMap.keys()].some(k =>
-    k.toLowerCase().startsWith("referenceobject.")
-  );
-  if (!hasRef) {
+  // Reference Object fallback
+  const hasRefBlock = [...propMap.keys()].some(k => k.toLowerCase().startsWith("referenceobject."));
+  if (!hasRefBlock) {
     const rid = Number(obj?.id);
     if (Number.isFinite(rid)) {
       const ref = await getReferenceObjectInfo(api, modelId, rid);
       if (ref.fileName) out["ReferenceObject.File_Name"] = ref.fileName;
       if (ref.fileFormat) out["ReferenceObject.File_Format"] = ref.fileFormat;
       if (ref.commonType) out["ReferenceObject.Common_Type"] = ref.commonType;
-      if (!out.GUID_IFC && ref.guidIfc) out.GUID_IFC = ref.guidIfc;
-      if (!out.GUID_MS && ref.guidMs) out.GUID_MS = ref.guidMs;
-      out.GUID = out.GUID || out.GUID_IFC || out.GUID_MS || "";
+      if (!guidIfc && ref.guidIfc) guidIfc = ref.guidIfc;
+      if (!guidMs && ref.guidMs) guidMs = ref.guidMs;
     }
   }
+
+  out.GUID_IFC = guidIfc;
+  out.GUID_MS = guidMs;
+  out.GUID = guidIfc || guidMs || "";
 
   return out;
 }
@@ -543,27 +507,18 @@ async function flattenProps(
 async function getProjectName(api: any): Promise<string> {
   try {
     const proj =
-      typeof api?.project?.getProject === "function"
-        ? await api.project.getProject()
-        : api?.project || {};
+      typeof api?.project?.getProject === "function" ? await api.project.getProject() : api?.project || {};
     return String(proj?.name || "");
   } catch {
     return "";
   }
 }
-
-async function getSelectedObjects(
-  api: any
-): Promise<Array<{ modelId: string; objects: any[] }>> {
+async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
   const viewer: any = api?.viewer;
   const mos = await viewer?.getObjects?.({ selected: true });
   if (!Array.isArray(mos) || !mos.length) return [];
-  return mos.map((mo: any) => ({
-    modelId: String(mo.modelId),
-    objects: mo.objects || [],
-  }));
+  return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
 }
-
 async function buildModelNameMap(api: any, modelIds: string[]) {
   const map = new Map<string, string>();
   try {
@@ -604,17 +559,11 @@ const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => {
       </span>
       <span
         style={styles.resultValue}
-        title={
-          isPartialMatch
-            ? `Otsisin: ${result.originalValue} → Leidsin: ${displayValue}`
-            : displayValue
-        }
+        title={isPartialMatch ? `Otsisin: ${result.originalValue} → Leidsin: ${displayValue}` : displayValue}
       >
         {displayValue}
         {isPartialMatch && (
-          <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>
-            ← {result.originalValue}
-          </span>
+          <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>← {result.originalValue}</span>
         )}
       </span>
       <span style={styles.resultCount}>
@@ -622,11 +571,7 @@ const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => {
       </span>
       <div style={styles.resultActions}>
         {result.status === "found" && result.modelId && result.ids && (
-          <button
-            style={styles.miniBtn}
-            onClick={() => onZoom(result.modelId, result.ids)}
-            title="Zoom"
-          >
+          <button style={styles.miniBtn} onClick={() => onZoom(result.modelId, result.ids)} title="Zoom">
             {t.zoom}
           </button>
         )}
@@ -647,7 +592,6 @@ type Props = { api: any };
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
   const t = translations[settings.language];
-
   const [tab, setTab] = useState<Tab>("search");
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -665,18 +609,11 @@ export default function AssemblyExporter({ api }: Props) {
   const [exportMsg, setExportMsg] = useState("");
   const [searchMsg, setSearchMsg] = useState("");
   const [settingsMsg, setSettingsMsg] = useState("");
-  const [progress, setProgress] = useState({
-    current: 0,
-    total: 0,
-    objects: 0,
-    totalObjects: 0,
-  });
+  const [progress, setProgress] = useState({ current: 0, total: 0, objects: 0, totalObjects: 0 });
   const [searchInput, setSearchInput] = useState("");
   const [searchField, setSearchField] = useState("AssemblyMark");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("clipboard");
-  const [lastSelection, setLastSelection] = useState<
-    Array<{ modelId: string; ids: number[] }>
-  >([]);
+  const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
   const [searchResults, setSearchResults] = useState<Array<any>>([]);
   const [includeHeaders, setIncludeHeaders] = useState(true);
   const [showViewSave, setShowViewSave] = useState(false);
@@ -687,21 +624,18 @@ export default function AssemblyExporter({ api }: Props) {
     const tmr = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(tmr);
   }, [filter]);
-
   useEffect(() => {
     if (discoverMsg) {
       const t = setTimeout(() => setDiscoverMsg(""), MESSAGE_DURATION_MS);
       return () => clearTimeout(t);
     }
   }, [discoverMsg]);
-
   useEffect(() => {
     if (exportMsg) {
       const t = setTimeout(() => setExportMsg(""), MESSAGE_DURATION_MS);
       return () => clearTimeout(t);
     }
   }, [exportMsg]);
-
   useEffect(() => {
     if (settingsMsg) {
       const t = setTimeout(() => setSettingsMsg(""), MESSAGE_DURATION_MS);
@@ -709,10 +643,7 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }, [settingsMsg]);
 
-  const allKeys = useMemo(
-    () => Array.from(new Set(rows.flatMap((r) => Object.keys(r)))).sort(),
-    [rows]
-  );
+  const allKeys = useMemo(() => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(), [rows]);
 
   const searchFieldOptions = useMemo(() => {
     const base = [
@@ -722,60 +653,30 @@ export default function AssemblyExporter({ api }: Props) {
       { value: "Name", label: "Nimi" },
     ];
     const custom = allKeys
-      .filter(
-        (k) =>
-          ![
-            "GUID",
-            "GUID_IFC",
-            "GUID_MS",
-            "Name",
-            "Type",
-            "Project",
-            "ModelId",
-            "FileName",
-            "ObjectId",
-          ].includes(k)
-      )
-      .map((k) => ({ value: k, label: k }));
+      .filter(k => !["GUID", "GUID_IFC", "GUID_MS", "Name", "Type", "Project", "ModelId", "FileName", "ObjectId"].includes(k))
+      .map(k => ({ value: k, label: k }));
     const all = [...base, ...custom];
     if (!searchFieldFilter) return all;
     const f = searchFieldFilter.toLowerCase();
-    return all.filter(
-      (opt) =>
-        opt.label.toLowerCase().includes(f) ||
-        opt.value.toLowerCase().includes(f)
-    );
+    return all.filter(opt => opt.label.toLowerCase().includes(f) || opt.value.toLowerCase().includes(f));
   }, [allKeys, searchFieldFilter]);
 
   const groupedUnsorted = useMemo(() => groupKeys(allKeys), [allKeys]);
   const groupedSortedEntries = useMemo(
-    () =>
-      (Object.entries(groupedUnsorted) as [string, string[]][])
-        .sort(
-          (a, b) =>
-            groupSortKey(a[0]) - groupSortKey(b[0]) ||
-            a[0].localeCompare(b[0])
-        ),
+    () => (Object.entries(groupedUnsorted) as [string, string[]][])
+      .sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])),
     [groupedUnsorted]
   );
 
   const filteredKeysSet = useMemo(() => {
     if (!debouncedFilter) return new Set(allKeys);
     const f = debouncedFilter.toLowerCase();
-    return new Set(allKeys.filter((k) => k.toLowerCase().includes(f)));
+    return new Set(allKeys.filter(k => k.toLowerCase().includes(f)));
   }, [allKeys, debouncedFilter]);
 
-  const exportableColumns = useMemo(
-    () => columnOrder.filter((k) => allKeys.includes(k)),
-    [columnOrder, allKeys]
-  );
-
+  const exportableColumns = useMemo(() => columnOrder.filter(k => allKeys.includes(k)), [columnOrder, allKeys]);
   const totalFoundCount = useMemo(
-    () =>
-      searchResults.reduce(
-        (sum, r) => sum + (r.status === "found" ? r.ids?.length || 0 : 0),
-        0
-      ),
+    () => searchResults.reduce((sum, r) => sum + (r.status === "found" ? r.ids?.length || 0 : 0), 0),
     [searchResults]
   );
 
@@ -788,18 +689,15 @@ export default function AssemblyExporter({ api }: Props) {
 
   useEffect(() => {
     const currentSet = new Set(columnOrder);
-    const missingKeys = allKeys.filter((k) => !currentSet.has(k));
-    if (missingKeys.length > 0) setColumnOrder((prev) => [...prev, ...missingKeys]);
+    const missingKeys = allKeys.filter(k => !currentSet.has(k));
+    if (missingKeys.length > 0) setColumnOrder(prev => [...prev, ...missingKeys]);
     else if (!columnOrder.length && allKeys.length)
-      setColumnOrder([
-        ...LOCKED_ORDER,
-        ...allKeys.filter((k) => !(LOCKED_ORDER as readonly string[]).includes(k)),
-      ]);
+      setColumnOrder([...LOCKED_ORDER, ...allKeys.filter(k => !LOCKED_ORDER.includes(k as any))]);
   }, [allKeys]);
 
   useEffect(() => {
     if (!api?.viewer) return;
-    let selectionTimeout: NodeJS.Timeout;
+    let selectionTimeout: any;
     const handleSelectionChange = () => {
       clearTimeout(selectionTimeout);
       selectionTimeout = setTimeout(() => {
@@ -819,66 +717,40 @@ export default function AssemblyExporter({ api }: Props) {
     };
   }, [api, busy]);
 
-  useEffect(() => {
-    if (tab === "export" && !busy) discover();
-  }, [tab]);
-
-  useEffect(() => {
-    if (tab === "discover" && !busy) discover();
-  }, [tab]);
+  useEffect(() => { if (tab === "export" && !busy) discover(); }, [tab]);
+  useEffect(() => { if (tab === "discover" && !busy) discover(); }, [tab]);
 
   const matches = useCallback((k: string) => filteredKeysSet.has(k), [filteredKeysSet]);
-
   const toggle = useCallback(
     (k: string) =>
-      setSelected((s) => {
+      setSelected(s => {
         const n = new Set(s);
         n.has(k) ? n.delete(k) : n.add(k);
         return n;
       }),
     []
   );
-
   const toggleGroup = useCallback(
     (keys: string[], on: boolean) =>
-      setSelected((s) => {
+      setSelected(s => {
         const n = new Set(s);
         for (const k of keys) (on ? n.add(k) : n.delete(k));
         return n;
       }),
     []
   );
-
-  const selectAll = useCallback(
-    (on: boolean) => setSelected(() => (on ? new Set(allKeys) : new Set())),
-    [allKeys]
-  );
+  const selectAll = useCallback((on: boolean) => setSelected(() => (on ? new Set(allKeys) : new Set())), [allKeys]);
 
   function presetRecommended() {
-    const wanted = new Set([
-      ...LOCKED_ORDER,
-      "ReferenceObject.Common_Type",
-      "ReferenceObject.File_Name",
-    ]);
-    setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
+    const wanted = new Set([...LOCKED_ORDER, "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
+    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
   function presetTekla() {
-    setSelected(
-      new Set(
-        allKeys.filter(
-          (k) => k.startsWith("Tekla_Assembly.") || k === "ReferenceObject.File_Name"
-        )
-      )
-    );
+    setSelected(new Set(allKeys.filter(k => k.startsWith("Tekla_Assembly.") || k === "ReferenceObject.File_Name")));
   }
   function presetIFC() {
-    const wanted = new Set([
-      "GUID_IFC",
-      "GUID_MS",
-      "ReferenceObject.Common_Type",
-      "ReferenceObject.File_Name",
-    ]);
-    setSelected(new Set(allKeys.filter((k) => wanted.has(k))));
+    const wanted = new Set(["GUID_IFC", "GUID_MS", "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
+    setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
 
   async function discover() {
@@ -889,7 +761,7 @@ export default function AssemblyExporter({ api }: Props) {
     try {
       setBusy(true);
       setDiscoverMsg(t.selectObjects);
-      setProgress({ current: 0, total: 0 } as any);
+      setProgress({ current: 0, total: 0, objects: 0, totalObjects: 0 });
 
       const selectedWithBasic = await getSelectedObjects(api);
       if (!selectedWithBasic.length) {
@@ -899,66 +771,42 @@ export default function AssemblyExporter({ api }: Props) {
       }
 
       const projectName = await getProjectName(api);
-      const modelIds = selectedWithBasic.map((m) => m.modelId);
+      const modelIds = selectedWithBasic.map(m => m.modelId);
       const nameMap = await buildModelNameMap(api, modelIds);
 
       const out: Row[] = [];
       const lastSel: Array<{ modelId: string; ids: number[] }> = [];
 
-      const totalObjs = selectedWithBasic.reduce(
-        (sum, m) => sum + (m.objects?.length || 0),
-        0
-      );
-      setProgress({
-        current: 0,
-        total: selectedWithBasic.length,
-        objects: 0,
-        totalObjects: totalObjs,
-      });
+      const totalObjs = selectedWithBasic.reduce((sum, m) => sum + (m.objects?.length || 0), 0);
+      setProgress({ current: 0, total: selectedWithBasic.length, objects: 0, totalObjects: totalObjs });
 
       let processedObjects = 0;
 
       for (let i = 0; i < selectedWithBasic.length; i++) {
         const { modelId, objects } = selectedWithBasic[i];
-
         setDiscoverMsg(
-          t.processing
-            .replace("{current}", String(i + 1))
-            .replace("{total}", String(selectedWithBasic.length)) +
-            ` (${processedObjects}/${totalObjs} ${
-              settings.language === "et" ? "objekti" : "objects"
-            })`
+          t.processing.replace("{current}", String(i + 1)).replace("{total}", String(selectedWithBasic.length)) +
+            ` (${processedObjects}/${totalObjs} ${settings.language === "et" ? "objekti" : "objects"})`
         );
 
-        const objectRuntimeIds = objects
-          .map((o: any) => Number(o?.id))
-          .filter((n) => Number.isFinite(n));
+        const objectRuntimeIds = objects.map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
 
         let fullObjects = objects;
         try {
-          // NEW: includeHidden – harmless if SDK ignores the 3rd arg
-          const fullProperties =
-            (await api.viewer.getObjectProperties(
-              modelId,
-              objectRuntimeIds,
-              { includeHidden: true }
-            )) ?? [];
+          // includeHidden püüab kätte saada ka UI-s varjatud IFC property setid
+          const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
           fullObjects = objects.map((obj: any, idx: number) => ({
             ...obj,
             properties: fullProperties[idx]?.properties || obj.properties,
-            product: fullProperties[idx]?.product || obj.product,
           }));
         } catch (e) {
           console.warn(`getObjectProperties failed for model ${modelId}:`, e);
         }
 
-        const flattened = await Promise.all(
-          fullObjects.map((o) => flattenProps(o, modelId, projectName, nameMap, api))
-        );
-
+        const flattened = await Promise.all(fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api)));
         out.push(...flattened);
-        lastSel.push({ modelId, ids: objectRuntimeIds });
 
+        lastSel.push({ modelId, ids: objectRuntimeIds });
         processedObjects += objects.length;
         setProgress({
           current: i + 1,
@@ -973,10 +821,7 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(
         t.foundObjects
           .replace("{count}", String(out.length))
-          .replace(
-            "{keys}",
-            String(Array.from(new Set(out.flatMap((r) => Object.keys(r)))).length)
-          )
+          .replace("{keys}", String(Array.from(new Set(out.flatMap(r => Object.keys(r)))).length))
       );
     } catch (e: any) {
       console.error(e);
@@ -998,17 +843,13 @@ export default function AssemblyExporter({ api }: Props) {
   async function searchAndSelect() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
-
     try {
       setBusy(true);
       setSearchMsg(t.searching);
       setSearchResults([]);
       setProgress({ current: 0, total: 0, objects: 0, totalObjects: 0 });
 
-      const searchValues = searchInput
-        .split(/[\n,;\t]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const searchValues = searchInput.split(/[\n,;\t]+/).map(s => s.trim()).filter(Boolean);
       const uniqueSearchValues = [...new Set(searchValues)];
       const hasDuplicates = searchValues.length > uniqueSearchValues.length;
       if (!uniqueSearchValues.length) {
@@ -1018,10 +859,7 @@ export default function AssemblyExporter({ api }: Props) {
       }
 
       const viewer = api?.viewer;
-      let mos =
-        searchScope === "selected"
-          ? await viewer?.getObjects({ selected: true })
-          : await viewer?.getObjects();
+      let mos = searchScope === "selected" ? await viewer?.getObjects({ selected: true }) : await viewer?.getObjects();
       if (!Array.isArray(mos)) {
         if (abortController.signal.aborted) return;
         setSearchMsg(t.cannotRead);
@@ -1035,8 +873,8 @@ export default function AssemblyExporter({ api }: Props) {
         string,
         { original: string; modelId: string; ids: number[]; isPartial: boolean; actualValue: string }
       >();
-
       setProgress({ current: 0, total: mos.length, objects: 0, totalObjects: totalObjs });
+
       const MAX_RESULTS = 500;
       let processedObjects = 0;
 
@@ -1044,17 +882,13 @@ export default function AssemblyExporter({ api }: Props) {
         if (abortController.signal.aborted) return;
         const mo = mos[mIdx];
         const modelId = String(mo.modelId);
-        const objectRuntimeIds = (mo.objects || [])
-          .map((o: any) => Number(o?.id))
-          .filter((n) => Number.isFinite(n));
+        const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter(Number.isFinite);
+
         if (!objectRuntimeIds.length) continue;
 
         let fullProperties: any[] = [];
         try {
-          fullProperties =
-            (await api.viewer.getObjectProperties(modelId, objectRuntimeIds, {
-              includeHidden: true,
-            })) ?? [];
+          fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
         } catch (e) {
           if (abortController.signal.aborted) return;
           console.warn(`getObjectProperties failed for model ${modelId}:`, e);
@@ -1062,7 +896,6 @@ export default function AssemblyExporter({ api }: Props) {
         }
 
         const matchIds: number[] = [];
-
         for (let i = 0; i < fullProperties.length; i++) {
           if (abortController.signal.aborted) return;
           if (found.reduce((sum, f) => sum + f.ids.length, 0) >= MAX_RESULTS) {
@@ -1078,9 +911,8 @@ export default function AssemblyExporter({ api }: Props) {
           const objId = objectRuntimeIds[i];
           let matchValue = "";
 
-          const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
-
           if (searchField === "AssemblyMark") {
+            const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 if (/assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(String(p?.name))) {
@@ -1091,15 +923,13 @@ export default function AssemblyExporter({ api }: Props) {
               if (matchValue) break;
             }
           } else if (searchField === "GUID_IFC" || searchField === "GUID_MS") {
+            const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 if (/guid|globalid/i.test(String(p?.name))) {
                   const val = String(p?.value || p?.displayValue || "").trim();
                   const cls = classifyGuid(val);
-                  if (
-                    (searchField === "GUID_IFC" && cls === "IFC") ||
-                    (searchField === "GUID_MS" && cls === "MS")
-                  ) {
+                  if ((searchField === "GUID_IFC" && cls === "IFC") || (searchField === "GUID_MS" && cls === "MS")) {
                     matchValue = val;
                     break;
                   }
@@ -1114,6 +944,7 @@ export default function AssemblyExporter({ api }: Props) {
               } catch {}
             }
           } else if (searchField === "Name") {
+            const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 if (/^name$/i.test(String(p?.name))) {
@@ -1124,14 +955,14 @@ export default function AssemblyExporter({ api }: Props) {
               if (matchValue) break;
             }
           } else {
+            const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             const searchParts = searchField.split(".");
             const groupPart = searchParts[0] || "";
             const propPart = searchParts[1] || "";
             for (const set of props) {
               const setName = String(set?.name || "");
               const setNameSanitized = sanitizeKey(setName);
-              if (groupPart && !setNameSanitized.toLowerCase().includes(groupPart.toLowerCase()))
-                continue;
+              if (groupPart && !setNameSanitized.toLowerCase().includes(groupPart.toLowerCase())) continue;
               for (const p of set?.properties ?? []) {
                 const propName = String(p?.name || "");
                 const propNameSanitized = sanitizeKey(propName);
@@ -1151,11 +982,10 @@ export default function AssemblyExporter({ api }: Props) {
           const matchLower = matchValue.toLowerCase();
           if (!matchValue || !matchLower) continue;
 
-          const originalMatch = uniqueSearchValues.find((v) => {
+          const originalMatch = uniqueSearchValues.find(v => {
             const vLower = v.toLowerCase();
-            return fuzzySearch
-              ? vLower && matchLower && (matchLower.includes(vLower) || vLower.includes(matchLower))
-              : vLower === matchLower;
+            if (fuzzySearch) return vLower && matchLower && (matchLower.includes(vLower) || vLower.includes(matchLower));
+            return vLower === matchLower;
           });
 
           if (originalMatch) {
@@ -1178,12 +1008,7 @@ export default function AssemblyExporter({ api }: Props) {
         if (matchIds.length) found.push({ modelId, ids: matchIds });
 
         processedObjects += fullProperties.length;
-        setProgress({
-          current: mIdx + 1,
-          total: mos.length,
-          objects: processedObjects,
-          totalObjects: totalObjs,
-        });
+        setProgress({ current: mIdx + 1, total: mos.length, objects: processedObjects, totalObjects: totalObjs });
         setSearchMsg(
           settings.language === "et"
             ? `Otsin... ${processedObjects}/${totalObjs} objekti töödeldud`
@@ -1248,27 +1073,17 @@ export default function AssemblyExporter({ api }: Props) {
               break;
             }
           }
-          if (!foundEntry) {
-            results.push({ originalValue, value: lower, status: "notfound" });
-          }
+          if (!foundEntry) results.push({ originalValue, value: lower, status: "notfound" });
         }
       }
 
       setSearchResults(results);
-
       if (found.length) {
-        const selector = {
-          modelObjectIds: found.map((f) => ({
-            modelId: f.modelId,
-            objectRuntimeIds: f.ids,
-          })),
-        };
+        const selector = { modelObjectIds: found.map(f => ({ modelId: f.modelId, objectRuntimeIds: f.ids })) };
         await viewer?.setSelection?.(selector);
         setLastSelection(found);
-        const notFound = results.filter((r) => r.status === "notfound").map((r) => r.originalValue);
-        let msg = t.foundValues
-          .replace("{found}", String(foundValues.size))
-          .replace("{total}", String(uniqueSearchValues.length));
+        const notFound = results.filter(r => r.status === "notfound").map(r => r.originalValue);
+        let msg = t.foundValues.replace("{found}", String(foundValues.size)).replace("{total}", String(uniqueSearchValues.length));
         if (notFound.length) msg += ` ${t.notFound} ${notFound.join(", ")}`;
         else msg += ` ${t.allFound}`;
         if (hasDuplicates) msg += ` ${t.duplicates}`;
@@ -1291,15 +1106,10 @@ export default function AssemblyExporter({ api }: Props) {
   const selectAllFound = useCallback(async () => {
     try {
       const allFound = searchResults
-        .filter((r) => r.status === "found" && r.modelId && r.ids)
-        .map((r) => ({ modelId: r.modelId, ids: r.ids }));
+        .filter(r => r.status === "found" && r.modelId && r.ids)
+        .map(r => ({ modelId: r.modelId, ids: r.ids }));
       if (allFound.length) {
-        const selector = {
-          modelObjectIds: allFound.map((f: any) => ({
-            modelId: f.modelId,
-            objectRuntimeIds: f.ids,
-          })),
-        };
+        const selector = { modelObjectIds: allFound.map(f => ({ modelId: f.modelId, objectRuntimeIds: f.ids })) };
         await api?.viewer?.setSelection?.(selector);
         setLastSelection(allFound);
         setSearchMsg(t.selectAllFound);
@@ -1310,19 +1120,16 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }, [searchResults, api, t]);
 
-  const selectAndZoom = useCallback(
-    async (modelId: string, ids: number[]) => {
-      try {
-        const viewer = api?.viewer;
-        const selector = { modelObjectIds: [{ modelId, objectRuntimeIds: ids }] };
-        await viewer?.setSelection?.(selector);
-        await viewer?.setCamera?.(selector, { animationTime: 500 });
-      } catch (e: any) {
-        console.error("Zoom error:", e);
-      }
-    },
-    [api]
-  );
+  const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
+    try {
+      const viewer = api?.viewer;
+      const selector = { modelObjectIds: [{ modelId, objectRuntimeIds: ids }] };
+      await viewer?.setSelection?.(selector);
+      await viewer?.setCamera?.(selector, { animationTime: 500 });
+    } catch (e: any) {
+      console.error("Zoom error:", e);
+    }
+  }, [api]);
 
   const initSaveView = useCallback(() => {
     const now = new Date();
@@ -1339,10 +1146,7 @@ export default function AssemblyExporter({ api }: Props) {
   const saveView = useCallback(async () => {
     if (!lastSelection.length || !viewName.trim()) return;
     try {
-      const modelObjectIds = lastSelection.map((f) => ({
-        modelId: f.modelId,
-        objectRuntimeIds: f.ids,
-      }));
+      const modelObjectIds = lastSelection.map(f => ({ modelId: f.modelId, objectRuntimeIds: f.ids }));
       await api.view.createView({ name: viewName, modelObjectIds });
       setSearchMsg(t.viewSaved.replace("{name}", viewName));
       setShowViewSave(false);
@@ -1375,17 +1179,14 @@ export default function AssemblyExporter({ api }: Props) {
     e.dataTransfer.setData("text/html", e.currentTarget.innerHTML);
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "0.4";
   }, []);
-
   const handleDragEnd = useCallback((e: DragEvent<HTMLDivElement>) => {
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "1";
     setDraggedIndex(null);
   }, []);
-
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }, []);
-
   const handleDrop = useCallback(
     (e: DragEvent<HTMLDivElement>, dropIndex: number) => {
       e.preventDefault();
@@ -1406,25 +1207,19 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(t.noDataExport);
       return;
     }
-    const exportCols = columnOrder.filter((k) => selected.has(k) && allKeys.includes(k));
+    const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
     if (!exportCols.length) {
       setExportMsg(t.selectColumn);
       return;
     }
     try {
       if (exportFormat === "clipboard") {
-        const body = rows.map((r) => exportCols.map((k) => r[k] ?? "").join("\t")).join("\n");
+        const body = rows.map(r => exportCols.map(k => r[k] ?? "").join("\t")).join("\n");
         const text = includeHeaders ? exportCols.join("\t") + "\n" + body : body;
         await navigator.clipboard.writeText(text);
         setExportMsg(t.copied.replace("{count}", String(rows.length)));
       } else if (exportFormat === "csv") {
-        const csvBody = rows
-          .map((r) =>
-            exportCols
-              .map((k) => `"${String(r[k] ?? "").replace(/"/g, '""')}"`)
-              .join(",")
-          )
-          .join("\n");
+        const csvBody = rows.map(r => exportCols.map(k => `"${String(r[k] ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
         const csv = includeHeaders ? exportCols.join(",") + "\n" + csvBody : csvBody;
         const blob = new Blob([csv], { type: "text/csv" });
         const url = URL.createObjectURL(blob);
@@ -1435,11 +1230,10 @@ export default function AssemblyExporter({ api }: Props) {
         setTimeout(() => URL.revokeObjectURL(url), 100);
         setExportMsg(t.savedCsv.replace("{count}", String(rows.length)));
       } else if (exportFormat === "excel") {
-        const rowData = rows.map((r) =>
-          exportCols.map((k) => {
+        const rowData = rows.map(r =>
+          exportCols.map(k => {
             const v = r[k] ?? "";
-            if (FORCE_TEXT_KEYS.has(k) || /^(GUID|GUID_IFC|GUID_MS)$/i.test(k))
-              return `'${String(v)}`;
+            if (FORCE_TEXT_KEYS.has(k) || /^(GUID|GUID_IFC|GUID_MS)$/i.test(k)) return `'${String(v)}`;
             return v;
           })
         );
@@ -1467,8 +1261,8 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(t.noDataExport);
       return;
     }
-    const exportCols = columnOrder.filter((k) => selected.has(k) && allKeys.includes(k));
-    const payload = rows.map((r) => {
+    const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
+    const payload = rows.map(r => {
       const obj: Row = {};
       for (const k of exportCols) obj[k] = r[k] ?? "";
       return obj;
@@ -1483,10 +1277,7 @@ export default function AssemblyExporter({ api }: Props) {
       });
       const data = await res.json();
       if (data?.ok) {
-        setExportMsg(
-          t.addedRows.replace("{count}", String(payload.length)) +
-            (autoColorize ? ` ${t.coloring}` : "")
-        );
+        setExportMsg(t.addedRows.replace("{count}", String(payload.length)) + (autoColorize ? ` ${t.coloring}` : ""));
         if (autoColorize) await colorLastSelection();
       } else {
         setExportMsg(t.exportError.replace("{error}", data?.error || "unknown"));
@@ -1503,11 +1294,11 @@ export default function AssemblyExporter({ api }: Props) {
     let blocks = lastSelection;
     if (!blocks?.length) {
       const mos = await getSelectedObjects(api);
-      blocks = mos.map((m) => ({
+      blocks = mos.map(m => ({
         modelId: String(m.modelId),
         ids: (m.objects || [])
           .map((o: any) => Number(o?.id))
-          .filter((n) => Number.isFinite(n)),
+          .filter((n: number) => Number.isFinite(n)),
       }));
     }
     if (!blocks?.length) return;
@@ -1528,10 +1319,7 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }
 
-  const removeResult = useCallback(
-    (index: number) => setSearchResults((prev) => prev.filter((_, i) => i !== index)),
-    []
-  );
+  const removeResult = useCallback((index: number) => setSearchResults(prev => prev.filter((_, i) => i !== index)), []);
 
   const c = styles;
   const scopeButtonStyle = (isActive: boolean): CSSProperties => ({
@@ -1552,40 +1340,22 @@ export default function AssemblyExporter({ api }: Props) {
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
-        <button
-          style={{ ...c.tab, ...(tab === "search" ? c.tabActive : {}) }}
-          onClick={() => setTab("search")}
-        >
+        <button style={{ ...c.tab, ...(tab === "search" ? c.tabActive : {}) }} onClick={() => setTab("search")}>
           {t.search}
         </button>
-        <button
-          style={{ ...c.tab, ...(tab === "discover" ? c.tabActive : {}) }}
-          onClick={() => setTab("discover")}
-        >
+        <button style={{ ...c.tab, ...(tab === "discover" ? c.tabActive : {}) }} onClick={() => setTab("discover")}>
           {t.discover}
         </button>
-        <button
-          style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }}
-          onClick={() => setTab("export")}
-        >
+        <button style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }} onClick={() => setTab("export")}>
           {t.export}
         </button>
-        <button
-          style={{ ...c.tab, ...(tab === "scan" ? c.tabActive : {}) }}
-          onClick={() => setTab("scan")}
-        >
+        <button style={{ ...c.tab, ...(tab === "scan" ? c.tabActive : {}) }} onClick={() => setTab("scan")}>
           {t.scan}
         </button>
-        <button
-          style={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }}
-          onClick={() => setTab("settings")}
-        >
+        <button style={{ ...c.tab, ...(tab === "settings" ? c.tabActive : {}) }} onClick={() => setTab("settings")}>
           {t.settings}
         </button>
-        <button
-          style={{ ...c.tab, ...(tab === "about" ? c.tabActive : {}) }}
-          onClick={() => setTab("about")}
-        >
+        <button style={{ ...c.tab, ...(tab === "about" ? c.tabActive : {}) }} onClick={() => setTab("about")}>
           {t.about}
         </button>
       </div>
@@ -1599,15 +1369,14 @@ export default function AssemblyExporter({ api }: Props) {
               <label style={c.labelTop}>{t.searchBy}</label>
               <div
                 style={{ position: "relative", width: "100%" }}
-                onBlur={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget))
-                    setTimeout(() => setIsSearchFieldDropdownOpen(false), 200);
+                onBlur={e => {
+                  if (!e.currentTarget.contains(e.relatedTarget)) setTimeout(() => setIsSearchFieldDropdownOpen(false), 200);
                 }}
               >
                 <input
                   type="text"
                   value={searchFieldFilter}
-                  onChange={(e) => setSearchFieldFilter(e.target.value)}
+                  onChange={e => setSearchFieldFilter(e.target.value)}
                   onFocus={() => setIsSearchFieldDropdownOpen(true)}
                   placeholder="Tippige filtriks või valige..."
                   style={{ ...c.input, width: "100%" }}
@@ -1617,18 +1386,18 @@ export default function AssemblyExporter({ api }: Props) {
                     {searchFieldOptions.length === 0 ? (
                       <div style={c.dropdownItem}>{t.noResults}</div>
                     ) : (
-                      searchFieldOptions.map((opt) => (
+                      searchFieldOptions.map(opt => (
                         <div
                           key={opt.value}
                           style={{
                             ...c.dropdownItem,
                             ...(searchField === opt.value ? c.dropdownItemSelected : {}),
                           }}
-                          onMouseEnter={(ev) => {
-                            ev.currentTarget.style.background = "#f5f5f5";
+                          onMouseEnter={e => {
+                            (e.currentTarget as HTMLDivElement).style.background = "#f5f5f5";
                           }}
-                          onMouseLeave={(ev) => {
-                            ev.currentTarget.style.background =
+                          onMouseLeave={e => {
+                            (e.currentTarget as HTMLDivElement).style.background =
                               searchField === opt.value ? "#e7f3ff" : "";
                           }}
                           onClick={() => {
@@ -1649,16 +1418,10 @@ export default function AssemblyExporter({ api }: Props) {
             <div style={c.fieldGroup}>
               <label style={c.labelTop}>{t.searchScope}</label>
               <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  style={scopeButtonStyle(searchScope === "available")}
-                  onClick={() => setSearchScope("available")}
-                >
+                <button style={scopeButtonStyle(searchScope === "available")} onClick={() => setSearchScope("available")}>
                   {t.scopeAll}
                 </button>
-                <button
-                  style={scopeButtonStyle(searchScope === "selected")}
-                  onClick={() => setSearchScope("selected")}
-                >
+                <button style={scopeButtonStyle(searchScope === "selected")} onClick={() => setSearchScope("selected")}>
                   {t.scopeSelected}
                 </button>
               </div>
@@ -1666,32 +1429,19 @@ export default function AssemblyExporter({ api }: Props) {
 
             <div style={c.fieldGroup}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={fuzzySearch}
-                  onChange={(e) => setFuzzySearch(e.target.checked)}
-                />
-                <span>
-                  {settings.language === "et"
-                    ? "Otsi sarnaseid (osaline vaste)"
-                    : "Fuzzy search (partial match)"}
-                </span>
+                <input type="checkbox" checked={fuzzySearch} onChange={e => setFuzzySearch(e.target.checked)} />
+                <span>{settings.language === "et" ? "Otsi sarnaseid (osaline vaste)" : "Fuzzy search (partial match)"}</span>
               </label>
             </div>
 
             <textarea
               value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
+              onChange={e => setSearchInput(e.target.value)}
               placeholder={t.searchPlaceholder}
               style={{ ...c.textarea, height: 200 }}
             />
-
             <div style={c.controls}>
-              <button
-                style={c.btn}
-                onClick={searchAndSelect}
-                disabled={busy || !searchInput.trim()}
-              >
+              <button style={c.btn} onClick={searchAndSelect} disabled={busy || !searchInput.trim()}>
                 {busy ? t.searching : t.searchButton}
               </button>
               {busy && (
@@ -1714,12 +1464,9 @@ export default function AssemblyExporter({ api }: Props) {
             {!!progress.total && progress.total > 1 && (
               <div style={c.small}>
                 {t.searchProgress} {progress.current}/{progress.total} {t.models}
-                {progress.totalObjects > 0
-                  ? ` • ${progress.objects}/${progress.totalObjects} objekti`
-                  : ""}
+                {progress.totalObjects > 0 ? ` • ${progress.objects}/${progress.totalObjects} objekti` : ""}
               </div>
             )}
-
             {searchMsg && <div style={searchNoteStyle}>{searchMsg}</div>}
 
             {searchResults.length > 0 && (
@@ -1729,13 +1476,7 @@ export default function AssemblyExporter({ api }: Props) {
                 </h4>
                 <div style={c.resultsTable}>
                   {searchResults.map((result, idx) => (
-                    <ResultRow
-                      key={idx}
-                      result={result}
-                      onRemove={() => removeResult(idx)}
-                      onZoom={selectAndZoom}
-                      t={t}
-                    />
+                    <ResultRow key={idx} result={result} onRemove={() => removeResult(idx)} onZoom={selectAndZoom} t={t} />
                   ))}
                 </div>
                 <div style={{ ...c.controls, marginTop: 8, justifyContent: "flex-end" }}>
@@ -1747,22 +1488,9 @@ export default function AssemblyExporter({ api }: Props) {
                   </button>
                 </div>
                 {showViewSave && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: 8,
-                      border: "1px solid #cfd6df",
-                      borderRadius: 8,
-                      background: "#f6f8fb",
-                    }}
-                  >
+                  <div style={{ marginTop: 12, padding: 8, border: "1px solid #cfd6df", borderRadius: 8, background: "#f6f8fb" }}>
                     <label style={c.labelTop}>{t.viewNameLabel}</label>
-                    <input
-                      type="text"
-                      value={viewName}
-                      onChange={(e) => setViewName(e.target.value)}
-                      style={c.input}
-                    />
+                    <input type="text" value={viewName} onChange={e => setViewName(e.target.value)} style={c.input} />
                     <div style={{ ...c.controls, marginTop: 8 }}>
                       <button style={c.btn} onClick={saveView} disabled={!viewName.trim()}>
                         {t.saveViewButton}
@@ -1792,17 +1520,10 @@ export default function AssemblyExporter({ api }: Props) {
             {!!progress.total && progress.total > 1 && (
               <div style={c.small}>
                 {t.progress} {progress.current}/{progress.total}
-                {progress.totalObjects > 0
-                  ? ` • ${progress.objects}/${progress.totalObjects} objekti`
-                  : ""}
+                {progress.totalObjects > 0 ? ` • ${progress.objects}/${progress.totalObjects} objekti` : ""}
               </div>
             )}
-            <input
-              placeholder={t.filterColumns}
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              style={c.inputFilter}
-            />
+            <input placeholder={t.filterColumns} value={filter} onChange={e => setFilter(e.target.value)} style={c.inputFilter} />
             <div style={c.controls}>
               <button style={c.btnGhost} onClick={() => selectAll(true)} disabled={!rows.length}>
                 {t.selectAll}
@@ -1835,13 +1556,9 @@ export default function AssemblyExporter({ api }: Props) {
                         </div>
                       </div>
                       <div style={c.grid}>
-                        {keysShown.map((k) => (
+                        {keysShown.map(k => (
                           <label key={k} style={c.checkRow} title={k}>
-                            <input
-                              type="checkbox"
-                              checked={selected.has(k)}
-                              onChange={() => toggle(k)}
-                            />
+                            <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(k)} />
                             <span style={c.ellipsis}>{k}</span>
                           </label>
                         ))}
@@ -1885,23 +1602,20 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
             <div style={c.row}>
               <label style={c.label}>{t.includeHeaders}</label>
-              <input
-                type="checkbox"
-                checked={includeHeaders}
-                onChange={(e) => setIncludeHeaders(e.target.checked)}
-              />
+              <input type="checkbox" checked={includeHeaders} onChange={e => setIncludeHeaders(e.target.checked)} />
             </div>
+
             <div style={c.columnListNoscroll}>
-              {exportableColumns.map((col) => {
+              {exportableColumns.map(col => {
                 const actualIdx = columnOrder.indexOf(col);
                 return (
                   <div
                     key={col}
                     draggable
-                    onDragStart={(e) => handleDragStart(e, actualIdx)}
+                    onDragStart={e => handleDragStart(e, actualIdx)}
                     onDragEnd={handleDragEnd}
                     onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, actualIdx)}
+                    onDrop={e => handleDrop(e, actualIdx)}
                     style={{
                       ...c.columnItem,
                       ...(highlightedColumn === col ? c.columnItemHighlight : {}),
@@ -1918,20 +1632,9 @@ export default function AssemblyExporter({ api }: Props) {
                         width: "calc(100% - 80px)",
                       }}
                     >
-                      <input
-                        type="checkbox"
-                        checked={selected.has(col)}
-                        onChange={() => toggle(col)}
-                        style={{ cursor: "pointer" }}
-                      />
+                      <input type="checkbox" checked={selected.has(col)} onChange={() => toggle(col)} style={{ cursor: "pointer" }} />
                       <span
-                        style={{
-                          ...c.ellipsis,
-                          maxWidth: "100%",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
+                        style={{ ...c.ellipsis, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                         title={col}
                       >
                         {col}
@@ -1940,20 +1643,12 @@ export default function AssemblyExporter({ api }: Props) {
                     <div style={{ display: "flex", gap: 4, marginLeft: 8, minWidth: 80 }}>
                       <span style={{ ...c.dragHandle, cursor: "grab" }}>⋮⋮</span>
                       {actualIdx > 0 && (
-                        <button
-                          style={c.miniBtn}
-                          onClick={() => moveColumn(actualIdx, actualIdx - 1)}
-                          title="Move up"
-                        >
+                        <button style={c.miniBtn} onClick={() => moveColumn(actualIdx, actualIdx - 1)} title="Move up">
                           ↑
                         </button>
                       )}
                       {actualIdx < columnOrder.length - 1 && (
-                        <button
-                          style={c.miniBtn}
-                          onClick={() => moveColumn(actualIdx, actualIdx + 1)}
-                          title="Move down"
-                        >
+                        <button style={c.miniBtn} onClick={() => moveColumn(actualIdx, actualIdx + 1)} title="Move down">
                           ↓
                         </button>
                       )}
@@ -1962,47 +1657,26 @@ export default function AssemblyExporter({ api }: Props) {
                 );
               })}
             </div>
+
             <div style={c.controls}>
-              <button
-                style={c.btn}
-                onClick={() => {
-                  setExportFormat("clipboard");
-                  exportData();
-                }}
-                disabled={!rows.length || !selected.size}
-              >
+              <button style={c.btn} onClick={() => { setExportFormat("clipboard"); exportData(); }} disabled={!rows.length || !selected.size}>
                 {t.clipboard}
               </button>
-              <button
-                style={c.btn}
-                onClick={() => {
-                  setExportFormat("csv");
-                  exportData();
-                }}
-                disabled={!rows.length || !selected.size}
-              >
+              <button style={c.btn} onClick={() => { setExportFormat("csv"); exportData(); }} disabled={!rows.length || !selected.size}>
                 {t.csv}
               </button>
-              <button
-                style={c.btn}
-                onClick={() => {
-                  setExportFormat("excel");
-                  exportData();
-                }}
-                disabled={!rows.length || !selected.size}
-              >
+              <button style={c.btn} onClick={() => { setExportFormat("excel"); exportData(); }} disabled={!rows.length || !selected.size}>
                 {t.excel}
               </button>
               <button
                 style={c.btn}
                 onClick={sendToGoogleSheet}
-                disabled={
-                  busy || !rows.length || !selected.size || !settings.scriptUrl || !settings.secret
-                }
+                disabled={busy || !rows.length || !selected.size || !settings.scriptUrl || !settings.secret}
               >
                 {busy ? t.sending : t.googleSheets}
               </button>
             </div>
+
             {exportMsg && <div style={c.note}>{exportMsg}</div>}
           </div>
         )}
@@ -2021,15 +1695,13 @@ export default function AssemblyExporter({ api }: Props) {
                 }}
                 translations={t}
                 styles={c}
-                onConfirm={(marks) => {
+                onConfirm={(marks: string[]) => {
                   setTab("search");
                   setSearchField("AssemblyMark");
                   setSearchFieldFilter("Kooste märk (BLOCK)");
                   setSearchScope("available");
                   setSearchInput(marks.join("\n"));
-                  setTimeout(() => {
-                    searchAndSelect();
-                  }, 100);
+                  setTimeout(() => { searchAndSelect(); }, 100);
                 }}
               />
             </Suspense>
@@ -2041,54 +1713,425 @@ export default function AssemblyExporter({ api }: Props) {
             <div style={c.row}>
               <label style={c.label}>Keel / Language</label>
               <div style={{ display: "flex", gap: 6, flex: 1 }}>
-                <button
-                  style={scopeButtonStyle(settings.language === "et")}
-                  onClick={() => updateSettings({ language: "et" })}
+                <button style={scopeButtonStyle(settings.language === "et")} onClick={() => updateSettings({ language: "et" })}>ET</button>
+                <button style={scopeButtonStyle(settings.language === "en")} onClick={() => updateSettings({ language: "en" })}>EN</button>
+              </div>
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.scriptUrl}</label>
+              <input value={settings.scriptUrl} onChange={e => updateSettings({ scriptUrl: e.target.value })} placeholder="https://…/exec" style={{ ...c.input, flex: 1 }} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.sharedSecret}</label>
+              <input type="password" value={settings.secret} onChange={e => updateSettings({ secret: e.target.value })} style={{ ...c.input, flex: 1 }} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.ocrWebhookUrl}</label>
+              <input value={settings.ocrWebhookUrl} onChange={e => updateSettings({ ocrWebhookUrl: e.target.value })} placeholder="https://script.google.com/..." style={{ ...c.input, flex: 1 }} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.ocrWebhookSecret}</label>
+              <input type="password" value={settings.ocrSecret} onChange={e => updateSettings({ ocrSecret: e.target.value })} style={{ ...c.input, flex: 1 }} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.ocrPrompt}</label>
+              <textarea value={settings.ocrPrompt} onChange={e => updateSettings({ ocrPrompt: e.target.value })} placeholder={t.pasteHint} style={{ ...c.textarea, height: 80, flex: 1 }} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label}>{t.autoColorize}</label>
+              <input type="checkbox" checked={settings.autoColorize} onChange={e => updateSettings({ autoColorize: e.target.checked })} />
+            </div>
+            <div style={c.row}>
+              <label style={c.label} title={t.colorTooltip}>{t.color}</label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                <select
+                  value={
+                    Object.keys(DEFAULT_COLORS).find(k => {
+                      const c = (DEFAULT_COLORS as any)[k];
+                      return (
+                        c.r === (settings.colorizeColor?.r ?? DEFAULT_COLORS.darkRed.r) &&
+                        c.g === (settings.colorizeColor?.g ?? DEFAULT_COLORS.darkRed.g) &&
+                        c.b === (settings.colorizeColor?.b ?? DEFAULT_COLORS.darkRed.b)
+                      );
+                    }) || "darkRed"
+                  }
+                  onChange={e => {
+                    const key = e.target.value as keyof typeof DEFAULT_COLORS;
+                    updateSettings({ colorizeColor: DEFAULT_COLORS[key] });
+                  }}
+                  style={{ ...c.input, width: "100%" }}
                 >
-                  ET
-                </button>
-                <button
-                  style={scopeButtonStyle(settings.language === "en")}
-                  onClick={() => updateSettings({ language: "en" })}
-                >
-                  EN
-                </button>
+                  <option value="darkRed">{t.darkRed}</option>
+                  <option value="red">{t.red}</option>
+                  <option value="orange">{t.orange}</option>
+                  <option value="yellow">{t.yellow}</option>
+                  <option value="green">{t.green}</option>
+                  <option value="blue">{t.blue}</option>
+                  <option value="purple">{t.purple}</option>
+                </select>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  {Object.entries(DEFAULT_COLORS).map(([key, col]) => (
+                    <div
+                      key={key}
+                      onClick={() => updateSettings({ colorizeColor: col })}
+                      title={key}
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: 6,
+                        border: "1px solid #cfd6df",
+                        background: `rgb(${col.r},${col.g},${col.b})`,
+                        cursor: "pointer",
+                        outline:
+                          settings.colorizeColor &&
+                          col.r === settings.colorizeColor.r &&
+                          col.g === settings.colorizeColor.g &&
+                          col.b === settings.colorizeColor.b
+                            ? "2px solid #0a3a67"
+                            : "none",
+                      }}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
 
             <div style={c.row}>
-              <label style={c.label}>{t.scriptUrl}</label>
-              <input
-                value={settings.scriptUrl}
-                onChange={(e) => updateSettings({ scriptUrl: e.target.value })}
-                placeholder="https://…/exec"
-                style={{ ...c.input, flex: 1 }}
-              />
+              <label style={c.label}>{t.defaultPreset}</label>
+              <div style={{ display: "flex", gap: 6, flex: 1 }}>
+                <button
+                  style={scopeButtonStyle(settings.defaultPreset === "recommended")}
+                  onClick={() => updateSettings({ defaultPreset: "recommended" })}
+                >
+                  {t.recommended}
+                </button>
+                <button
+                  style={scopeButtonStyle(settings.defaultPreset === "tekla")}
+                  onClick={() => updateSettings({ defaultPreset: "tekla" })}
+                >
+                  {t.tekla}
+                </button>
+                <button
+                  style={scopeButtonStyle(settings.defaultPreset === "ifc")}
+                  onClick={() => updateSettings({ defaultPreset: "ifc" })}
+                >
+                  {t.ifc}
+                </button>
+              </div>
             </div>
 
-            <div style={c.row}>
-              <label style={c.label}>{t.sharedSecret}</label>
-              <input
-                type="password"
-                value={settings.secret}
-                onChange={(e) => updateSettings({ secret: e.target.value })}
-                style={{ ...c.input, flex: 1 }}
-              />
-            </div>
+            {settingsMsg && <div style={c.note}>{settingsMsg}</div>}
+            <div style={c.small}>{t.saved}</div>
+          </div>
+        )}
 
-            <div style={c.row}>
-              <label style={c.label}>{t.ocrWebhookUrl}</label>
-              <input
-                value={settings.ocrWebhookUrl}
-                onChange={(e) => updateSettings({ ocrWebhookUrl: e.target.value })}
-                placeholder="https://script.google.com/..."
-                style={{ ...c.input, flex: 1 }}
-              />
-            </div>
+        {tab === "about" && (
+          <div style={c.section}>
+            <h3 style={c.heading}>{t.version}</h3>
+            <pre style={c.helpBox}>{t.features}</pre>
+            <div style={c.small}>{t.author}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
-            <div style={c.row}>
-              <label style={c.label}>{t.ocrWebhookSecret}</label>
-              <input
-                type="password"
-                value={settings.ocrSecret}
-               
+/* ------------------------------- STYLES ---------------------------------- */
+
+const styles: Record<string, CSSProperties> = {
+  shell: {
+    fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+    color: "#0b1221",
+    background: "#fff",
+    height: "100%",
+    display: "flex",
+    flexDirection: "column",
+  },
+  topbar: {
+    display: "flex",
+    gap: 6,
+    padding: 6,
+    borderBottom: "1px solid #e6eaf0",
+    background: "#f6f8fb",
+    position: "sticky",
+    top: 0,
+    zIndex: 20,
+  },
+  tab: {
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid #cfd6df",
+    background: "#fff",
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+  tabActive: {
+    background: "#0a3a67",
+    color: "#fff",
+    borderColor: "#0a3a67",
+  },
+  page: {
+    padding: 10,
+    overflow: "auto",
+    flex: 1,
+  },
+  section: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    maxWidth: 920,
+  },
+  heading: {
+    margin: 0,
+    fontSize: 18,
+  },
+  fieldGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  labelTop: {
+    fontSize: 12,
+    opacity: 0.75,
+  },
+  input: {
+    padding: "6px 8px",
+    border: "1px solid #cfd6df",
+    borderRadius: 8,
+    outline: "none",
+  },
+  inputFilter: {
+    width: "100%",
+    maxHeight: "150px",
+    padding: "6px 8px",
+    border: "1px solid #cfd6df",
+    borderRadius: 8,
+    outline: "none",
+    resize: "vertical",
+  },
+  textarea: {
+    width: "100%",
+    padding: "8px",
+    border: "1px solid #cfd6df",
+    borderRadius: 8,
+    outline: "none",
+    fontFamily: "monospace",
+    fontSize: 12,
+  },
+  controls: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+    position: "relative",
+    zIndex: 10,
+  },
+  btn: {
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: "1px solid #0a3a67",
+    background: "#0a3a67",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+  btnGhost: {
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: "1px solid #cfd6df",
+    background: "#fff",
+    color: "#0b1221",
+    cursor: "pointer",
+  },
+  miniBtn: {
+    padding: "4px 8px",
+    borderRadius: 8,
+    border: "1px solid #cfd6df",
+    background: "#fff",
+    cursor: "pointer",
+    fontSize: 12,
+  },
+  note: {
+    padding: 10,
+    border: "1px solid #cfd6df",
+    borderRadius: 10,
+    background: "#f6f8fb",
+  },
+  small: {
+    fontSize: 12,
+    opacity: 0.75,
+  },
+  resultsBox: {
+    border: "1px solid #e6eaf0",
+    borderRadius: 10,
+    padding: 10,
+    background: "#fff",
+  },
+  resultsHeading: {
+    margin: 0,
+    marginBottom: 6,
+  },
+  resultsTable: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  resultRow: {
+    display: "grid",
+    gridTemplateColumns: "32px 1fr 48px 140px",
+    gap: 6,
+    alignItems: "center",
+    padding: 8,
+    borderRadius: 8,
+    border: "1px solid #e6eaf0",
+  },
+  resultRowFound: {
+    background: "#f7fff7",
+  },
+  resultRowPartial: {
+    background: "#fffdf3",
+  },
+  resultRowNotFound: {
+    background: "#fff6f6",
+  },
+  resultStatus: {
+    textAlign: "center",
+  },
+  resultValue: {
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    fontFamily: "monospace",
+    fontSize: 12,
+  },
+  resultCount: {
+    textAlign: "right",
+    fontVariantNumeric: "tabular-nums",
+  },
+  resultActions: {
+    display: "flex",
+    gap: 6,
+    justifyContent: "flex-end",
+  },
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    maxHeight: 420,
+    overflow: "auto",
+    border: "1px solid #e6eaf0",
+    borderRadius: 10,
+    padding: 10,
+    background: "#fff",
+  },
+  group: {
+    border: "1px solid #f0f2f6",
+    borderRadius: 8,
+    padding: 8,
+  },
+  groupHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  grid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+    gap: 6,
+  },
+  checkRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: 6,
+    borderRadius: 6,
+    border: "1px solid #eef1f6",
+  },
+  ellipsis: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  presetsRow: {
+    display: "flex",
+    gap: 6,
+  },
+  columnListNoscroll: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    border: "1px solid #e6eaf0",
+    borderRadius: 10,
+    padding: 10,
+    background: "#fff",
+    maxHeight: 520,
+    overflow: "auto",
+  },
+  columnItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: 8,
+    borderRadius: 8,
+    border: "1px solid #eef1f6",
+    background: "#fff",
+  },
+  columnItemHighlight: {
+    boxShadow: "0 0 0 3px rgba(22,119,255,0.25)",
+  },
+  columnItemDragging: {
+    opacity: 0.6,
+  },
+  dragHandle: {
+    userSelect: "none",
+    fontWeight: 700,
+  },
+  row: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+  },
+  label: {
+    width: 220,
+    fontSize: 12,
+    opacity: 0.75,
+  },
+  helpBox: {
+    whiteSpace: "pre-wrap",
+    padding: 10,
+    border: "1px solid #cfd6df",
+    borderRadius: 10,
+    background: "#f6f8fb",
+  },
+  dropdown: {
+    position: "absolute",
+    top: 38,
+    left: 0,
+    right: 0,
+    border: "1px solid #cfd6df",
+    borderRadius: 10,
+    background: "#fff",
+    boxShadow: "0 8px 20px rgba(0,0,0,0.06)",
+    maxHeight: 260,
+    overflow: "auto",
+    zIndex: 50,
+  },
+  dropdownItem: {
+    padding: 8,
+    cursor: "pointer",
+  },
+  dropdownItemSelected: {
+    background: "#e7f3ff",
+  },
+  mini: {
+    padding: "4px 8px",
+    borderRadius: 8,
+    border: "1px solid #cfd6df",
+    background: "#fff",
+    cursor: "pointer",
+    fontSize: 12,
+  },
+};
