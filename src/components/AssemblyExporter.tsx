@@ -24,11 +24,13 @@ const translations = {
       "Kleebi siia otsitavad väärtused (üks rea kohta või komadega eraldatud)\nNäiteks:\nBM-3\n2COL23\nRBP-111",
     searching: "Otsin…",
     searchButton: "Otsi ja vali",
+    newSearch: "Uus otsing",
+    addSearch: "Lisa otsing",
     cancelSearch: "Katkesta otsing",
     clear: "Tühjenda",
     searchProgress: "Otsingu progress:",
     results: "Tulemused",
-    zoom: "🔍 Zoom",
+    zoom: "🔍",
     remove: "✕",
     selectAll: "Vali kõik",
     discoverFields: "Avasta väljad",
@@ -37,6 +39,7 @@ const translations = {
     filterColumns: "Filtreeri veerge…",
     deselectAll: "Tühjenda",
     selected: "Valitud:",
+    marked: "Märgistatud:",
     noData: "Vali objektid 3D vaates (auto-discover).",
     presets: "Eelseaded:",
     recommended: "Soovitatud",
@@ -55,9 +58,11 @@ const translations = {
     sending: "Saadan…",
     scriptUrl: "Google Apps Script URL",
     sharedSecret: "Shared Secret",
-    autoColorize: "Auto colorize",
+    autoColorize: "Auto värvimine",
+    autoColorizeDesc: "Värvi eksporditud objektid automaatselt 3D vaates",
     color: "Värv",
     colorTooltip: "Vali värv, millega märgitakse 3D vaates eksporditavad objektid",
+    colorDefault: "💡 See värv kasutatakse vaikimisi otsingutulemuste värvimisel",
     darkRed: "Tumepunane",
     red: "Punane",
     orange: "Oranž",
@@ -68,9 +73,9 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v5.9 – Trimble Connect",
+    version: "Assembly Exporter v6.0 – Trimble Connect",
     features:
-      "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
+      "• Multi-search kombineerib otsinguid\n• Tulemuste märgistamine ja haldamine\n• Organizer integratsioon\n• Auto värvimine täiustatud\n• Värvi valik iga tulemuse kohta",
     author: "Created by: Silver Vatsel",
     noResults: "Tulemusi ei leitud",
     enterValue: "⚠️ Sisesta vähemalt üks väärtus.",
@@ -107,7 +112,7 @@ const translations = {
     scanTitle: "OCR | SCANNI SAATELEHELT TOOTED",
     uploadFiles: "Lae üles pilt või PDF",
     orPasteText: "Või kleebi OCR tekst",
-    pasteHint: "Kleepi siia tekst...",
+    pasteHint: "Kleebi siia tekst...",
     runOcr: "🔍 Käivita OCR",
     parseToTable: "⚡ saada tabelisse",
     usingOcr: "Kasutan OCR-i...",
@@ -121,12 +126,26 @@ const translations = {
     ocrWebhookUrl: "OCR Webhook URL",
     ocrWebhookSecret: "OCR Secret",
     ocrPrompt: "Lisa OCR juhised",
-    saveToView: "SALVESTA TULEM VAATESSE",
+    saveToView: "Salvesta vaatesse",
     viewNameLabel: "Vaate nimi:",
     saveViewButton: "Salvesta vaade",
+    saveToOrganizer: "Salvesta Organiserisse",
+    organizerNameLabel: "Organizer grupp nimi (AE RESULT → ...):",
+    saveOrganizerButton: "Salvesta",
     cancel: "Tühista",
     viewSaved: "✅ Vaade salvestatud: {name}",
     viewSaveError: "❌ Viga vaate salvestamisel: {error}",
+    organizerSaved: "✅ Salvestatud Organiserisse: {path}",
+    organizerSaveError: "❌ Viga Organiser salvestamisel: {error}",
+    fuzzySearch: "Otsi sarnaseid (osaline vaste)",
+    greyOutAll: "Värvi kõik hallikuks",
+    searchHint: "💡 Näpunäide: Kasuta 'Lisa otsing' nuppu et kombineerida mitu otsingut. Märgista read ja halda neid kontrollidega.",
+    markAll: "Märgista kõik",
+    clearMarks: "Tühjenda märgistused",
+    selectMarked: "Vali märgistatud",
+    removeMarked: "Eemalda märgistatud",
+    colorResults: "Värvi tulemused",
+    defaultColorChanged: "Vaikimisi värv muudetud",
   },
   en: {
     search: "SEARCH",
@@ -144,11 +163,13 @@ const translations = {
       "Paste search values here (one per line or comma-separated)\nExample:\nBM-3\n2COL23\nRBP-111",
     searching: "Searching…",
     searchButton: "Search and select",
+    newSearch: "New search",
+    addSearch: "Add search",
     cancelSearch: "Cancel search",
     clear: "Clear",
     searchProgress: "Search progress:",
     results: "Results",
-    zoom: "🔍 Zoom",
+    zoom: "🔍",
     remove: "✕",
     selectAll: "Select all",
     discoverFields: "Discover Fields",
@@ -157,6 +178,7 @@ const translations = {
     filterColumns: "Filter columns…",
     deselectAll: "Deselect all",
     selected: "Selected:",
+    marked: "Marked:",
     noData: "Select objects in 3D view (auto-discover).",
     presets: "Presets:",
     recommended: "Recommended",
@@ -176,8 +198,10 @@ const translations = {
     scriptUrl: "Google Apps Script URL",
     sharedSecret: "Shared Secret",
     autoColorize: "Auto colorize",
+    autoColorizeDesc: "Colorize exported objects automatically in 3D view",
     color: "Color",
     colorTooltip: "Select color to mark exported objects in 3D view",
+    colorDefault: "💡 This color is used as default for search results",
     darkRed: "Dark Red",
     red: "Red",
     orange: "Orange",
@@ -188,9 +212,9 @@ const translations = {
     defaultPreset: "Default preset",
     save: "Save",
     reset: "Reset",
-    version: "Assembly Exporter v5.9 – Trimble Connect",
+    version: "Assembly Exporter v6.0 – Trimble Connect",
     features:
-      "• Auto-discover on selection change\n• Product Name support\n• Bilingual EST/ENG\n• Performance optimized\n• React.memo & useMemo",
+      "• Multi-search combines searches\n• Result marking and management\n• Organizer integration\n• Enhanced auto coloring\n• Color choice per result",
     author: "Created by: Silver Vatsel",
     noResults: "No results found",
     enterValue: "⚠️ Enter at least one value.",
@@ -241,12 +265,26 @@ const translations = {
     ocrWebhookUrl: "OCR Webhook URL",
     ocrWebhookSecret: "OCR Secret",
     ocrPrompt: "Additional OCR instructions",
-    saveToView: "Save result to view",
+    saveToView: "Save to view",
     viewNameLabel: "View name:",
     saveViewButton: "Save view",
+    saveToOrganizer: "Save to Organizer",
+    organizerNameLabel: "Organizer group name (AE RESULT → ...):",
+    saveOrganizerButton: "Save",
     cancel: "Cancel",
     viewSaved: "✅ View saved: {name}",
     viewSaveError: "❌ Error saving view: {error}",
+    organizerSaved: "✅ Saved to Organizer: {path}",
+    organizerSaveError: "❌ Error saving to Organizer: {error}",
+    fuzzySearch: "Fuzzy search (partial match)",
+    greyOutAll: "Grey out all",
+    searchHint: "💡 Tip: Use 'Add search' button to combine multiple searches. Mark rows and manage them with controls.",
+    markAll: "Mark all",
+    clearMarks: "Clear marks",
+    selectMarked: "Select marked",
+    removeMarked: "Remove marked",
+    colorResults: "Color results",
+    defaultColorChanged: "Default color changed",
   },
 };
 
@@ -258,6 +296,15 @@ const FORCE_TEXT_KEYS = new Set([
 const DEBOUNCE_MS = 300;
 const HIGHLIGHT_DURATION_MS = 2000;
 const MESSAGE_DURATION_MS = 3000;
+
+// Värvipalett - 30 unikaalset värvi (5×6 grid)
+const COLORS = [
+  "#E53935", "#D81B60", "#8E24AA", "#5E35B1", "#3949AB", "#1E88E5",
+  "#039BE5", "#00ACC1", "#00897B", "#43A047", "#7CB342", "#C0CA33",
+  "#FDD835", "#FFB300", "#FB8C00", "#FF8C00", "#F4511E", "#6D4C41",
+  "#757575", "#546E7A", "#EF5350", "#EC407A", "#AB47BC", "#7E57C2",
+  "#5C6BC0", "#42A5F5", "#29B6F6", "#26C6DA", "#26A69A", "#66BB6A"
+];
 
 type DefaultPreset = "recommended" | "tekla" | "ifc";
 
@@ -313,6 +360,22 @@ function useSettings() {
     });
   }, []);
   return [settings, update] as const;
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 140, g: 0, b: 0 };
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return "#" + [r, g, b].map(x => {
+    const hex = x.toString(16);
+    return hex.length === 1 ? "0" + hex : hex;
+  }).join("");
 }
 
 function sanitizeKey(s: string) {
@@ -538,7 +601,184 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   return map;
 }
 
-const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => {
+// ColorPicker komponent - 30 värvi 5×6 grid
+const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c: string) => void; t: any }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const currentColor = value || COLORS[0];
+  
+  return (
+    <div style={{ position: "relative", display: "inline-block" }}>
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 6,
+          background: currentColor,
+          border: "2px solid #e6eaf0",
+          cursor: "pointer",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+        }}
+        title={t.color}
+      />
+      {isOpen && (
+        <>
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 99,
+            }}
+            onClick={() => setIsOpen(false)}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: 32,
+              right: 0,
+              zIndex: 100,
+              background: "#fff",
+              border: "1px solid #e6eaf0",
+              borderRadius: 8,
+              padding: 8,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              display: "grid",
+              gridTemplateColumns: "repeat(6, 28px)",
+              gap: 6,
+            }}
+          >
+            {COLORS.map(color => (
+              <div
+                key={color}
+                onClick={() => {
+                  onChange(color);
+                  setIsOpen(false);
+                }}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  background: color,
+                  border: currentColor === color ? "2px solid #1E88E5" : "1px solid #e6eaf0",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "scale(1.15)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                {currentColor === color && (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M13 4L6 11L3 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+});
+
+// MiniToggle komponent - 56×28px
+const MiniToggle = memo(({ checked, onChange, color = "blue" }: { checked: boolean; onChange: (v: boolean) => void; color?: string }) => {
+  const colors = {
+    blue: { bg: "#1E88E5", bgOff: "#CBD5E1" },
+    purple: { bg: "#9333EA", bgOff: "#CBD5E1" },
+    green: { bg: "#10B981", bgOff: "#CBD5E1" },
+    orange: { bg: "#F97316", bgOff: "#CBD5E1" },
+  };
+  const c = colors[color as keyof typeof colors] || colors.blue;
+  
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      style={{
+        position: "relative",
+        width: 56,
+        height: 28,
+        borderRadius: 14,
+        border: "none",
+        background: checked ? c.bg : c.bgOff,
+        cursor: "pointer",
+        transition: "background 0.3s ease",
+        outline: "none",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 2,
+          left: checked ? 30 : 2,
+          width: 24,
+          height: 24,
+          borderRadius: 12,
+          background: "#fff",
+          boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+          transition: "left 0.3s ease",
+        }}
+      />
+    </button>
+  );
+});
+
+// LargeToggle komponent - 80×40px ON/OFF tekstiga
+const LargeToggle = memo(({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      style={{
+        position: "relative",
+        width: 80,
+        height: 40,
+        borderRadius: 20,
+        border: "none",
+        background: checked ? "linear-gradient(135deg, #10B981 0%, #059669 100%)" : "linear-gradient(135deg, #94A3B8 0%, #64748B 100%)",
+        cursor: "pointer",
+        transition: "all 0.3s ease",
+        outline: "none",
+        boxShadow: "inset 0 2px 4px rgba(0,0,0,0.1)",
+        fontWeight: 600,
+        fontSize: 11,
+        color: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: checked ? "flex-start" : "flex-end",
+        padding: "0 8px",
+      }}
+    >
+      <span style={{ position: "absolute", left: checked ? 10 : "auto", right: checked ? "auto" : 10 }}>
+        {checked ? "ON" : "OFF"}
+      </span>
+      <div
+        style={{
+          position: "absolute",
+          top: 4,
+          left: checked ? 44 : 4,
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          background: "#fff",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+          transition: "left 0.3s ease",
+        }}
+      />
+    </button>
+  );
+});
+
+// ResultRow komponent
+const ResultRow = memo(({ result, onRemove, onZoom, onToggleMark, onColorChange, isMarked, t }: any) => {
   const displayValue = result.actualValue || result.originalValue;
   const isPartialMatch =
     result.isPartial && result.actualValue && result.actualValue !== result.originalValue;
@@ -547,6 +787,7 @@ const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => {
     <div
       style={{
         ...styles.resultRow,
+        ...(isMarked ? styles.resultRowMarked : {}),
         ...(result.status === "found"
           ? result.isPartial
             ? styles.resultRowPartial
@@ -554,6 +795,22 @@ const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => {
           : styles.resultRowNotFound),
       }}
     >
+      {result.status === "found" && (
+        <input
+          type="checkbox"
+          checked={isMarked}
+          onChange={() => onToggleMark(result.id)}
+          style={{ cursor: "pointer", width: 16, height: 16 }}
+        />
+      )}
+      {result.status === "notfound" && <div style={{ width: 16 }} />}
+      
+      <ColorPicker
+        value={result.color || COLORS[0]}
+        onChange={(color) => onColorChange(result.id, color)}
+        t={t}
+      />
+      
       <span style={styles.resultStatus}>
         {result.status === "found" ? (result.isPartial ? "⚠️" : "✅") : "❌"}
       </span>
@@ -571,7 +828,7 @@ const ResultRow = memo(({ result, onRemove, onZoom, t }: any) => {
       </span>
       <div style={styles.resultActions}>
         {result.status === "found" && result.modelId && result.ids && (
-          <button style={styles.miniBtn} onClick={() => onZoom(result.modelId, result.ids)} title="Zoom">
+          <button style={{ ...styles.miniBtn, height: 36 }} onClick={() => onZoom(result.modelId, result.ids)} title="Zoom">
             {t.zoom}
           </button>
         )}
@@ -604,6 +861,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [isSearchFieldDropdownOpen, setIsSearchFieldDropdownOpen] = useState(false);
   const [searchScope, setSearchScope] = useState<"available" | "selected">("available");
   const [fuzzySearch, setFuzzySearch] = useState(false);
+  const [greyOutAll, setGreyOutAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [discoverMsg, setDiscoverMsg] = useState("");
   const [exportMsg, setExportMsg] = useState("");
@@ -615,9 +873,13 @@ export default function AssemblyExporter({ api }: Props) {
   const [exportFormat, setExportFormat] = useState<ExportFormat>("clipboard");
   const [lastSelection, setLastSelection] = useState<Array<{ modelId: string; ids: number[] }>>([]);
   const [searchResults, setSearchResults] = useState<Array<any>>([]);
+  const [markedResults, setMarkedResults] = useState<Set<number>>(new Set());
   const [includeHeaders, setIncludeHeaders] = useState(true);
   const [showViewSave, setShowViewSave] = useState(false);
   const [viewName, setViewName] = useState("");
+  const [showOrganizerSave, setShowOrganizerSave] = useState(false);
+  const [organizerName, setOrganizerName] = useState("");
+  const [defaultColor, setDefaultColor] = useState(rgbToHex(settings.colorizeColor.r, settings.colorizeColor.g, settings.colorizeColor.b));
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -679,6 +941,7 @@ export default function AssemblyExporter({ api }: Props) {
     () => searchResults.reduce((sum, r) => sum + (r.status === "found" ? r.ids?.length || 0 : 0), 0),
     [searchResults]
   );
+  const markedCount = markedResults.size;
 
   useEffect(() => {
     if (!rows.length || selected.size) return;
@@ -793,7 +1056,6 @@ export default function AssemblyExporter({ api }: Props) {
 
         let fullObjects = objects;
         try {
-          // includeHidden püüab kätte saada ka UI-s varjatud IFC property setid
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
           fullObjects = objects.map((obj: any, idx: number) => ({
             ...obj,
@@ -840,13 +1102,17 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }, [t]);
 
-  async function searchAndSelect() {
+  async function searchAndSelect(clearPrevious: boolean = false) {
+    if (clearPrevious) {
+      setSearchResults([]);
+      setMarkedResults(new Set());
+    }
+    
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
     try {
       setBusy(true);
       setSearchMsg(t.searching);
-      setSearchResults([]);
       setProgress({ current: 0, total: 0, objects: 0, totalObjects: 0 });
 
       const searchValues = searchInput.split(/[\n,;\t]+/).map(s => s.trim()).filter(Boolean);
@@ -1041,10 +1307,13 @@ export default function AssemblyExporter({ api }: Props) {
         }
       }
 
-      const results: any[] = [];
+      const newResults: any[] = [];
+      let nextId = searchResults.length > 0 ? Math.max(...searchResults.map(r => r.id)) + 1 : 0;
+      
       if (fuzzySearch) {
         for (const [, data] of foundValues) {
-          results.push({
+          newResults.push({
+            id: nextId++,
             originalValue: data.original,
             actualValue: data.actualValue,
             value: data.actualValue.toLowerCase(),
@@ -1052,6 +1321,7 @@ export default function AssemblyExporter({ api }: Props) {
             modelId: data.modelId,
             ids: data.ids,
             isPartial: data.isPartial,
+            color: defaultColor,
           });
         }
       } else {
@@ -1060,7 +1330,8 @@ export default function AssemblyExporter({ api }: Props) {
           let foundEntry = false;
           for (const [, data] of foundValues) {
             if (data.original.toLowerCase() === lower) {
-              results.push({
+              newResults.push({
+                id: nextId++,
                 originalValue: data.original,
                 actualValue: data.actualValue,
                 value: lower,
@@ -1068,21 +1339,31 @@ export default function AssemblyExporter({ api }: Props) {
                 modelId: data.modelId,
                 ids: data.ids,
                 isPartial: false,
+                color: defaultColor,
               });
               foundEntry = true;
               break;
             }
           }
-          if (!foundEntry) results.push({ originalValue, value: lower, status: "notfound" });
+          if (!foundEntry) {
+            newResults.push({ 
+              id: nextId++, 
+              originalValue, 
+              value: lower, 
+              status: "notfound",
+              color: defaultColor,
+            });
+          }
         }
       }
 
-      setSearchResults(results);
+      setSearchResults(prev => clearPrevious ? newResults : [...prev, ...newResults]);
+      
       if (found.length) {
         const selector = { modelObjectIds: found.map(f => ({ modelId: f.modelId, objectRuntimeIds: f.ids })) };
         await viewer?.setSelection?.(selector);
         setLastSelection(found);
-        const notFound = results.filter(r => r.status === "notfound").map(r => r.originalValue);
+        const notFound = newResults.filter(r => r.status === "notfound").map(r => r.originalValue);
         let msg = t.foundValues.replace("{found}", String(foundValues.size)).replace("{total}", String(uniqueSearchValues.length));
         if (notFound.length) msg += ` ${t.notFound} ${notFound.join(", ")}`;
         else msg += ` ${t.allFound}`;
@@ -1090,6 +1371,11 @@ export default function AssemblyExporter({ api }: Props) {
         setSearchMsg(msg);
       } else {
         setSearchMsg(`${t.noneFound} ${uniqueSearchValues.join(", ")}`);
+      }
+      
+      // Värvi kõik halliks kui see on sisse lülitatud
+      if (greyOutAll && found.length) {
+        await greyOutAllModels();
       }
     } catch (e: any) {
       if (e.name === "AbortError") setSearchMsg(t.searchCancelled);
@@ -1103,22 +1389,88 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }
 
-  const selectAllFound = useCallback(async () => {
+  const toggleResultMark = useCallback((id: number) => {
+    setMarkedResults(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const markAllResults = useCallback(() => {
+    const foundIds = searchResults.filter(r => r.status === "found").map(r => r.id);
+    setMarkedResults(new Set(foundIds));
+  }, [searchResults]);
+
+  const clearAllMarks = useCallback(() => {
+    setMarkedResults(new Set());
+  }, []);
+
+  const selectMarkedResults = useCallback(async () => {
     try {
-      const allFound = searchResults
-        .filter(r => r.status === "found" && r.modelId && r.ids)
-        .map(r => ({ modelId: r.modelId, ids: r.ids }));
-      if (allFound.length) {
-        const selector = { modelObjectIds: allFound.map(f => ({ modelId: f.modelId, objectRuntimeIds: f.ids })) };
-        await api?.viewer?.setSelection?.(selector);
-        setLastSelection(allFound);
-        setSearchMsg(t.selectAllFound);
-      }
+      const markedItems = searchResults.filter(r => markedResults.has(r.id) && r.status === "found");
+      if (markedItems.length === 0) return;
+      
+      const selector = {
+        modelObjectIds: markedItems.map(r => ({
+          modelId: r.modelId,
+          objectRuntimeIds: r.ids
+        }))
+      };
+      await api?.viewer?.setSelection?.(selector);
+      setLastSelection(markedItems.map(r => ({ modelId: r.modelId, ids: r.ids })));
+      setSearchMsg(t.selectAllFound);
     } catch (e: any) {
-      console.error("Select all error:", e);
+      console.error("Select marked error:", e);
       setSearchMsg(t.selectAllError);
     }
-  }, [searchResults, api, t]);
+  }, [searchResults, markedResults, api, t]);
+
+  const removeMarkedResults = useCallback(() => {
+    setSearchResults(prev => prev.filter(r => !markedResults.has(r.id)));
+    setMarkedResults(new Set());
+  }, [markedResults]);
+
+  const changeResultColor = useCallback((id: number, color: string) => {
+    setSearchResults(prev => prev.map(r => r.id === id ? { ...r, color } : r));
+  }, []);
+
+  const colorAllResults = useCallback(async () => {
+    try {
+      setBusy(true);
+      setSearchMsg(t.coloring);
+      
+      for (const result of searchResults) {
+        if (result.status !== "found") continue;
+        const selector = {
+          modelObjectIds: [{ modelId: result.modelId, objectRuntimeIds: result.ids }]
+        };
+        const rgb = hexToRgb(result.color || defaultColor);
+        await api?.viewer?.setObjectState?.(selector, {
+          color: { r: rgb.r, g: rgb.g, b: rgb.b, a: 255 }
+        });
+      }
+      
+      setSearchMsg("✅ " + (settings.language === "et" ? "Kõik tulemused värvitud" : "All results colored"));
+    } catch (e: any) {
+      console.error("Color all error:", e);
+      setSearchMsg(t.error.replace("{error}", e?.message || t.unknownError));
+    } finally {
+      setBusy(false);
+    }
+  }, [searchResults, api, defaultColor, t, settings.language]);
+
+  const greyOutAllModels = useCallback(async () => {
+    try {
+      await api?.viewer?.setObjectState?.(
+        undefined,
+        { color: { r: 180, g: 180, b: 180, a: 255 }, transparent: false }
+      );
+    } catch (e) {
+      console.error("Grey out failed:", e);
+    }
+  }, [api]);
 
   const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
     try {
@@ -1126,10 +1478,21 @@ export default function AssemblyExporter({ api }: Props) {
       const selector = { modelObjectIds: [{ modelId, objectRuntimeIds: ids }] };
       await viewer?.setSelection?.(selector);
       await viewer?.setCamera?.(selector, { animationTime: 500 });
+      
+      // Värvi see tulemus kui grey out on sisse lülitatud
+      if (greyOutAll) {
+        const result = searchResults.find(r => r.modelId === modelId && JSON.stringify(r.ids) === JSON.stringify(ids));
+        if (result) {
+          const rgb = hexToRgb(result.color || defaultColor);
+          await viewer?.setObjectState?.(selector, {
+            color: { r: rgb.r, g: rgb.g, b: rgb.b, a: 255 }
+          });
+        }
+      }
     } catch (e: any) {
       console.error("Zoom error:", e);
     }
-  }, [api]);
+  }, [api, greyOutAll, searchResults, defaultColor]);
 
   const initSaveView = useCallback(() => {
     const now = new Date();
@@ -1159,6 +1522,79 @@ export default function AssemblyExporter({ api }: Props) {
   const cancelSaveView = useCallback(() => {
     setShowViewSave(false);
     setViewName("");
+  }, []);
+
+  const initSaveOrganizer = useCallback(() => {
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, "0");
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const yy = String(now.getFullYear() % 100).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const min = String(now.getMinutes()).padStart(2, "0");
+    const defaultName = `otsing ${dd}.${mm}.${yy}.${hh}.${min}`;
+    setOrganizerName(defaultName);
+    setShowOrganizerSave(true);
+  }, []);
+
+  const saveToOrganizer = useCallback(async () => {
+    if (!lastSelection.length || !organizerName.trim()) return;
+    try {
+      setBusy(true);
+      const projectId = await api.project.getProject().then((p: any) => p.id);
+      
+      // 1. Ensure "AE RESULT" group exists
+      const trees = await api.organizer.getTrees(projectId);
+      let aeResultTree = trees.find((t: any) => t.name === "AE RESULT");
+      
+      if (!aeResultTree) {
+        aeResultTree = await api.organizer.createTree(projectId, {
+          name: "AE RESULT",
+          type: "manual"
+        });
+      }
+      
+      // 2. Create child node
+      const childNode = await api.organizer.createNode(projectId, aeResultTree.id, {
+        name: organizerName,
+        parentId: aeResultTree.rootNodeId
+      });
+      
+      // 3. Link objects
+      let linkedCount = 0;
+      for (const block of lastSelection) {
+        for (const objId of block.ids) {
+          await api.organizer.createLink(projectId, aeResultTree.id, childNode.id, {
+            resourceId: objId,
+            resourceType: "MODEL_OBJECT",
+            modelId: block.modelId
+          });
+          linkedCount++;
+        }
+      }
+      
+      const path = `AE RESULT → ${organizerName}`;
+      setSearchMsg(t.organizerSaved.replace("{path}", path));
+      setShowOrganizerSave(false);
+    } catch (e: any) {
+      console.error("Save to Organizer error:", e);
+      setSearchMsg(t.organizerSaveError.replace("{error}", e?.message || t.unknownError));
+    } finally {
+      setBusy(false);
+    }
+  }, [lastSelection, organizerName, api, t]);
+
+  const cancelSaveOrganizer = useCallback(() => {
+    setShowOrganizerSave(false);
+    setOrganizerName("");
+  }, []);
+
+  const removeResult = useCallback((id: number) => {
+    setSearchResults(prev => prev.filter(r => r.id !== id));
+    setMarkedResults(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }, []);
 
   const moveColumn = useCallback(
@@ -1319,8 +1755,6 @@ export default function AssemblyExporter({ api }: Props) {
     }
   }
 
-  const removeResult = useCallback((index: number) => setSearchResults(prev => prev.filter((_, i) => i !== index)), []);
-
   const c = styles;
   const scopeButtonStyle = (isActive: boolean): CSSProperties => ({
     padding: "6px 10px",
@@ -1332,7 +1766,6 @@ export default function AssemblyExporter({ api }: Props) {
     flex: 1,
   });
 
-  const searchNoteStyle = { ...c.note, fontSize: 11 };
   const ScanAppLazy = React.lazy(() =>
     import("./ScanApp").catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> }))
   );
@@ -1428,9 +1861,16 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
 
             <div style={c.fieldGroup}>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                <input type="checkbox" checked={fuzzySearch} onChange={e => setFuzzySearch(e.target.checked)} />
-                <span>{settings.language === "et" ? "Otsi sarnaseid (osaline vaste)" : "Fuzzy search (partial match)"}</span>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <MiniToggle checked={fuzzySearch} onChange={setFuzzySearch} color="blue" />
+                <span style={{ fontSize: 12 }}>{t.fuzzySearch}</span>
+              </label>
+            </div>
+
+            <div style={c.fieldGroup}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <MiniToggle checked={greyOutAll} onChange={setGreyOutAll} color="purple" />
+                <span style={{ fontSize: 12 }}>{t.greyOutAll}</span>
               </label>
             </div>
 
@@ -1441,8 +1881,11 @@ export default function AssemblyExporter({ api }: Props) {
               style={{ ...c.textarea, height: 200 }}
             />
             <div style={c.controls}>
-              <button style={c.btn} onClick={searchAndSelect} disabled={busy || !searchInput.trim()}>
-                {busy ? t.searching : t.searchButton}
+              <button style={c.btn} onClick={() => searchAndSelect(true)} disabled={busy || !searchInput.trim()}>
+                {busy ? t.searching : t.newSearch}
+              </button>
+              <button style={c.btn} onClick={() => searchAndSelect(false)} disabled={busy || !searchInput.trim()}>
+                {t.addSearch}
               </button>
               {busy && (
                 <button style={c.btnGhost} onClick={cancelSearch}>
@@ -1454,6 +1897,7 @@ export default function AssemblyExporter({ api }: Props) {
                 onClick={() => {
                   setSearchInput("");
                   setSearchResults([]);
+                  setMarkedResults(new Set());
                   setSearchMsg("");
                 }}
               >
@@ -1467,28 +1911,62 @@ export default function AssemblyExporter({ api }: Props) {
                 {progress.totalObjects > 0 ? ` • ${progress.objects}/${progress.totalObjects} objekti` : ""}
               </div>
             )}
-            {searchMsg && <div style={searchNoteStyle}>{searchMsg}</div>}
+            {searchMsg && <div style={c.note}>{searchMsg}</div>}
 
             {searchResults.length > 0 && (
               <div style={c.resultsBox}>
+                <div style={{ marginBottom: 8, padding: 8, background: "#e7f3ff", borderRadius: 8, fontSize: 12 }}>
+                  {t.searchHint}
+                </div>
+                
                 <h4 style={c.resultsHeading}>
-                  {t.results} ({searchResults.length})
+                  {t.results} ({searchResults.length}) • {t.marked} {markedCount}
                 </h4>
+                
+                <div style={{ ...c.controls, marginBottom: 8 }}>
+                  <button style={c.btnGhost} onClick={markAllResults}>
+                    {t.markAll}
+                  </button>
+                  <button style={c.btnGhost} onClick={clearAllMarks} disabled={markedCount === 0}>
+                    {t.clearMarks}
+                  </button>
+                  <button style={c.btn} onClick={selectMarkedResults} disabled={markedCount === 0}>
+                    {t.selectMarked} ({markedCount})
+                  </button>
+                  <button style={{ ...c.btnGhost, background: "#ffeeee", color: "#cc0000" }} onClick={removeMarkedResults} disabled={markedCount === 0}>
+                    {t.removeMarked}
+                  </button>
+                </div>
+                
                 <div style={c.resultsTable}>
-                  {searchResults.map((result, idx) => (
-                    <ResultRow key={idx} result={result} onRemove={() => removeResult(idx)} onZoom={selectAndZoom} t={t} />
+                  {searchResults.map(result => (
+                    <ResultRow
+                      key={result.id}
+                      result={result}
+                      onRemove={() => removeResult(result.id)}
+                      onZoom={selectAndZoom}
+                      onToggleMark={toggleResultMark}
+                      onColorChange={changeResultColor}
+                      isMarked={markedResults.has(result.id)}
+                      t={t}
+                    />
                   ))}
                 </div>
-                <div style={{ ...c.controls, marginTop: 8, justifyContent: "flex-end" }}>
-                  <button style={c.btn} onClick={selectAllFound} disabled={totalFoundCount === 0}>
-                    {t.selectAll} ({totalFoundCount}x)
+                
+                <div style={{ ...c.controls, marginTop: 8 }}>
+                  <button style={c.btn} onClick={colorAllResults} disabled={totalFoundCount === 0}>
+                    {t.colorResults}
                   </button>
                   <button style={c.btn} onClick={initSaveView} disabled={totalFoundCount === 0}>
                     {t.saveToView}
                   </button>
+                  <button style={{ ...c.btn, background: "#F97316", borderColor: "#F97316" }} onClick={initSaveOrganizer} disabled={totalFoundCount === 0}>
+                    {t.saveToOrganizer}
+                  </button>
                 </div>
+                
                 {showViewSave && (
-                  <div style={{ marginTop: 12, padding: 8, border: "1px solid #cfd6df", borderRadius: 8, background: "#f6f8fb" }}>
+                  <div style={{ marginTop: 12, padding: 8, border: "1px solid #cfd6df", borderRadius: 8, background: "#e7f3ff" }}>
                     <label style={c.labelTop}>{t.viewNameLabel}</label>
                     <input type="text" value={viewName} onChange={e => setViewName(e.target.value)} style={c.input} />
                     <div style={{ ...c.controls, marginTop: 8 }}>
@@ -1496,6 +1974,21 @@ export default function AssemblyExporter({ api }: Props) {
                         {t.saveViewButton}
                       </button>
                       <button style={c.btnGhost} onClick={cancelSaveView}>
+                        {t.cancel}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                {showOrganizerSave && (
+                  <div style={{ marginTop: 12, padding: 8, border: "1px solid #F97316", borderRadius: 8, background: "#fff7ed" }}>
+                    <label style={c.labelTop}>{t.organizerNameLabel}</label>
+                    <input type="text" value={organizerName} onChange={e => setOrganizerName(e.target.value)} style={c.input} />
+                    <div style={{ ...c.controls, marginTop: 8 }}>
+                      <button style={{ ...c.btn, background: "#F97316", borderColor: "#F97316" }} onClick={saveToOrganizer} disabled={!organizerName.trim()}>
+                        {t.saveOrganizerButton}
+                      </button>
+                      <button style={c.btnGhost} onClick={cancelSaveOrganizer}>
                         {t.cancel}
                       </button>
                     </div>
@@ -1558,7 +2051,21 @@ export default function AssemblyExporter({ api }: Props) {
                       <div style={c.grid}>
                         {keysShown.map(k => (
                           <label key={k} style={c.checkRow} title={k}>
-                            <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(k)} />
+                            <input
+                              type="checkbox"
+                              checked={selected.has(k)}
+                              onChange={() => toggle(k)}
+                              style={{
+                                appearance: "none",
+                                width: 18,
+                                height: 18,
+                                borderRadius: 4,
+                                border: "2px solid #cfd6df",
+                                cursor: "pointer",
+                                position: "relative",
+                                background: selected.has(k) ? "#1E88E5" : "#fff",
+                              }}
+                            />
                             <span style={c.ellipsis}>{k}</span>
                           </label>
                         ))}
@@ -1599,10 +2106,16 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>
                 {t.deselectAll}
               </button>
+              <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>
+                {t.selected} {selected.size}
+              </span>
             </div>
+            
             <div style={c.row}>
-              <label style={c.label}>{t.includeHeaders}</label>
-              <input type="checkbox" checked={includeHeaders} onChange={e => setIncludeHeaders(e.target.checked)} />
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <MiniToggle checked={includeHeaders} onChange={setIncludeHeaders} color="green" />
+                <span style={{ fontSize: 12 }}>{t.includeHeaders}</span>
+              </label>
             </div>
 
             <div style={c.columnListNoscroll}>
@@ -1632,7 +2145,21 @@ export default function AssemblyExporter({ api }: Props) {
                         width: "calc(100% - 80px)",
                       }}
                     >
-                      <input type="checkbox" checked={selected.has(col)} onChange={() => toggle(col)} style={{ cursor: "pointer" }} />
+                      <input
+                        type="checkbox"
+                        checked={selected.has(col)}
+                        onChange={() => toggle(col)}
+                        style={{
+                          appearance: "none",
+                          width: 18,
+                          height: 18,
+                          borderRadius: 4,
+                          border: "2px solid #cfd6df",
+                          cursor: "pointer",
+                          position: "relative",
+                          background: selected.has(col) ? "#1E88E5" : "#fff",
+                        }}
+                      />
                       <span
                         style={{ ...c.ellipsis, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                         title={col}
@@ -1701,7 +2228,7 @@ export default function AssemblyExporter({ api }: Props) {
                   setSearchFieldFilter("Kooste märk (BLOCK)");
                   setSearchScope("available");
                   setSearchInput(marks.join("\n"));
-                  setTimeout(() => { searchAndSelect(); }, 100);
+                  setTimeout(() => { searchAndSelect(true); }, 100);
                 }}
               />
             </Suspense>
@@ -1735,65 +2262,69 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
             <div style={c.row}>
               <label style={c.label}>{t.ocrPrompt}</label>
-              <textarea value={settings.ocrPrompt} onChange={e => updateSettings({ ocrPrompt: e.target.value })} placeholder={t.pasteHint} style={{ ...c.textarea, height: 80, flex: 1 }} />
+              <textarea value={settings.ocrPrompt} onChange={e => updateSettings({ ocrPrompt: e.target.value})} placeholder={t.pasteHint} style={{ ...c.textarea, height: 80, flex: 1 }} />
             </div>
-            <div style={c.row}>
-              <label style={c.label}>{t.autoColorize}</label>
-              <input type="checkbox" checked={settings.autoColorize} onChange={e => updateSettings({ autoColorize: e.target.checked })} />
+            
+            <div style={{ padding: 12, border: "1px solid #e6eaf0", borderRadius: 10, background: "#f6f8fb" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div>
+                  <p style={{ fontWeight: 600, margin: 0, marginBottom: 4 }}>{t.autoColorize}</p>
+                  <p style={{ fontSize: 11, opacity: 0.7, margin: 0 }}>{t.autoColorizeDesc}</p>
+                </div>
+                <LargeToggle
+                  checked={settings.autoColorize}
+                  onChange={(v) => updateSettings({ autoColorize: v })}
+                />
+              </div>
             </div>
+            
             <div style={c.row}>
               <label style={c.label} title={t.colorTooltip}>{t.color}</label>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
-                <select
-                  value={
-                    Object.keys(DEFAULT_COLORS).find(k => {
-                      const c = (DEFAULT_COLORS as any)[k];
-                      return (
-                        c.r === (settings.colorizeColor?.r ?? DEFAULT_COLORS.darkRed.r) &&
-                        c.g === (settings.colorizeColor?.g ?? DEFAULT_COLORS.darkRed.g) &&
-                        c.b === (settings.colorizeColor?.b ?? DEFAULT_COLORS.darkRed.b)
-                      );
-                    }) || "darkRed"
-                  }
-                  onChange={e => {
-                    const key = e.target.value as keyof typeof DEFAULT_COLORS;
-                    updateSettings({ colorizeColor: DEFAULT_COLORS[key] });
-                  }}
-                  style={{ ...c.input, width: "100%" }}
-                >
-                  <option value="darkRed">{t.darkRed}</option>
-                  <option value="red">{t.red}</option>
-                  <option value="orange">{t.orange}</option>
-                  <option value="yellow">{t.yellow}</option>
-                  <option value="green">{t.green}</option>
-                  <option value="blue">{t.blue}</option>
-                  <option value="purple">{t.purple}</option>
-                </select>
-
-                <div style={{ display: "flex", gap: 8 }}>
-                  {Object.entries(DEFAULT_COLORS).map(([key, col]) => (
-                    <div
-                      key={key}
-                      onClick={() => updateSettings({ colorizeColor: col })}
-                      title={key}
-                      style={{
-                        width: 20,
-                        height: 20,
-                        borderRadius: 6,
-                        border: "1px solid #cfd6df",
-                        background: `rgb(${col.r},${col.g},${col.b})`,
-                        cursor: "pointer",
-                        outline:
-                          settings.colorizeColor &&
-                          col.r === settings.colorizeColor.r &&
-                          col.g === settings.colorizeColor.g &&
-                          col.b === settings.colorizeColor.b
-                            ? "2px solid #0a3a67"
-                            : "none",
-                      }}
-                    />
-                  ))}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 32px)", gap: 6 }}>
+                  {COLORS.map(color => {
+                    const rgb = hexToRgb(color);
+                    const isSelected = 
+                      rgb.r === settings.colorizeColor.r &&
+                      rgb.g === settings.colorizeColor.g &&
+                      rgb.b === settings.colorizeColor.b;
+                    return (
+                      <div
+                        key={color}
+                        onClick={() => {
+                          updateSettings({ colorizeColor: rgb });
+                          setDefaultColor(color);
+                          setSettingsMsg(t.defaultColorChanged);
+                        }}
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 6,
+                          border: isSelected ? "2px solid #1E88E5" : "1px solid #e6eaf0",
+                          background: color,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          transition: "transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.transform = "scale(1.15)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.transform = "scale(1)";
+                        }}
+                      >
+                        {isSelected && (
+                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+                            <path d="M13 4L6 11L3 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
+                <p style={{ fontSize: 11, opacity: 0.6, margin: 0 }}>{t.colorDefault}</p>
               </div>
             </div>
 
@@ -1851,6 +2382,7 @@ const styles: Record<string, CSSProperties> = {
   },
   topbar: {
     display: "flex",
+    flexWrap: "wrap",
     gap: 6,
     padding: 6,
     borderBottom: "1px solid #e6eaf0",
@@ -1980,12 +2512,16 @@ const styles: Record<string, CSSProperties> = {
   },
   resultRow: {
     display: "grid",
-    gridTemplateColumns: "32px 1fr 48px 140px",
+    gridTemplateColumns: "20px 32px 32px 1fr 48px 160px",
     gap: 6,
     alignItems: "center",
     padding: 8,
     borderRadius: 8,
     border: "1px solid #e6eaf0",
+  },
+  resultRowMarked: {
+    background: "#e7f3ff",
+    border: "2px solid #1E88E5",
   },
   resultRowFound: {
     background: "#f7fff7",
@@ -2049,6 +2585,7 @@ const styles: Record<string, CSSProperties> = {
     padding: 6,
     borderRadius: 6,
     border: "1px solid #eef1f6",
+    cursor: "pointer",
   },
   ellipsis: {
     overflow: "hidden",
