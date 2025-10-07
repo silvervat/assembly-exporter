@@ -1446,7 +1446,7 @@ const styles: Record<string, CSSProperties> = {
   labelTop: { fontSize: 12, opacity: 0.8 },
   label: { width: 160, opacity: 0.8 },
   input: { padding: "6px 8px", border: "1px solid #cfd6df", borderRadius: 8, outline: "none", flex:1 },
-  inputFilter: { width: "100%", maxHeight: "150px", padding: "6px 8px", border: "1px solid "#cfd6df", borderRadius: 8, outline: "none", resize: "vertical" as any },
+  inputFilter: { width: "100%", maxHeight: "150px", padding: "6px 8px", border: "1px solid #cfd6df", borderRadius: 8, outline: "none", resize: "vertical" as any },
   textarea: { width: "100%", padding: "8px", border: "1px solid #cfd6df", borderRadius: 8, outline: "none", fontFamily: "monospace", fontSize: 12 },
   controls: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", position: "relative", zIndex: 10 },
   presetsRow: { display: "flex", gap: 6, flexWrap: "wrap", position: "relative", zIndex: 50, marginTop: 4 },
