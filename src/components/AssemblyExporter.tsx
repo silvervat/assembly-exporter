@@ -73,7 +73,7 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v6.0 – Trimble Connect",
+    version: "Assembly Exporter v6.4 – Trimble Connect",
     features:
       "• Multi-search kombineerib otsinguid\n• Tulemuste märgistamine ja haldamine\n• Organizer integratsioon\n• Auto värvimine täiustatud\n• Värvi valik iga tulemuse kohta",
     author: "Created by: Silver Vatsel",
