@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent, Suspense } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent, Suspense } from "react";
 import * as XLSX from "xlsx";
 import React from "react";
+import { createPortal } from "react-dom";
 
 type Language = "et" | "en";
 type Tab = "search" | "discover" | "export" | "settings" | "about" | "scan" | "log";
@@ -76,7 +77,7 @@ const translations = {
     defaultPreset: "Vaikimisi eelseade",
     save: "Salvesta",
     reset: "Lähtesta",
-    version: "Assembly Exporter v6.4 – Trimble Connect",
+    version: "Assembly Exporter v6.55 – Trimble Connect",
     features: "• Multi-search kombineerib otsinguid\n• Tulemuste märgistamine ja haldamine\n• Organizer integratsioon\n• Auto värvimine täiustatud\n• Värvi valik iga tulemuse kohta",
     author: "Created by: Silver Vatsel",
     noResults: "Tulemusi ei leitud",
@@ -659,13 +660,67 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
 }
 
 // ColorPicker komponent - 30 värvi 5×6 grid
+// Muudetud: renderdatakse portaali (document.body) ja positsioneeritakse fixed positsioonile,
+// et vältida külgriba/overflow järel tekkivat peitmist.
 const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c: string) => void; t: any }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const [popupStyle, setPopupStyle] = useState<CSSProperties | null>(null);
+
+  // compute popup size roughly (grid 6 columns, each 20px + gaps)
+  const POPUP_WIDTH = 6 * 20 + (6 - 1) * 4 + 12; // approx padding
+  const POPUP_HEIGHT = Math.ceil(COLORS.length / 6) * 20 + (Math.ceil(COLORS.length / 6) - 1) * 4 + 12;
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const el = triggerRef.current;
+    if (!el) return;
+
+    const updatePos = () => {
+      const rect = el.getBoundingClientRect();
+      const scrollX = window.scrollX || window.pageXOffset;
+      const scrollY = window.scrollY || window.pageYOffset;
+      // default below the trigger
+      let left = Math.round(rect.left + scrollX);
+      let top = Math.round(rect.top + rect.height + scrollY + 6);
+
+      // ensure popup stays inside viewport horizontally
+      const margin = 8;
+      const maxRight = window.innerWidth - margin;
+      if (left + POPUP_WIDTH > maxRight) left = Math.max(margin, maxRight - POPUP_WIDTH);
+
+      // if not enough space below, try placing above
+      const maxBottom = window.innerHeight - margin;
+      const spaceBelow = window.innerHeight - (rect.top + rect.height);
+      if (spaceBelow < POPUP_HEIGHT && rect.top > POPUP_HEIGHT + 12) {
+        top = Math.round(rect.top + scrollY - POPUP_HEIGHT - 6);
+      }
+
+      setPopupStyle({
+        position: "fixed",
+        top: top,
+        left: left,
+        zIndex: 9999,
+        pointerEvents: "auto",
+      });
+    };
+
+    updatePos();
+    window.addEventListener("resize", updatePos);
+    window.addEventListener("scroll", updatePos, true);
+    return () => {
+      window.removeEventListener("resize", updatePos);
+      window.removeEventListener("scroll", updatePos, true);
+    };
+  }, [isOpen]);
+
   const currentColor = value || COLORS[0];
+
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
+    <>
       <div
-        onClick={() => setIsOpen(!isOpen)}
+        ref={triggerRef}
+        onClick={() => setIsOpen(v => !v)}
         style={{
           width: 20,
           height: 20,
@@ -674,64 +729,74 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
           border: "1px solid #e6eaf0",
           cursor: "pointer",
           boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+          display: "inline-block",
         }}
         title={t.color}
       />
-      {isOpen && (
-        <>
-          <div
-            style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }}
-            onClick={() => setIsOpen(false)}
-          />
-          <div
-            style={{
-              position: "absolute",
-              top: 24,
-              right: 0,
-              zIndex: 100,
-              background: "#fff",
-              border: "1px solid #e6eaf0",
-              borderRadius: 6,
-              padding: 6,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-              display: "grid",
-              gridTemplateColumns: "repeat(6, 20px)",
-              gap: 4,
-            }}
-          >
-            {COLORS.map(color => (
-              <div
-                key={color}
-                onClick={() => {
-                  onChange(color);
-                  setIsOpen(false);
-                }}
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: 4,
-                  background: color,
-                  border: currentColor === color ? "2px solid #1E88E5" : "1px solid #e6eaf0",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = "scale(1.1)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
-              >
-                {currentColor === color && (
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                    <path d="M13 4L6 11L3 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                )}
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
+      {isOpen &&
+        createPortal(
+          <>
+            {/* overlay to catch outside clicks */}
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 9998,
+                background: "transparent",
+              }}
+              onClick={() => setIsOpen(false)}
+            />
+            <div
+              role="dialog"
+              aria-label="Color picker"
+              style={{
+                position: "fixed",
+                zIndex: 9999,
+                background: "#fff",
+                border: "1px solid #e6eaf0",
+                borderRadius: 6,
+                padding: 6,
+                boxShadow: "0 6px 18px rgba(0,0,0,0.08)",
+                display: "grid",
+                gridTemplateColumns: "repeat(6, 20px)",
+                gap: 4,
+                ...((popupStyle as any) || {}),
+              }}
+            >
+              {COLORS.map(color => (
+                <div
+                  key={color}
+                  onClick={() => {
+                    onChange(color);
+                    setIsOpen(false);
+                  }}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 4,
+                    background: color,
+                    border: currentColor === color ? "2px solid #1E88E5" : "1px solid #e6eaf0",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "transform 0.12s ease",
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.transform = "scale(1.08)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.transform = "scale(1)"; }}
+                >
+                  {currentColor === color && (
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+                      <path d="M13 4L6 11L3 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>,
+          document.body
+        )}
+    </>
   );
 });
 
