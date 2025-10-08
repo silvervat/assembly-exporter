@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import React from "react";
 
 type Language = "et" | "en";
-type Tab = "search" | "discover" | "export" | "settings" | "about" | "scan" | "log"; // Lisatud "log"
+type Tab = "search" | "discover" | "export" | "settings" | "about" | "scan" | "log";
 type Row = Record<string, string>;
 type ExportFormat = "clipboard" | "excel" | "csv";
 type RowHeight = "small" | "medium" | "large";
@@ -16,9 +16,10 @@ const translations = {
     settings: "SEADED",
     about: "INFO",
     scan: "SCAN",
-    log: "LOGID", // Uus
-    clearLogs: "Tühjenda logid", // Uus
-    noLogs: "Pole logisid.", // Uus
+    log: "LOGID",
+    clearLogs: "Tühjenda logid",
+    copyLogs: "Kopeeri logid",
+    noLogs: "Pole logisid.",
     searchAndSelect: "Otsi ja vali",
     searchBy: "Otsitav väli:",
     searchScope: "Otsi ulatus:",
@@ -157,6 +158,7 @@ const translations = {
     scan: "SCAN",
     log: "LOGS",
     clearLogs: "Clear logs",
+    copyLogs: "Copy logs",
     noLogs: "No logs.",
     searchAndSelect: "Search and select",
     searchBy: "Search by:",
@@ -633,27 +635,6 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   return map;
 }
 
-// Uus hook logide jaoks
-function useLogs() {
-  const [logs, setLogs] = useState<string[]>([]);
-  const maxLogs = 500;
-
-  const logMessage = useCallback((msg: string) => {
-    console.log(msg); // Säilita originaal console DevTools'i jaoks
-    setLogs(prev => {
-      const newLogs = [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`];
-      if (newLogs.length > maxLogs) {
-        newLogs.shift(); // Kustuta vanim
-      }
-      return newLogs;
-    });
-  }, []);
-
-  const clearLogs = useCallback(() => setLogs([]), []);
-
-  return { logs, logMessage, clearLogs };
-}
-
 // ColorPicker komponent - 30 värvi 5×6 grid
 const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c: string) => void; t: any }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -888,7 +869,7 @@ type Props = { api: any };
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
   const t = translations[settings.language];
-  const { logs, logMessage, clearLogs } = useLogs(); // Lisatud
+  const { logs, logMessage, clearLogs, copyLogs } = useLogs();
   const [tab, setTab] = useState<Tab>("search");
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -1072,7 +1053,7 @@ export default function AssemblyExporter({ api }: Props) {
   async function discover() {
     if (!api?.viewer) {
       setDiscoverMsg(t.apiError);
-      logMessage("Viewer API not available");
+      logMessage("Viewer API not available (iframe?)");
       return;
     }
     try {
@@ -1083,7 +1064,7 @@ export default function AssemblyExporter({ api }: Props) {
       if (!selectedWithBasic.length) {
         setDiscoverMsg(t.selectObjects);
         setRows([]);
-        logMessage("No selected objects");
+        logMessage("No selected objects in 3D view");
         return;
       }
       const projectName = await getProjectName(api);
@@ -1124,9 +1105,9 @@ export default function AssemblyExporter({ api }: Props) {
           .replace("{count}", String(out.length))
           .replace("{keys}", String(Array.from(new Set(out.flatMap(r => Object.keys(r)))).length))
       );
-      logMessage(`Discover: Found ${out.length} objects with ${Array.from(new Set(out.flatMap(r => Object.keys(r)))).length} keys`);
+      logMessage(`Found ${out.length} objects with ${Array.from(new Set(out.flatMap(r => Object.keys(r)))).length} keys`);
     } catch (e: any) {
-      logMessage(`Discover error: ${e?.message || t.unknownError}`);
+      logMessage(`Discover error: ${e.message}`);
       setDiscoverMsg(t.error.replace("{error}", e?.message || t.unknownError));
     } finally {
       setBusy(false);
@@ -1139,11 +1120,12 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
       setSearchMsg(t.searchCancelled);
       abortControllerRef.current = null;
-      logMessage("Search cancelled by user");
+      logMessage("Search cancelled");
     }
-  }, [t]);
+  }, [t, logMessage]);
 
   async function searchAndSelect(clearPrevious: boolean = false) {
+    logMessage(`Search started, clearPrevious=${clearPrevious}`);
     if (clearPrevious) {
       setSearchResults([]);
       setMarkedResults(new Set());
@@ -1160,7 +1142,7 @@ export default function AssemblyExporter({ api }: Props) {
       if (!uniqueSearchValues.length) {
         setSearchMsg(t.enterValue);
         setBusy(false);
-        logMessage("Search: No values entered");
+        logMessage("No search values entered");
         return;
       }
       const viewer = api?.viewer;
@@ -1169,7 +1151,7 @@ export default function AssemblyExporter({ api }: Props) {
         if (abortController.signal.aborted) return;
         setSearchMsg(t.cannotRead);
         setBusy(false);
-        logMessage("Search: Cannot read objects");
+        logMessage("Cannot read objects from viewer");
         return;
       }
       const totalObjs = mos.reduce((sum, mo) => sum + (mo.objects?.length || 0), 0);
@@ -1190,6 +1172,7 @@ export default function AssemblyExporter({ api }: Props) {
         let fullProperties: any[] = [];
         try {
           fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
+          logMessage(`getObjectProperties success for model ${modelId}`);
         } catch (e) {
           if (abortController.signal.aborted) return;
           logMessage(`getObjectProperties failed for model ${modelId}: ${e.message}`);
@@ -1202,7 +1185,7 @@ export default function AssemblyExporter({ api }: Props) {
             setSearchMsg(
               settings.language === "et" ? `⚠️ Peatatud: leidsin ${MAX_RESULTS}+ vastet. Täpsusta otsingut.` : `⚠️ Stopped: found ${MAX_RESULTS}+ matches. Refine search.`
             );
-            logMessage(`Search stopped: Max results (${MAX_RESULTS}) reached`);
+            logMessage(`Stopped: Max results ${MAX_RESULTS} reached`);
             break;
           }
           const obj = fullProperties[i];
@@ -1220,9 +1203,10 @@ export default function AssemblyExporter({ api }: Props) {
               if (matchValue) break;
             }
           } else if (searchField === "GUID_IFC" || searchField === "GUID_MS") {
+            logMessage(`GUID search for modelId=${modelId}, objId=${objId}`);
             const objMeta = await (api?.viewer?.getObjectMetadata?.(modelId, [objId]).catch(() => null));
             const meta = Array.isArray(objMeta) ? objMeta[0] : objMeta;
-
+            logMessage(`ObjMeta: ${JSON.stringify(objMeta)}`);
             // 1) MS/Tekla GUID -> metadata.globalId
             if (searchField === "GUID_MS" && meta?.globalId) {
               const val = String(meta.globalId).trim();
@@ -1400,8 +1384,10 @@ export default function AssemblyExporter({ api }: Props) {
         else msg += ` ${t.allFound}`;
         if (hasDuplicates) msg += ` ${t.duplicates}`;
         setSearchMsg(msg);
+        logMessage(`Found ${foundValues.size} values, total searched ${uniqueSearchValues.length}`);
       } else {
         setSearchMsg(`${t.noneFound} ${uniqueSearchValues.join(", ")}`);
+        logMessage("No values found");
       }
       // Värvi kõik halliks kui see on sisse lülitatud
       if (greyOutAll && found.length) {
@@ -1410,7 +1396,7 @@ export default function AssemblyExporter({ api }: Props) {
     } catch (e: any) {
       if (e.name === "AbortError") setSearchMsg(t.searchCancelled);
       else {
-        console.error(e);
+        logMessage(`Search error: ${e?.message || t.unknownError}`);
         setSearchMsg(t.error.replace("{error}", e?.message || t.unknownError));
       }
     } finally {
@@ -1418,6 +1404,7 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }
+
   const toggleResultMark = useCallback((id: number) => {
     setMarkedResults(prev => {
       const next = new Set(prev);
@@ -1426,13 +1413,16 @@ export default function AssemblyExporter({ api }: Props) {
       return next;
     });
   }, []);
+
   const markAllResults = useCallback(() => {
     const foundIds = searchResults.filter(r => r.status === "found").map(r => r.id);
     setMarkedResults(new Set(foundIds));
   }, [searchResults]);
+
   const clearAllMarks = useCallback(() => {
     setMarkedResults(new Set());
   }, []);
+
   const selectMarkedResults = useCallback(async () => {
     try {
       const markedItems = searchResults.filter(r => markedResults.has(r.id) && r.status === "found");
@@ -1441,18 +1431,23 @@ export default function AssemblyExporter({ api }: Props) {
       await api?.viewer?.setSelection?.(selector);
       setLastSelection(markedItems.map(r => ({ modelId: r.modelId, ids: r.ids })));
       setSearchMsg(t.selectAllFound);
+      logMessage(`Selected ${markedItems.length} marked results`);
     } catch (e: any) {
-      console.error("Select marked error:", e);
+      logMessage("Select marked error: " + e.message);
       setSearchMsg(t.selectAllError);
     }
-  }, [searchResults, markedResults, api, t]);
+  }, [searchResults, markedResults, api, t, logMessage]);
+
   const removeMarkedResults = useCallback(() => {
     setSearchResults(prev => prev.filter(r => !markedResults.has(r.id)));
     setMarkedResults(new Set());
-  }, [markedResults]);
+    logMessage("Removed marked results");
+  }, [markedResults, logMessage]);
+
   const changeResultColor = useCallback((id: number, color: string) => {
     setSearchResults(prev => prev.map(r => r.id === id ? { ...r, color } : r));
   }, []);
+
   const colorAllResults = useCallback(async () => {
     try {
       setBusy(true);
@@ -1464,23 +1459,27 @@ export default function AssemblyExporter({ api }: Props) {
         await api?.viewer?.setObjectState?.(selector, { color: { r: rgb.r, g: rgb.g, b: rgb.b, a: 255 } });
       }
       setSearchMsg("✅ " + (settings.language === "et" ? "Kõik tulemused värvitud" : "All results colored"));
+      logMessage("Colored all results");
     } catch (e: any) {
-      console.error("Color all error:", e);
+      logMessage("Color all error: " + e.message);
       setSearchMsg(t.error.replace("{error}", e?.message || t.unknownError));
     } finally {
       setBusy(false);
     }
-  }, [searchResults, api, defaultColor, t, settings.language]);
+  }, [searchResults, api, defaultColor, t, settings.language, logMessage]);
+
   const greyOutAllModels = useCallback(async () => {
     try {
       await api?.viewer?.setObjectState?.(
         undefined,
         { color: { r: 180, g: 180, b: 180, a: 255 }, transparent: false }
       );
+      logMessage("Greyed out all models");
     } catch (e) {
-      console.error("Grey out failed:", e);
+      logMessage("Grey out failed: " + e.message);
     }
-  }, [api]);
+  }, [api, logMessage]);
+
   const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
     try {
       const viewer = api?.viewer;
@@ -1495,10 +1494,12 @@ export default function AssemblyExporter({ api }: Props) {
           await viewer?.setObjectState?.(selector, { color: { r: rgb.r, g: rgb.g, b: rgb.b, a: 255 } });
         }
       }
+      logMessage(`Zoomed to modelId=${modelId}, ids=${ids.length}`);
     } catch (e: any) {
-      console.error("Zoom error:", e);
+      logMessage("Zoom error: " + e.message);
     }
-  }, [api, greyOutAll, searchResults, defaultColor]);
+  }, [api, greyOutAll, searchResults, defaultColor, logMessage]);
+
   const initSaveView = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -1510,6 +1511,7 @@ export default function AssemblyExporter({ api }: Props) {
     setViewName(defaultName);
     setShowViewSave(true);
   }, []);
+
   const saveView = useCallback(async () => {
     if (!lastSelection.length || !viewName.trim()) return;
     try {
@@ -1517,15 +1519,18 @@ export default function AssemblyExporter({ api }: Props) {
       await api.view.createView({ name: viewName, modelObjectIds });
       setSearchMsg(t.viewSaved.replace("{name}", viewName));
       setShowViewSave(false);
+      logMessage(`View saved: ${viewName}`);
     } catch (e: any) {
-      console.error("Save view error:", e);
+      logMessage("Save view error: " + e.message);
       setSearchMsg(t.viewSaveError.replace("{error}", e?.message || t.unknownError));
     }
-  }, [lastSelection, viewName, api, t]);
+  }, [lastSelection, viewName, api, t, logMessage]);
+
   const cancelSaveView = useCallback(() => {
     setShowViewSave(false);
     setViewName("");
   }, []);
+
   const initSaveOrganizer = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -1537,19 +1542,23 @@ export default function AssemblyExporter({ api }: Props) {
     setOrganizerName(defaultName);
     setShowOrganizerSave(true);
   }, []);
+
   const saveToOrganizer = useCallback(async () => {
     if (!lastSelection.length || !organizerName.trim()) return;
     try {
       setBusy(true);
       const projectId = await api.project.getProject().then((p: any) => p.id);
+      logMessage(`Saving to Organizer, projectId=${projectId}`);
       // 1. Ensure "AE RESULT" group exists
       const trees = await api.organizer.getTrees(projectId);
       let aeResultTree = trees.find((t: any) => t.name === "AE RESULT");
       if (!aeResultTree) {
         aeResultTree = await api.organizer.createTree(projectId, { name: "AE RESULT", type: "manual" });
+        logMessage("Created new AE RESULT tree");
       }
       // 2. Create child node
       const childNode = await api.organizer.createNode(projectId, aeResultTree.id, { name: organizerName, parentId: aeResultTree.rootNodeId });
+      logMessage(`Created child node: ${organizerName}`);
       // 3. Link objects
       let linkedCount = 0;
       for (const block of lastSelection) {
@@ -1558,20 +1567,23 @@ export default function AssemblyExporter({ api }: Props) {
           linkedCount++;
         }
       }
+      logMessage(`Linked ${linkedCount} objects to Organizer`);
       const path = `AE RESULT → ${organizerName}`;
       setSearchMsg(t.organizerSaved.replace("{path}", path));
       setShowOrganizerSave(false);
     } catch (e: any) {
-      console.error("Save to Organizer error:", e);
+      logMessage("Save to Organizer error: " + e.message);
       setSearchMsg(t.organizerSaveError.replace("{error}", e?.message || t.unknownError));
     } finally {
       setBusy(false);
     }
-  }, [lastSelection, organizerName, api, t]);
+  }, [lastSelection, organizerName, api, t, logMessage]);
+
   const cancelSaveOrganizer = useCallback(() => {
     setShowOrganizerSave(false);
     setOrganizerName("");
   }, []);
+
   const removeResult = useCallback((id: number) => {
     setSearchResults(prev => prev.filter(r => r.id !== id));
     setMarkedResults(prev => {
@@ -1580,6 +1592,7 @@ export default function AssemblyExporter({ api }: Props) {
       return next;
     });
   }, []);
+
   const moveColumn = useCallback(
     (from: number, to: number) => {
       const newOrder = [...columnOrder];
@@ -1591,20 +1604,24 @@ export default function AssemblyExporter({ api }: Props) {
     },
     [columnOrder]
   );
+
   const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/html", e.currentTarget.innerHTML);
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "0.4";
   }, []);
+
   const handleDragEnd = useCallback((e: DragEvent<HTMLDivElement>) => {
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "1";
     setDraggedIndex(null);
   }, []);
+
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }, []);
+
   const handleDrop = useCallback(
     (e: DragEvent<HTMLDivElement>, dropIndex: number) => {
       e.preventDefault();
@@ -1618,15 +1635,19 @@ export default function AssemblyExporter({ api }: Props) {
     },
     [draggedIndex, columnOrder]
   );
+
   async function exportData() {
+    logMessage("Export started");
     await discover();
     if (!rows.length) {
       setExportMsg(t.noDataExport);
+      logMessage("Export: No data");
       return;
     }
     const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
     if (!exportCols.length) {
       setExportMsg(t.selectColumn);
+      logMessage("Export: No columns selected");
       return;
     }
     try {
@@ -1635,6 +1656,7 @@ export default function AssemblyExporter({ api }: Props) {
         const text = includeHeaders ? exportCols.join("\t") + "\n" + body : body;
         await navigator.clipboard.writeText(text);
         setExportMsg(t.copied.replace("{count}", String(rows.length)));
+        logMessage(`Copied ${rows.length} rows to clipboard`);
       } else if (exportFormat === "csv") {
         const csvBody = rows.map(r => exportCols.map(k => `"${String(r[k] ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
         const csv = includeHeaders ? exportCols.join(",") + "\n" + csvBody : csvBody;
@@ -1646,6 +1668,7 @@ export default function AssemblyExporter({ api }: Props) {
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 100);
         setExportMsg(t.savedCsv.replace("{count}", String(rows.length)));
+        logMessage(`Saved CSV with ${rows.length} rows`);
       } else if (exportFormat === "excel") {
         const rowData = rows.map(r => exportCols.map(k => {
           const v = r[k] ?? "";
@@ -1658,21 +1681,26 @@ export default function AssemblyExporter({ api }: Props) {
         XLSX.utils.book_append_sheet(wb, ws, "Export");
         XLSX.writeFile(wb, `assembly-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
         setExportMsg(t.savedExcel.replace("{count}", String(rows.length)));
+        logMessage(`Saved Excel with ${rows.length} rows`);
       }
     } catch (e: any) {
       setExportMsg(t.exportError.replace("{error}", e?.message || e));
+      logMessage(`Export error: ${e.message}`);
     }
   }
+
   async function sendToGoogleSheet() {
     const { scriptUrl, secret, autoColorize } = settings;
     if (!scriptUrl || !secret) {
       setTab("settings");
       setSettingsMsg(t.fillSettings);
+      logMessage("Google Sheets: Missing URL or secret");
       return;
     }
     await discover();
     if (!rows.length) {
       setExportMsg(t.noDataExport);
+      logMessage("Google Sheets: No data");
       return;
     }
     const exportCols = columnOrder.filter(k => selected.has(k) && allKeys.includes(k));
@@ -1693,15 +1721,19 @@ export default function AssemblyExporter({ api }: Props) {
       if (data?.ok) {
         setExportMsg(t.addedRows.replace("{count}", String(payload.length)) + (autoColorize ? ` ${t.coloring}` : ""));
         if (autoColorize) await colorLastSelection();
+        logMessage(`Google Sheets: Added ${payload.length} rows`);
       } else {
         setExportMsg(t.exportError.replace("{error}", data?.error || "unknown"));
+        logMessage("Google Sheets: Server error");
       }
     } catch (e: any) {
       setExportMsg(t.exportError.replace("{error}", e?.message || e));
+      logMessage(`Google Sheets error: ${e.message}`);
     } finally {
       setBusy(false);
     }
   }
+
   async function colorLastSelection() {
     const viewer = api?.viewer;
     let blocks = lastSelection;
@@ -1720,6 +1752,7 @@ export default function AssemblyExporter({ api }: Props) {
       await viewer?.setObjectState?.(selector, { color: { r, g, b, a: 255 } });
     }
   }
+
   async function resetState() {
     try {
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
@@ -1728,6 +1761,7 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(t.resetFailed.replace("{error}", e?.message || e));
     }
   }
+
   const c = styles;
   const scopeButtonStyle = (isActive: boolean): CSSProperties => ({
     padding: "4px 8px",
@@ -2336,6 +2370,9 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btnGhost} onClick={clearLogs}>
                 {t.clearLogs}
               </button>
+              <button style={c.btnGhost} onClick={copyLogs}>
+                {t.copyLogs}
+              </button>
             </div>
             <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid #e6eaf0", padding: 8, background: "#f6f8fb", fontFamily: "monospace", fontSize: 11 }}>
               {logs.length === 0 ? (
@@ -2359,7 +2396,7 @@ export default function AssemblyExporter({ api }: Props) {
 const styles: Record<string, CSSProperties> = {
   shell: {
     fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-    color: "#757575", // Hallikas tekst
+    color: "#757575",
     background: "#fff",
     height: "100%",
     display: "flex",
@@ -2368,7 +2405,7 @@ const styles: Record<string, CSSProperties> = {
   topbar: {
     display: "flex",
     flexWrap: "wrap",
-    gap: 4, // Kompaktsem
+    gap: 4,
     padding: 4,
     borderBottom: "1px solid #e6eaf0",
     background: "#fff",
@@ -2377,7 +2414,7 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 20,
   },
   tab: {
-    padding: "4px 6px", // Kompaktsem
+    padding: "4px 6px",
     borderRadius: 6,
     border: "1px solid #cfd6df",
     background: "#fff",
@@ -2391,38 +2428,38 @@ const styles: Record<string, CSSProperties> = {
     borderColor: "#0a3a67",
   },
   page: {
-    padding: 8, // Kompaktsem
+    padding: 8,
     overflow: "auto",
     flex: 1,
   },
   section: {
     display: "flex",
     flexDirection: "column",
-    gap: 8, // Kompaktsem
+    gap: 8,
     maxWidth: 920,
   },
   heading: {
     margin: 0,
-    fontSize: 16, // Kompaktsem
+    fontSize: 16,
   },
   fieldGroup: {
     display: "flex",
     flexDirection: "column",
-    gap: 4, // Kompaktsem
+    gap: 4,
   },
   labelTop: {
     fontSize: 11,
     opacity: 0.75,
   },
   input: {
-    padding: "4px 6px", // Kompaktsem
+    padding: "4px 6px",
     border: "1px solid #cfd6df",
     borderRadius: 6,
     outline: "none",
   },
   inputFilter: {
     width: "100%",
-    maxHeight: "120px", // Kompaktsem
+    maxHeight: "120px",
     padding: "4px 6px",
     border: "1px solid #cfd6df",
     borderRadius: 6,
@@ -2441,13 +2478,13 @@ const styles: Record<string, CSSProperties> = {
   controls: {
     display: "flex",
     alignItems: "center",
-    gap: 4, // Kompaktsem
+    gap: 4,
     flexWrap: "wrap",
     position: "relative",
     zIndex: 10,
   },
   btn: {
-    padding: "6px 8px", // Kompaktsem
+    padding: "6px 8px",
     borderRadius: 6,
     border: "1px solid #0a3a67",
     background: "#0a3a67",
@@ -2466,7 +2503,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11,
   },
   miniBtn: {
-    padding: "3px 6px", // Kompaktsem
+    padding: "3px 6px",
     borderRadius: 6,
     border: "1px solid #cfd6df",
     background: "#fff",
@@ -2497,16 +2534,18 @@ const styles: Record<string, CSSProperties> = {
   resultsTable: {
     display: "flex",
     flexDirection: "column",
-    gap: 4, // Kompaktsem, et 100+ rida mahuks
+    gap: 4,
   },
   resultRow: {
     display: "grid",
-    gridTemplateColumns: "16px 24px 24px 1fr 36px 120px", // Kitsamad veerud, et ei peitu
-    gap: 4,
+    gridTemplateColumns: "16px 22px 18px 1fr minmax(42px,48px) 110px",
+    columnGap: 6,
+    rowGap: 2,
     alignItems: "center",
     padding: 4,
     borderRadius: 6,
     border: "1px solid #e6eaf0",
+    minWidth: 0,
   },
   resultRowMarked: {
     background: "#e7f3ff",
@@ -2526,6 +2565,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11,
   },
   resultValue: {
+    minWidth: 0,
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -2541,12 +2581,13 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     gap: 4,
     justifyContent: "flex-end",
+    whiteSpace: "nowrap",
   },
   list: {
     display: "flex",
     flexDirection: "column",
     gap: 8,
-    maxHeight: 360, // Kompaktsem
+    maxHeight: 360,
     overflow: "auto",
     border: "1px solid #e6eaf0",
     borderRadius: 6,
@@ -2566,7 +2607,7 @@ const styles: Record<string, CSSProperties> = {
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", // Kompaktsem
+    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
     gap: 4,
   },
   checkRow: {
@@ -2623,7 +2664,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
   },
   label: {
-    width: 180, // Optimeeritud proportsioon
+    width: 180,
     fontSize: 11,
     opacity: 0.75,
   },
