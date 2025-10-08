@@ -336,6 +336,29 @@ const DEFAULT_COLORS = {
   purple: { r: 160, g: 0, b: 200 },
 };
 
+/* ------------------------ LISATUD: lihtne useLogs hook --------------------- */
+/* Puuduv useLogs hook põhjustab tühja lehe (ReferenceError). Lisame lihtsa implementatsiooni. */
+function useLogs() {
+  const [logs, setLogs] = useState<string[]>([]);
+  const push = useCallback((msg: string) => {
+    try {
+      const line = `${new Date().toISOString()} ${String(msg)}`;
+      setLogs(prev => [...prev, line].slice(-2000)); // hoia kuni 2000 rida
+      // trüki ka dev console'i
+      // eslint-disable-next-line no-console
+      console.debug("[AssemblyExporter]", msg);
+    } catch {}
+  }, []);
+  const clearLogs = useCallback(() => setLogs([]), []);
+  const copyLogs = useCallback(async () => {
+    try {
+      if (navigator.clipboard) await navigator.clipboard.writeText(logs.join("\n"));
+    } catch {}
+  }, [logs]);
+  return { logs, logMessage: push, clearLogs, copyLogs };
+}
+/* -------------------------------------------------------------------------- */
+
 function useSettings() {
   const DEFAULTS: AppSettings = {
     scriptUrl: "",
