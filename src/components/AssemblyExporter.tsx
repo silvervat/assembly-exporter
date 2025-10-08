@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import React from "react";
 
 type Language = "et" | "en";
-type Tab = "search" | "discover" | "export" | "settings" | "about" | "scan";
+type Tab = "search" | "discover" | "export" | "settings" | "about" | "scan" | "log"; // Lisatud "log"
 type Row = Record<string, string>;
 type ExportFormat = "clipboard" | "excel" | "csv";
 type RowHeight = "small" | "medium" | "large";
@@ -16,6 +16,9 @@ const translations = {
     settings: "SEADED",
     about: "INFO",
     scan: "SCAN",
+    log: "LOGID", // Uus
+    clearLogs: "Tühjenda logid", // Uus
+    noLogs: "Pole logisid.", // Uus
     searchAndSelect: "Otsi ja vali",
     searchBy: "Otsitav väli:",
     searchScope: "Otsi ulatus:",
@@ -152,6 +155,9 @@ const translations = {
     settings: "SETTINGS",
     about: "ABOUT",
     scan: "SCAN",
+    log: "LOGS",
+    clearLogs: "Clear logs",
+    noLogs: "No logs.",
     searchAndSelect: "Search and select",
     searchBy: "Search by:",
     searchScope: "Search scope:",
@@ -459,7 +465,8 @@ async function flattenProps(
   modelId: string,
   projectName: string,
   modelNameById: Map<string, string>,
-  api: any
+  api: any,
+  logMessage: (msg: string) => void // Lisatud parameeter logimiseks
 ): Promise<Row> {
   const out: Row = {
     GUID: "",
@@ -528,14 +535,21 @@ async function flattenProps(
 
   // Lisa metadata.globalId GUID_MS jaoks
   try {
+    logMessage(`flattenProps: Proovin lugeda metadata modelId=${modelId}, objId=${obj?.id}`);
     const metaArr = await api?.viewer?.getObjectMetadata?.(modelId, [obj?.id]);
     const metaOne = Array.isArray(metaArr) ? metaArr[0] : metaArr;
+    logMessage(`flattenProps: Metadata tulemus: ${JSON.stringify(metaOne)}`);
     if (metaOne?.globalId) {
       const g = String(metaOne.globalId);
-      out.GUID_MS = out.GUID_MS || g; // Täida, kui tühi
-      out["ReferenceObject.GlobalId"] = g; // Too ka eraldi veeruna välja
+      out.GUID_MS = out.GUID_MS || g;
+      out["ReferenceObject.GlobalId"] = g;
+      logMessage(`flattenProps: Leidsin GUID_MS: ${g}`);
+    } else {
+      logMessage("flattenProps: globalId puudub metadata's");
     }
-  } catch {}
+  } catch (e) {
+    logMessage("flattenProps: getObjectMetadata viga: " + e.message);
+  }
 
   // IFC GUID fallback (runtime->external)
   if (!guidIfc && obj.id) {
@@ -543,8 +557,9 @@ async function flattenProps(
       const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
       const externalId = externalIds[0];
       if (externalId && classifyGuid(externalId) === "IFC") guidIfc = externalId;
+      logMessage(`flattenProps: Leidsin GUID_IFC fallback'ist: ${guidIfc}`);
     } catch (e) {
-      console.warn(`convertToObjectIds failed for ${obj.id}:`, e);
+      logMessage(`flattenProps: convertToObjectIds viga objId=${obj.id}: ${e.message}`);
     }
   }
 
@@ -557,6 +572,7 @@ async function flattenProps(
         const key = "Presentation_Layers.Layer";
         propMap.set(key, layerStr);
         out[key] = layerStr;
+        logMessage(`flattenProps: Leidsin Presentation Layers: ${layerStr}`);
       }
     }
   }
@@ -572,6 +588,7 @@ async function flattenProps(
       if (ref.commonType) out["ReferenceObject.Common_Type"] = ref.commonType;
       if (!guidIfc && ref.guidIfc) guidIfc = ref.guidIfc;
       if (!guidMs && ref.guidMs) guidMs = ref.guidMs;
+      logMessage(`flattenProps: Reference Object info: ${JSON.stringify(ref)}`);
     }
   }
 
@@ -616,6 +633,27 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   return map;
 }
 
+// Uus hook logide jaoks
+function useLogs() {
+  const [logs, setLogs] = useState<string[]>([]);
+  const maxLogs = 500;
+
+  const logMessage = useCallback((msg: string) => {
+    console.log(msg); // Säilita originaal console DevTools'i jaoks
+    setLogs(prev => {
+      const newLogs = [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`];
+      if (newLogs.length > maxLogs) {
+        newLogs.shift(); // Kustuta vanim
+      }
+      return newLogs;
+    });
+  }, []);
+
+  const clearLogs = useCallback(() => setLogs([]), []);
+
+  return { logs, logMessage, clearLogs };
+}
+
 // ColorPicker komponent - 30 värvi 5×6 grid
 const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c: string) => void; t: any }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -638,7 +676,7 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
       {isOpen && (
         <>
           <div
-            style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 999 }}
+            style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }}
             onClick={() => setIsOpen(false)}
           />
           <div
@@ -646,7 +684,7 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
               position: "absolute",
               top: 24,
               right: 0,
-              zIndex: 1000, // Tõstetud
+              zIndex: 100,
               background: "#fff",
               border: "1px solid #e6eaf0",
               borderRadius: 6,
@@ -850,6 +888,7 @@ type Props = { api: any };
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
   const t = translations[settings.language];
+  const { logs, logMessage, clearLogs } = useLogs(); // Lisatud
   const [tab, setTab] = useState<Tab>("search");
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -976,7 +1015,7 @@ export default function AssemblyExporter({ api }: Props) {
     try {
       api.viewer.on?.("selectionChanged", handleSelectionChange);
     } catch (e) {
-      console.warn("Selection listener setup failed:", e);
+      logMessage("Selection listener setup failed: " + e.message);
     }
     return () => {
       clearTimeout(selectionTimeout);
@@ -984,7 +1023,7 @@ export default function AssemblyExporter({ api }: Props) {
         api.viewer.off?.("selectionChanged", handleSelectionChange);
       } catch {}
     };
-  }, [api, busy]);
+  }, [api, busy, logMessage]);
 
   useEffect(() => {
     if (tab === "export" && !busy) discover();
@@ -1033,6 +1072,7 @@ export default function AssemblyExporter({ api }: Props) {
   async function discover() {
     if (!api?.viewer) {
       setDiscoverMsg(t.apiError);
+      logMessage("Viewer API not available");
       return;
     }
     try {
@@ -1043,6 +1083,7 @@ export default function AssemblyExporter({ api }: Props) {
       if (!selectedWithBasic.length) {
         setDiscoverMsg(t.selectObjects);
         setRows([]);
+        logMessage("No selected objects");
         return;
       }
       const projectName = await getProjectName(api);
@@ -1068,9 +1109,9 @@ export default function AssemblyExporter({ api }: Props) {
             properties: fullProperties[idx]?.properties || obj.properties,
           }));
         } catch (e) {
-          console.warn(`getObjectProperties failed for model ${modelId}:`, e);
+          logMessage(`getObjectProperties failed for model ${modelId}: ${e.message}`);
         }
-        const flattened = await Promise.all(fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api)));
+        const flattened = await Promise.all(fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api, logMessage)));
         out.push(...flattened);
         lastSel.push({ modelId, ids: objectRuntimeIds });
         processedObjects += objects.length;
@@ -1083,8 +1124,9 @@ export default function AssemblyExporter({ api }: Props) {
           .replace("{count}", String(out.length))
           .replace("{keys}", String(Array.from(new Set(out.flatMap(r => Object.keys(r)))).length))
       );
+      logMessage(`Discover: Found ${out.length} objects with ${Array.from(new Set(out.flatMap(r => Object.keys(r)))).length} keys`);
     } catch (e: any) {
-      console.error(e);
+      logMessage(`Discover error: ${e?.message || t.unknownError}`);
       setDiscoverMsg(t.error.replace("{error}", e?.message || t.unknownError));
     } finally {
       setBusy(false);
@@ -1097,6 +1139,7 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
       setSearchMsg(t.searchCancelled);
       abortControllerRef.current = null;
+      logMessage("Search cancelled by user");
     }
   }, [t]);
 
@@ -1117,6 +1160,7 @@ export default function AssemblyExporter({ api }: Props) {
       if (!uniqueSearchValues.length) {
         setSearchMsg(t.enterValue);
         setBusy(false);
+        logMessage("Search: No values entered");
         return;
       }
       const viewer = api?.viewer;
@@ -1125,6 +1169,7 @@ export default function AssemblyExporter({ api }: Props) {
         if (abortController.signal.aborted) return;
         setSearchMsg(t.cannotRead);
         setBusy(false);
+        logMessage("Search: Cannot read objects");
         return;
       }
       const totalObjs = mos.reduce((sum, mo) => sum + (mo.objects?.length || 0), 0);
@@ -1147,7 +1192,7 @@ export default function AssemblyExporter({ api }: Props) {
           fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
         } catch (e) {
           if (abortController.signal.aborted) return;
-          console.warn(`getObjectProperties failed for model ${modelId}:`, e);
+          logMessage(`getObjectProperties failed for model ${modelId}: ${e.message}`);
           fullProperties = mo.objects || [];
         }
         const matchIds: number[] = [];
@@ -1157,6 +1202,7 @@ export default function AssemblyExporter({ api }: Props) {
             setSearchMsg(
               settings.language === "et" ? `⚠️ Peatatud: leidsin ${MAX_RESULTS}+ vastet. Täpsusta otsingut.` : `⚠️ Stopped: found ${MAX_RESULTS}+ matches. Refine search.`
             );
+            logMessage(`Search stopped: Max results (${MAX_RESULTS}) reached`);
             break;
           }
           const obj = fullProperties[i];
@@ -1372,7 +1418,6 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }
-
   const toggleResultMark = useCallback((id: number) => {
     setMarkedResults(prev => {
       const next = new Set(prev);
@@ -1381,16 +1426,13 @@ export default function AssemblyExporter({ api }: Props) {
       return next;
     });
   }, []);
-
   const markAllResults = useCallback(() => {
     const foundIds = searchResults.filter(r => r.status === "found").map(r => r.id);
     setMarkedResults(new Set(foundIds));
   }, [searchResults]);
-
   const clearAllMarks = useCallback(() => {
     setMarkedResults(new Set());
   }, []);
-
   const selectMarkedResults = useCallback(async () => {
     try {
       const markedItems = searchResults.filter(r => markedResults.has(r.id) && r.status === "found");
@@ -1404,16 +1446,13 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(t.selectAllError);
     }
   }, [searchResults, markedResults, api, t]);
-
   const removeMarkedResults = useCallback(() => {
     setSearchResults(prev => prev.filter(r => !markedResults.has(r.id)));
     setMarkedResults(new Set());
   }, [markedResults]);
-
   const changeResultColor = useCallback((id: number, color: string) => {
     setSearchResults(prev => prev.map(r => r.id === id ? { ...r, color } : r));
   }, []);
-
   const colorAllResults = useCallback(async () => {
     try {
       setBusy(true);
@@ -1432,7 +1471,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }, [searchResults, api, defaultColor, t, settings.language]);
-
   const greyOutAllModels = useCallback(async () => {
     try {
       await api?.viewer?.setObjectState?.(
@@ -1443,7 +1481,6 @@ export default function AssemblyExporter({ api }: Props) {
       console.error("Grey out failed:", e);
     }
   }, [api]);
-
   const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
     try {
       const viewer = api?.viewer;
@@ -1462,7 +1499,6 @@ export default function AssemblyExporter({ api }: Props) {
       console.error("Zoom error:", e);
     }
   }, [api, greyOutAll, searchResults, defaultColor]);
-
   const initSaveView = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -1474,7 +1510,6 @@ export default function AssemblyExporter({ api }: Props) {
     setViewName(defaultName);
     setShowViewSave(true);
   }, []);
-
   const saveView = useCallback(async () => {
     if (!lastSelection.length || !viewName.trim()) return;
     try {
@@ -1487,12 +1522,10 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(t.viewSaveError.replace("{error}", e?.message || t.unknownError));
     }
   }, [lastSelection, viewName, api, t]);
-
   const cancelSaveView = useCallback(() => {
     setShowViewSave(false);
     setViewName("");
   }, []);
-
   const initSaveOrganizer = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -1504,7 +1537,6 @@ export default function AssemblyExporter({ api }: Props) {
     setOrganizerName(defaultName);
     setShowOrganizerSave(true);
   }, []);
-
   const saveToOrganizer = useCallback(async () => {
     if (!lastSelection.length || !organizerName.trim()) return;
     try {
@@ -1536,12 +1568,10 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }, [lastSelection, organizerName, api, t]);
-
   const cancelSaveOrganizer = useCallback(() => {
     setShowOrganizerSave(false);
     setOrganizerName("");
   }, []);
-
   const removeResult = useCallback((id: number) => {
     setSearchResults(prev => prev.filter(r => r.id !== id));
     setMarkedResults(prev => {
@@ -1550,7 +1580,6 @@ export default function AssemblyExporter({ api }: Props) {
       return next;
     });
   }, []);
-
   const moveColumn = useCallback(
     (from: number, to: number) => {
       const newOrder = [...columnOrder];
@@ -1562,24 +1591,20 @@ export default function AssemblyExporter({ api }: Props) {
     },
     [columnOrder]
   );
-
   const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/html", e.currentTarget.innerHTML);
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "0.4";
   }, []);
-
   const handleDragEnd = useCallback((e: DragEvent<HTMLDivElement>) => {
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "1";
     setDraggedIndex(null);
   }, []);
-
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }, []);
-
   const handleDrop = useCallback(
     (e: DragEvent<HTMLDivElement>, dropIndex: number) => {
       e.preventDefault();
@@ -1593,7 +1618,6 @@ export default function AssemblyExporter({ api }: Props) {
     },
     [draggedIndex, columnOrder]
   );
-
   async function exportData() {
     await discover();
     if (!rows.length) {
@@ -1639,7 +1663,6 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(t.exportError.replace("{error}", e?.message || e));
     }
   }
-
   async function sendToGoogleSheet() {
     const { scriptUrl, secret, autoColorize } = settings;
     if (!scriptUrl || !secret) {
@@ -1679,7 +1702,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
   async function colorLastSelection() {
     const viewer = api?.viewer;
     let blocks = lastSelection;
@@ -1698,7 +1720,6 @@ export default function AssemblyExporter({ api }: Props) {
       await viewer?.setObjectState?.(selector, { color: { r, g, b, a: 255 } });
     }
   }
-
   async function resetState() {
     try {
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
@@ -1707,7 +1728,6 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(t.resetFailed.replace("{error}", e?.message || e));
     }
   }
-
   const c = styles;
   const scopeButtonStyle = (isActive: boolean): CSSProperties => ({
     padding: "4px 8px",
@@ -1719,9 +1739,7 @@ export default function AssemblyExporter({ api }: Props) {
     flex: 1,
     fontSize: 11,
   });
-
   const ScanAppLazy = React.lazy(() => import("./ScanApp").catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> })));
-
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
@@ -1742,6 +1760,9 @@ export default function AssemblyExporter({ api }: Props) {
         </button>
         <button style={{ ...c.tab, ...(tab === "about" ? c.tabActive : {}) }} onClick={() => setTab("about")}>
           {t.about}
+        </button>
+        <button style={{ ...c.tab, ...(tab === "log" ? c.tabActive : {}) }} onClick={() => setTab("log")}>
+          {t.log}
         </button>
       </div>
       <div style={c.page}>
@@ -2213,7 +2234,7 @@ export default function AssemblyExporter({ api }: Props) {
               <label style={c.label}>{t.ocrPrompt}</label>
               <textarea
                 value={settings.ocrPrompt}
-                onChange={e => updateSettings({ ocrPrompt: e.target.value })}
+                onChange={e => updateSettings({ ocrPrompt: e.target.value})}
                 placeholder={t.pasteHint}
                 style={{ ...c.textarea, height: 60, flex: 1 }}
               />
@@ -2308,6 +2329,27 @@ export default function AssemblyExporter({ api }: Props) {
             <div style={c.small}>{t.author}</div>
           </div>
         )}
+        {tab === "log" && (
+          <div style={c.section}>
+            <h3 style={c.heading}>{t.log}</h3>
+            <div style={c.controls}>
+              <button style={c.btnGhost} onClick={clearLogs}>
+                {t.clearLogs}
+              </button>
+            </div>
+            <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid #e6eaf0", padding: 8, background: "#f6f8fb", fontFamily: "monospace", fontSize: 11 }}>
+              {logs.length === 0 ? (
+                <div>{t.noLogs}</div>
+              ) : (
+                logs.map((log, i) => (
+                  <div key={i} style={{ marginBottom: 4, whiteSpace: "pre-wrap" }}>
+                    {log}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2317,7 +2359,7 @@ export default function AssemblyExporter({ api }: Props) {
 const styles: Record<string, CSSProperties> = {
   shell: {
     fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-    color: "#757575",
+    color: "#757575", // Hallikas tekst
     background: "#fff",
     height: "100%",
     display: "flex",
@@ -2326,7 +2368,7 @@ const styles: Record<string, CSSProperties> = {
   topbar: {
     display: "flex",
     flexWrap: "wrap",
-    gap: 4,
+    gap: 4, // Kompaktsem
     padding: 4,
     borderBottom: "1px solid #e6eaf0",
     background: "#fff",
@@ -2335,7 +2377,7 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 20,
   },
   tab: {
-    padding: "4px 6px",
+    padding: "4px 6px", // Kompaktsem
     borderRadius: 6,
     border: "1px solid #cfd6df",
     background: "#fff",
@@ -2349,38 +2391,38 @@ const styles: Record<string, CSSProperties> = {
     borderColor: "#0a3a67",
   },
   page: {
-    padding: 8,
+    padding: 8, // Kompaktsem
     overflow: "auto",
     flex: 1,
   },
   section: {
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 8, // Kompaktsem
     maxWidth: 920,
   },
   heading: {
     margin: 0,
-    fontSize: 16,
+    fontSize: 16, // Kompaktsem
   },
   fieldGroup: {
     display: "flex",
     flexDirection: "column",
-    gap: 4,
+    gap: 4, // Kompaktsem
   },
   labelTop: {
     fontSize: 11,
     opacity: 0.75,
   },
   input: {
-    padding: "4px 6px",
+    padding: "4px 6px", // Kompaktsem
     border: "1px solid #cfd6df",
     borderRadius: 6,
     outline: "none",
   },
   inputFilter: {
     width: "100%",
-    maxHeight: "120px",
+    maxHeight: "120px", // Kompaktsem
     padding: "4px 6px",
     border: "1px solid #cfd6df",
     borderRadius: 6,
@@ -2399,13 +2441,13 @@ const styles: Record<string, CSSProperties> = {
   controls: {
     display: "flex",
     alignItems: "center",
-    gap: 4,
+    gap: 4, // Kompaktsem
     flexWrap: "wrap",
     position: "relative",
     zIndex: 10,
   },
   btn: {
-    padding: "6px 8px",
+    padding: "6px 8px", // Kompaktsem
     borderRadius: 6,
     border: "1px solid #0a3a67",
     background: "#0a3a67",
@@ -2424,7 +2466,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11,
   },
   miniBtn: {
-    padding: "3px 6px",
+    padding: "3px 6px", // Kompaktsem
     borderRadius: 6,
     border: "1px solid #cfd6df",
     background: "#fff",
@@ -2455,18 +2497,16 @@ const styles: Record<string, CSSProperties> = {
   resultsTable: {
     display: "flex",
     flexDirection: "column",
-    gap: 4,
+    gap: 4, // Kompaktsem, et 100+ rida mahuks
   },
   resultRow: {
     display: "grid",
-    gridTemplateColumns: "16px 22px 18px 1fr minmax(42px,48px) 110px", // Parandatud veerud loetavuseks
-    columnGap: 6,
-    rowGap: 2,
+    gridTemplateColumns: "16px 24px 24px 1fr 36px 120px", // Kitsamad veerud, et ei peitu
+    gap: 4,
     alignItems: "center",
     padding: 4,
     borderRadius: 6,
     border: "1px solid #e6eaf0",
-    minWidth: 0,
   },
   resultRowMarked: {
     background: "#e7f3ff",
@@ -2486,7 +2526,6 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11,
   },
   resultValue: {
-    minWidth: 0, // Lisatud, et veerg saaks kokku tõmmata
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -2502,13 +2541,12 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     gap: 4,
     justifyContent: "flex-end",
-    whiteSpace: "nowrap", // Nupud ei murdu reale
   },
   list: {
     display: "flex",
     flexDirection: "column",
     gap: 8,
-    maxHeight: 360,
+    maxHeight: 360, // Kompaktsem
     overflow: "auto",
     border: "1px solid #e6eaf0",
     borderRadius: 6,
@@ -2528,7 +2566,7 @@ const styles: Record<string, CSSProperties> = {
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", // Kompaktsem
     gap: 4,
   },
   checkRow: {
@@ -2585,7 +2623,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
   },
   label: {
-    width: 180,
+    width: 180, // Optimeeritud proportsioon
     fontSize: 11,
     opacity: 0.75,
   },
