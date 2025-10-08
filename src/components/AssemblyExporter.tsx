@@ -126,6 +126,10 @@ const translations = {
     ocrWebhookUrl: "OCR Webhook URL",
     ocrWebhookSecret: "OCR Secret",
     ocrPrompt: "Lisa OCR juhised",
+    openaiApiKey: "OpenAI API võti",
+    openaiRemember: "Salvesta sessiooniks",
+    openaiSecurityNote: "⚠️ API võti salvestatakse ainult sessiooniks (kaob brauseri sulgemisel). Soovitame kasutada webhook-i.",
+    revealKey: "👁️",
     saveToView: "Salvesta vaatesse",
     viewNameLabel: "Vaate nimi:",
     saveViewButton: "Salvesta vaade",
@@ -265,6 +269,10 @@ const translations = {
     ocrWebhookUrl: "OCR Webhook URL",
     ocrWebhookSecret: "OCR Secret",
     ocrPrompt: "Additional OCR instructions",
+    openaiApiKey: "OpenAI API Key",
+    openaiRemember: "Save for session",
+    openaiSecurityNote: "⚠️ API key saved only for session (cleared when browser closes). We recommend using webhook approach.",
+    revealKey: "👁️",
     saveToView: "Save to view",
     viewNameLabel: "View name:",
     saveViewButton: "Save view",
@@ -318,6 +326,8 @@ interface AppSettings {
   ocrWebhookUrl: string;
   ocrSecret: string;
   ocrPrompt: string;
+  openaiApiKey?: string;
+  openaiRemember?: boolean;
 }
 
 const DEFAULT_COLORS = {
@@ -330,6 +340,16 @@ const DEFAULT_COLORS = {
   purple: { r: 160, g: 0, b: 200 },
 };
 
+/**
+ * Hook for managing application settings with security-conscious storage.
+ * 
+ * SECURITY NOTE:
+ * - Non-sensitive settings are stored in localStorage for persistence across sessions.
+ * - Sensitive values (secret, ocrSecret, openaiApiKey) are stored in sessionStorage only
+ *   when explicitly opted in by the user (e.g., openaiRemember checkbox).
+ * - sessionStorage is cleared when the browser tab/window is closed.
+ * - For production use, server-side webhook approach is strongly recommended over client-side API keys.
+ */
 function useSettings() {
   const DEFAULTS: AppSettings = {
     scriptUrl: "",
@@ -341,24 +361,93 @@ function useSettings() {
     ocrWebhookUrl: "",
     ocrSecret: "",
     ocrPrompt: "",
+    openaiApiKey: "",
+    openaiRemember: false,
   };
+  
   const [settings, setSettings] = useState<AppSettings>(() => {
+    // Load non-sensitive settings from localStorage
     const raw = window.localStorage?.getItem?.("assemblyExporterSettings");
-    if (!raw) return DEFAULTS;
-    try {
-      const parsed = JSON.parse(raw) as Partial<AppSettings>;
-      return { ...DEFAULTS, ...parsed };
-    } catch {
-      return DEFAULTS;
+    let loaded = { ...DEFAULTS };
+    
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<AppSettings>;
+        loaded = { ...DEFAULTS, ...parsed };
+      } catch {
+        loaded = DEFAULTS;
+      }
     }
+    
+    // Load sensitive values from sessionStorage if present
+    try {
+      const sessionSecret = window.sessionStorage?.getItem?.("assemblyExporterSecret");
+      const sessionOcrSecret = window.sessionStorage?.getItem?.("assemblyExporterOcrSecret");
+      const sessionOpenaiKey = window.sessionStorage?.getItem?.("assemblyExporterOpenaiKey");
+      
+      if (sessionSecret) loaded.secret = sessionSecret;
+      if (sessionOcrSecret) loaded.ocrSecret = sessionOcrSecret;
+      if (sessionOpenaiKey) loaded.openaiApiKey = sessionOpenaiKey;
+    } catch {
+      // sessionStorage not available or error reading
+    }
+    
+    return loaded;
   });
+  
   const update = useCallback((patch: Partial<AppSettings>) => {
     setSettings(prev => {
       const next = { ...prev, ...patch };
-      window.localStorage?.setItem?.("assemblyExporterSettings", JSON.stringify(next));
+      
+      // Prepare data for localStorage: exclude sensitive fields
+      const nonSensitive = { ...next };
+      delete nonSensitive.secret;
+      delete nonSensitive.ocrSecret;
+      delete nonSensitive.openaiApiKey;
+      
+      // Save non-sensitive settings to localStorage
+      try {
+        window.localStorage?.setItem?.("assemblyExporterSettings", JSON.stringify(nonSensitive));
+      } catch (e) {
+        console.warn("Failed to save settings to localStorage:", e);
+      }
+      
+      // Save sensitive values to sessionStorage if provided or if remember flag is set
+      try {
+        // Always save secret and ocrSecret if provided (existing behavior)
+        if (patch.secret !== undefined) {
+          if (next.secret) {
+            window.sessionStorage?.setItem?.("assemblyExporterSecret", next.secret);
+          } else {
+            window.sessionStorage?.removeItem?.("assemblyExporterSecret");
+          }
+        }
+        
+        if (patch.ocrSecret !== undefined) {
+          if (next.ocrSecret) {
+            window.sessionStorage?.setItem?.("assemblyExporterOcrSecret", next.ocrSecret);
+          } else {
+            window.sessionStorage?.removeItem?.("assemblyExporterOcrSecret");
+          }
+        }
+        
+        // Save openaiApiKey only if openaiRemember is true
+        if (patch.openaiApiKey !== undefined || patch.openaiRemember !== undefined) {
+          if (next.openaiRemember && next.openaiApiKey) {
+            window.sessionStorage?.setItem?.("assemblyExporterOpenaiKey", next.openaiApiKey);
+          } else if (patch.openaiRemember === false) {
+            // If unchecking remember, clear from sessionStorage
+            window.sessionStorage?.removeItem?.("assemblyExporterOpenaiKey");
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to save secrets to sessionStorage:", e);
+      }
+      
       return next;
     });
   }, []);
+  
   return [settings, update] as const;
 }
 
@@ -880,6 +969,7 @@ export default function AssemblyExporter({ api }: Props) {
   const [showOrganizerSave, setShowOrganizerSave] = useState(false);
   const [organizerName, setOrganizerName] = useState("");
   const [defaultColor, setDefaultColor] = useState(rgbToHex(settings.colorizeColor.r, settings.colorizeColor.g, settings.colorizeColor.b));
+  const [showOpenaiKey, setShowOpenaiKey] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -2219,6 +2309,7 @@ export default function AssemblyExporter({ api }: Props) {
                   ocrSecret: settings.ocrSecret,
                   ocrPrompt: settings.ocrPrompt,
                   language: settings.language,
+                  openaiApiKey: settings.openaiApiKey,
                 }}
                 translations={t}
                 styles={c}
@@ -2263,6 +2354,54 @@ export default function AssemblyExporter({ api }: Props) {
             <div style={c.row}>
               <label style={c.label}>{t.ocrPrompt}</label>
               <textarea value={settings.ocrPrompt} onChange={e => updateSettings({ ocrPrompt: e.target.value})} placeholder={t.pasteHint} style={{ ...c.textarea, height: 80, flex: 1 }} />
+            </div>
+            
+            {/* OpenAI API Key Section */}
+            <div style={{ padding: 12, border: "1px solid #f59e0b", borderRadius: 10, background: "#fffbeb", marginTop: 8 }}>
+              <div style={c.row}>
+                <label style={c.label}>{t.openaiApiKey}</label>
+                <div style={{ display: "flex", gap: 6, flex: 1, alignItems: "center" }}>
+                  <input 
+                    type={showOpenaiKey ? "text" : "password"} 
+                    value={settings.openaiApiKey || ""} 
+                    onChange={e => updateSettings({ openaiApiKey: e.target.value })} 
+                    placeholder="sk-..." 
+                    style={{ ...c.input, flex: 1 }} 
+                  />
+                  <button
+                    style={{
+                      ...c.miniBtn,
+                      width: 36,
+                      height: 32,
+                      padding: 0,
+                      background: showOpenaiKey ? "#fef2f2" : "#f6f8fb",
+                      borderColor: showOpenaiKey ? "#fca5a5" : "#cfd6df",
+                    }}
+                    onMouseDown={() => {
+                      setShowOpenaiKey(true);
+                      setTimeout(() => setShowOpenaiKey(false), 3000);
+                    }}
+                    title="Reveal for 3 seconds"
+                  >
+                    {t.revealKey}
+                  </button>
+                </div>
+              </div>
+              <div style={{ ...c.row, marginTop: 8 }}>
+                <label style={{ ...c.label, width: "auto" }}></label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={settings.openaiRemember || false}
+                    onChange={e => updateSettings({ openaiRemember: e.target.checked })}
+                    style={{ cursor: "pointer", width: 16, height: 16 }}
+                  />
+                  {t.openaiRemember}
+                </label>
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 8, lineHeight: 1.4 }}>
+                {t.openaiSecurityNote}
+              </div>
             </div>
             
             <div style={{ padding: 12, border: "1px solid #e6eaf0", borderRadius: 10, background: "#f6f8fb" }}>

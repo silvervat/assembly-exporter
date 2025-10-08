@@ -13,6 +13,7 @@ type Props = {
     ocrSecret: string;
     ocrPrompt: string;
     language: "et" | "en";
+    openaiApiKey?: string;
   };
   onConfirm?: (marks: string[], rows: Row[], markKey: string, qtyKey: string) => void;
   translations?: any;
@@ -67,9 +68,18 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     }
   }
 
+  /**
+   * Run OCR using either webhook (preferred) or OpenAI API (fallback).
+   * 
+   * SECURITY NOTE:
+   * - Webhook approach is recommended for production use as it keeps API keys on the server side.
+   * - Direct OpenAI API calls expose the API key in the client, which is a security risk.
+   * - Use OpenAI API fallback only for testing or when webhook is not available.
+   * 
+   * @param imageBase64 - Base64-encoded image data
+   * @returns Extracted text from the image
+   */
   async function runGptOcr(imageBase64: string): Promise<string> {
-    if (!settings?.ocrWebhookUrl) throw new Error("OCR webhook URL pole seadistatud!");
-
     const columns = targetColumns.trim();
     const columnInstruction = columns 
       ? `Extract ONLY these columns in this exact order: ${columns}. If column names are not visible in the image, use column positions (1st column from left = ${columns.split(',')[0]?.trim() || '1'}, 2nd column = ${columns.split(',')[1]?.trim() || '2'}, etc).`
@@ -85,28 +95,103 @@ If you cannot read a cell clearly, put "???" there.
 Do not skip any rows.
 Do not add extra rows.
 
-${settings.ocrPrompt || ""}`;
+${settings?.ocrPrompt || ""}`;
 
-    const response = await fetch(settings.ocrWebhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        secret: settings.ocrSecret,
-        file: {
-          name: files[0]?.name || "image.jpg",
-          type: files[0]?.type || "image/jpeg",
-          data: imageBase64
-        },
-        prompt: basePrompt
-      })
-    });
+    // Create AbortController with 30s timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    if (!response.ok) throw new Error(`Webhook viga: ${response.status}`);
+    try {
+      // Path 1: Use webhook if available (RECOMMENDED)
+      if (settings?.ocrWebhookUrl) {
+        const response = await fetch(settings.ocrWebhookUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            secret: settings.ocrSecret,
+            file: {
+              name: files[0]?.name || "image.jpg",
+              type: files[0]?.type || "image/jpeg",
+              data: imageBase64
+            },
+            prompt: basePrompt
+          }),
+          signal: controller.signal
+        });
 
-    const data = await response.json();
-    if (!data.ok) throw new Error(data.error || "OCR ebaõnnestus");
-    
-    return data.text || "";
+        if (!response.ok) throw new Error(`Webhook viga: ${response.status}`);
+
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || "OCR ebaõnnestus");
+        
+        return data.text || "";
+      }
+      
+      // Path 2: Fallback to OpenAI API if webhook not available but API key exists
+      if (settings?.openaiApiKey) {
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${settings.openaiApiKey}`
+          },
+          body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: basePrompt },
+                  { 
+                    type: "image_url", 
+                    image_url: { 
+                      url: `data:${files[0]?.type || "image/jpeg"};base64,${imageBase64}` 
+                    } 
+                  }
+                ]
+              }
+            ],
+            max_tokens: 2000
+          }),
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`OpenAI API viga: ${response.status} - ${errorData.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        // Parse response reliably - try multiple possible formats
+        let text = "";
+        
+        // Format 1: choices[0].message.content (standard chat completions format)
+        if (data.choices?.[0]?.message?.content) {
+          text = data.choices[0].message.content;
+        }
+        // Format 2: output_text (alternative format)
+        else if (data.output_text) {
+          text = data.output_text;
+        }
+        // Format 3: output[].content (alternative format)
+        else if (Array.isArray(data.output) && data.output[0]?.content) {
+          text = data.output[0].content;
+        }
+        
+        if (!text) {
+          throw new Error("OpenAI API tagastas tühja vastuse");
+        }
+        
+        return text;
+      }
+      
+      // Neither webhook nor API key available
+      throw new Error("OCR pole seadistatud! Lisa webhook URL või OpenAI API võti seadetes.");
+      
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async function runOcr() {
@@ -123,8 +208,9 @@ ${settings.ocrPrompt || ""}`;
         return;
       }
 
-      if (!settings?.ocrWebhookUrl || !settings?.ocrSecret) {
-        setMsg("❌ OCR webhook URL või secret puudub. Lisa need seadetes!");
+      // Check if either webhook or API key is configured
+      if (!settings?.ocrWebhookUrl && !settings?.openaiApiKey) {
+        setMsg("❌ OCR pole seadistatud! Lisa webhook URL või OpenAI API võti seadetes.");
         return;
       }
 
