@@ -631,7 +631,7 @@ BR-88\t4\tL 100x100x10`;
               onClick={onConfirmClick}
               disabled={warningRows > 0 || notFoundRows > 0}
             >
-              {t.confirmAndSearch || `✅ Kinnita (${previewMarks.length})`}
+              {t.confirmAndSearch || `✅ Kinnita ! (${previewMarks.length})`}
             </button>
             {(warningRows > 0 || notFoundRows > 0) && (
               <div style={{ marginTop: 4, fontSize: 11, color: "#dc2626" }}>
