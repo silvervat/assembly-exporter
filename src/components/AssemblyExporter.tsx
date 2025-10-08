@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent, Suspense } from "react";
 import * as XLSX from "xlsx";
 import React from "react";
-
 type Language = "et" | "en";
 type Tab = "search" | "discover" | "export" | "settings" | "about" | "scan";
 type Row = Record<string, string>;
 type ExportFormat = "clipboard" | "excel" | "csv";
-
+type RowHeight = "small" | "medium" | "large";
 const translations = {
   et: {
     search: "OTSI",
@@ -287,7 +286,6 @@ const translations = {
     defaultColorChanged: "Default color changed",
   },
 };
-
 const LOCKED_ORDER = ["GUID", "GUID_IFC", "GUID_MS", "Project", "ModelId", "FileName", "Name", "Type"] as const;
 const FORCE_TEXT_KEYS = new Set([
   "Tekla_Assembly.AssemblyCast_unit_top_elevation",
@@ -296,7 +294,6 @@ const FORCE_TEXT_KEYS = new Set([
 const DEBOUNCE_MS = 300;
 const HIGHLIGHT_DURATION_MS = 2000;
 const MESSAGE_DURATION_MS = 3000;
-
 // Värvipalett - 30 unikaalset värvi (5×6 grid)
 const COLORS = [
   "#E53935", "#D81B60", "#8E24AA", "#5E35B1", "#3949AB", "#1E88E5",
@@ -305,9 +302,7 @@ const COLORS = [
   "#757575", "#546E7A", "#EF5350", "#EC407A", "#AB47BC", "#7E57C2",
   "#5C6BC0", "#42A5F5", "#29B6F6", "#26C6DA", "#26A69A", "#66BB6A"
 ];
-
 type DefaultPreset = "recommended" | "tekla" | "ifc";
-
 interface AppSettings {
   scriptUrl: string;
   secret: string;
@@ -318,8 +313,8 @@ interface AppSettings {
   ocrWebhookUrl: string;
   ocrSecret: string;
   ocrPrompt: string;
+  rowHeight: RowHeight;
 }
-
 const DEFAULT_COLORS = {
   darkRed: { r: 140, g: 0, b: 0 },
   red: { r: 255, g: 0, b: 0 },
@@ -329,7 +324,6 @@ const DEFAULT_COLORS = {
   blue: { r: 0, g: 100, b: 255 },
   purple: { r: 160, g: 0, b: 200 },
 };
-
 function useSettings() {
   const DEFAULTS: AppSettings = {
     scriptUrl: "",
@@ -341,6 +335,7 @@ function useSettings() {
     ocrWebhookUrl: "",
     ocrSecret: "",
     ocrPrompt: "",
+    rowHeight: "medium",
   };
   const [settings, setSettings] = useState<AppSettings>(() => {
     const raw = window.localStorage?.getItem?.("assemblyExporterSettings");
@@ -361,7 +356,6 @@ function useSettings() {
   }, []);
   return [settings, update] as const;
 }
-
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result ? {
@@ -370,14 +364,12 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     b: parseInt(result[3], 16)
   } : { r: 140, g: 0, b: 0 };
 }
-
 function rgbToHex(r: number, g: number, b: number): string {
   return "#" + [r, g, b].map(x => {
     const hex = x.toString(16);
     return hex.length === 1 ? "0" + hex : hex;
   }).join("");
 }
-
 function sanitizeKey(s: string) {
   return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
 }
@@ -410,7 +402,6 @@ function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
     return "MS";
   return "UNKNOWN";
 }
-
 /** ---- Fallback apid: Presentation Layers & Reference Object ---- */
 async function getPresentationLayerString(api: any, modelId: string, runtimeId: number): Promise<string> {
   try {
@@ -424,7 +415,6 @@ async function getPresentationLayerString(api: any, modelId: string, runtimeId: 
   } catch {}
   return "";
 }
-
 async function getReferenceObjectInfo(
   api: any,
   modelId: string,
@@ -450,7 +440,6 @@ async function getReferenceObjectInfo(
   return out;
 }
 /** ---------------------------------------------------------------- */
-
 async function flattenProps(
   obj: any,
   modelId: string,
@@ -468,7 +457,6 @@ async function flattenProps(
     Name: "",
     Type: "Unknown",
   };
-
   const propMap = new Map<string, string>();
   const keyCounts = new Map<string, number>();
   const push = (group: string, name: string, val: unknown) => {
@@ -486,7 +474,6 @@ async function flattenProps(
     propMap.set(key, s);
     out[key] = s;
   };
-
   // Property setid (sh peidetud)
   if (Array.isArray(obj?.properties)) {
     obj.properties.forEach((propSet: any) => {
@@ -503,7 +490,6 @@ async function flattenProps(
   } else if (typeof obj?.properties === "object" && obj.properties !== null) {
     Object.entries(obj.properties).forEach(([key, val]) => push("Properties", key, val));
   }
-
   // Standard väljad
   if (obj?.id) out.ObjectId = String(obj.id);
   if (obj?.name) out.Name = String(obj.name);
@@ -511,7 +497,6 @@ async function flattenProps(
   if (obj?.product?.name) out.ProductName = String(obj.product.name);
   if (obj?.product?.description) out.ProductDescription = String(obj.product.description);
   if (obj?.product?.type) out.ProductType = String(obj.product.type);
-
   // GUIDid propidest
   let guidIfc = "";
   let guidMs = "";
@@ -521,7 +506,6 @@ async function flattenProps(
     if (cls === "IFC" && !guidIfc) guidIfc = v;
     if (cls === "MS" && !guidMs) guidMs = v;
   }
-
   // IFC GUID fallback (runtime->external)
   if (!guidIfc && obj.id) {
     try {
@@ -532,7 +516,6 @@ async function flattenProps(
       console.warn(`convertToObjectIds failed for ${obj.id}:`, e);
     }
   }
-
   // Presentation Layers fallback
   if (![...propMap.keys()].some(k => k.toLowerCase().startsWith("presentation_layers."))) {
     const rid = Number(obj?.id);
@@ -545,7 +528,6 @@ async function flattenProps(
       }
     }
   }
-
   // Reference Object fallback
   const hasRefBlock = [...propMap.keys()].some(k => k.toLowerCase().startsWith("referenceobject."));
   if (!hasRefBlock) {
@@ -559,14 +541,11 @@ async function flattenProps(
       if (!guidMs && ref.guidMs) guidMs = ref.guidMs;
     }
   }
-
   out.GUID_IFC = guidIfc;
   out.GUID_MS = guidMs;
   out.GUID = guidIfc || guidMs || "";
-
   return out;
 }
-
 async function getProjectName(api: any): Promise<string> {
   try {
     const proj =
@@ -600,24 +579,23 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   }
   return map;
 }
-
 // ColorPicker komponent - 30 värvi 5×6 grid
 const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c: string) => void; t: any }) => {
   const [isOpen, setIsOpen] = useState(false);
   const currentColor = value || COLORS[0];
-  
+ 
   return (
     <div style={{ position: "relative", display: "inline-block" }}>
       <div
         onClick={() => setIsOpen(!isOpen)}
         style={{
-          width: 28,
-          height: 28,
-          borderRadius: 6,
+          width: 20, // Kompaktsem
+          height: 20,
+          borderRadius: 4,
           background: currentColor,
-          border: "2px solid #e6eaf0",
+          border: "1px solid #e6eaf0",
           cursor: "pointer",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
         }}
         title={t.color}
       />
@@ -637,17 +615,17 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
           <div
             style={{
               position: "absolute",
-              top: 32,
+              top: 24,
               right: 0,
               zIndex: 100,
               background: "#fff",
               border: "1px solid #e6eaf0",
-              borderRadius: 8,
-              padding: 8,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              borderRadius: 6,
+              padding: 6,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
               display: "grid",
-              gridTemplateColumns: "repeat(6, 28px)",
-              gap: 6,
+              gridTemplateColumns: "repeat(6, 20px)",
+              gap: 4,
             }}
           >
             {COLORS.map(color => (
@@ -658,9 +636,9 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
                   setIsOpen(false);
                 }}
                 style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 6,
+                  width: 20,
+                  height: 20,
+                  borderRadius: 4,
                   background: color,
                   border: currentColor === color ? "2px solid #1E88E5" : "1px solid #e6eaf0",
                   cursor: "pointer",
@@ -670,14 +648,14 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
                   transition: "transform 0.15s ease",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = "scale(1.15)";
+                  e.currentTarget.style.transform = "scale(1.1)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.transform = "scale(1)";
                 }}
               >
                 {currentColor === color && (
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
                     <path d="M13 4L6 11L3 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 )}
@@ -689,8 +667,7 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
     </div>
   );
 });
-
-// MiniToggle komponent - 56×28px
+// MiniToggle komponent - kompaktsem
 const MiniToggle = memo(({ checked, onChange, color = "blue" }: { checked: boolean; onChange: (v: boolean) => void; color?: string }) => {
   const colors = {
     blue: { bg: "#1E88E5", bgOff: "#CBD5E1" },
@@ -699,15 +676,15 @@ const MiniToggle = memo(({ checked, onChange, color = "blue" }: { checked: boole
     orange: { bg: "#F97316", bgOff: "#CBD5E1" },
   };
   const c = colors[color as keyof typeof colors] || colors.blue;
-  
+ 
   return (
     <button
       onClick={() => onChange(!checked)}
       style={{
         position: "relative",
-        width: 56,
-        height: 28,
-        borderRadius: 14,
+        width: 40, // Kompaktsem
+        height: 20,
+        borderRadius: 10,
         border: "none",
         background: checked ? c.bg : c.bgOff,
         cursor: "pointer",
@@ -719,98 +696,95 @@ const MiniToggle = memo(({ checked, onChange, color = "blue" }: { checked: boole
         style={{
           position: "absolute",
           top: 2,
-          left: checked ? 30 : 2,
-          width: 24,
-          height: 24,
-          borderRadius: 12,
+          left: checked ? 22 : 2,
+          width: 16,
+          height: 16,
+          borderRadius: 8,
           background: "#fff",
-          boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.1)",
           transition: "left 0.3s ease",
         }}
       />
     </button>
   );
 });
-
-// LargeToggle komponent - 80×40px ON/OFF tekstiga
+// LargeToggle komponent - kompaktsem
 const LargeToggle = memo(({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => {
   return (
     <button
       onClick={() => onChange(!checked)}
       style={{
         position: "relative",
-        width: 80,
-        height: 40,
-        borderRadius: 20,
+        width: 60, // Kompaktsem
+        height: 30,
+        borderRadius: 15,
         border: "none",
         background: checked ? "linear-gradient(135deg, #10B981 0%, #059669 100%)" : "linear-gradient(135deg, #94A3B8 0%, #64748B 100%)",
         cursor: "pointer",
         transition: "all 0.3s ease",
         outline: "none",
-        boxShadow: "inset 0 2px 4px rgba(0,0,0,0.1)",
-        fontWeight: 600,
-        fontSize: 11,
+        boxShadow: "inset 0 1px 2px rgba(0,0,0,0.05)",
+        fontWeight: 500,
+        fontSize: 10,
         color: "#fff",
         display: "flex",
         alignItems: "center",
         justifyContent: checked ? "flex-start" : "flex-end",
-        padding: "0 8px",
+        padding: "0 6px",
       }}
     >
-      <span style={{ position: "absolute", left: checked ? 10 : "auto", right: checked ? "auto" : 10 }}>
+      <span style={{ position: "absolute", left: checked ? 8 : "auto", right: checked ? "auto" : 8 }}>
         {checked ? "ON" : "OFF"}
       </span>
       <div
         style={{
           position: "absolute",
-          top: 4,
-          left: checked ? 44 : 4,
-          width: 32,
-          height: 32,
-          borderRadius: 16,
+          top: 3,
+          left: checked ? 33 : 3,
+          width: 24,
+          height: 24,
+          borderRadius: 12,
           background: "#fff",
-          boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
           transition: "left 0.3s ease",
         }}
       />
     </button>
   );
 });
-
 // ResultRow komponent
-const ResultRow = memo(({ result, onRemove, onZoom, onToggleMark, onColorChange, isMarked, t }: any) => {
+const ResultRow = memo(({ result, onRemove, onZoom, onToggleMark, onColorChange, isMarked, t, rowHeight }: any) => {
   const displayValue = result.actualValue || result.originalValue;
   const isPartialMatch =
     result.isPartial && result.actualValue && result.actualValue !== result.originalValue;
-
+  const rowStyle = {
+    ...styles.resultRow,
+    ...(isMarked ? styles.resultRowMarked : {}),
+    ...(result.status === "found"
+      ? result.isPartial
+        ? styles.resultRowPartial
+        : styles.resultRowFound
+      : styles.resultRowNotFound),
+    height: rowHeight === "small" ? 24 : rowHeight === "large" ? 48 : 36, // Rea kõrgus
+  };
   return (
-    <div
-      style={{
-        ...styles.resultRow,
-        ...(isMarked ? styles.resultRowMarked : {}),
-        ...(result.status === "found"
-          ? result.isPartial
-            ? styles.resultRowPartial
-            : styles.resultRowFound
-          : styles.resultRowNotFound),
-      }}
-    >
+    <div style={rowStyle}>
       {result.status === "found" && (
         <input
           type="checkbox"
           checked={isMarked}
           onChange={() => onToggleMark(result.id)}
-          style={{ cursor: "pointer", width: 16, height: 16 }}
+          style={{ cursor: "pointer", width: 14, height: 14 }} // Kompaktsem
         />
       )}
-      {result.status === "notfound" && <div style={{ width: 16 }} />}
-      
+      {result.status === "notfound" && <div style={{ width: 14 }} />}
+     
       <ColorPicker
         value={result.color || COLORS[0]}
         onChange={(color) => onColorChange(result.id, color)}
         t={t}
       />
-      
+     
       <span style={styles.resultStatus}>
         {result.status === "found" ? (result.isPartial ? "⚠️" : "✅") : "❌"}
       </span>
@@ -820,7 +794,7 @@ const ResultRow = memo(({ result, onRemove, onZoom, onToggleMark, onColorChange,
       >
         {displayValue}
         {isPartialMatch && (
-          <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>← {result.originalValue}</span>
+          <span style={{ fontSize: 9, opacity: 0.6, marginLeft: 3 }}>← {result.originalValue}</span> // Kompaktsem font
         )}
       </span>
       <span style={styles.resultCount}>
@@ -828,7 +802,7 @@ const ResultRow = memo(({ result, onRemove, onZoom, onToggleMark, onColorChange,
       </span>
       <div style={styles.resultActions}>
         {result.status === "found" && result.modelId && result.ids && (
-          <button style={{ ...styles.miniBtn, height: 36 }} onClick={() => onZoom(result.modelId, result.ids)} title="Zoom">
+          <button style={{ ...styles.miniBtn, height: 28 }} onClick={() => onZoom(result.modelId, result.ids)} title="Zoom"> // Kompaktsem
             {t.zoom}
           </button>
         )}
@@ -843,9 +817,7 @@ const ResultRow = memo(({ result, onRemove, onZoom, onToggleMark, onColorChange,
     </div>
   );
 });
-
 type Props = { api: any };
-
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
   const t = translations[settings.language];
@@ -880,8 +852,8 @@ export default function AssemblyExporter({ api }: Props) {
   const [showOrganizerSave, setShowOrganizerSave] = useState(false);
   const [organizerName, setOrganizerName] = useState("");
   const [defaultColor, setDefaultColor] = useState(rgbToHex(settings.colorizeColor.r, settings.colorizeColor.g, settings.colorizeColor.b));
+  const [rowHeight, setRowHeight] = useState<RowHeight>(settings.rowHeight);
   const abortControllerRef = useRef<AbortController | null>(null);
-
   useEffect(() => {
     const tmr = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(tmr);
@@ -904,9 +876,7 @@ export default function AssemblyExporter({ api }: Props) {
       return () => clearTimeout(t);
     }
   }, [settingsMsg]);
-
   const allKeys = useMemo(() => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(), [rows]);
-
   const searchFieldOptions = useMemo(() => {
     const base = [
       { value: "AssemblyMark", label: "Kooste märk (BLOCK)" },
@@ -922,34 +892,29 @@ export default function AssemblyExporter({ api }: Props) {
     const f = searchFieldFilter.toLowerCase();
     return all.filter(opt => opt.label.toLowerCase().includes(f) || opt.value.toLowerCase().includes(f));
   }, [allKeys, searchFieldFilter]);
-
   const groupedUnsorted = useMemo(() => groupKeys(allKeys), [allKeys]);
   const groupedSortedEntries = useMemo(
     () => (Object.entries(groupedUnsorted) as [string, string[]][])
       .sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])),
     [groupedUnsorted]
   );
-
   const filteredKeysSet = useMemo(() => {
     if (!debouncedFilter) return new Set(allKeys);
     const f = debouncedFilter.toLowerCase();
     return new Set(allKeys.filter(k => k.toLowerCase().includes(f)));
   }, [allKeys, debouncedFilter]);
-
   const exportableColumns = useMemo(() => columnOrder.filter(k => allKeys.includes(k)), [columnOrder, allKeys]);
   const totalFoundCount = useMemo(
     () => searchResults.reduce((sum, r) => sum + (r.status === "found" ? r.ids?.length || 0 : 0), 0),
     [searchResults]
   );
   const markedCount = markedResults.size;
-
   useEffect(() => {
     if (!rows.length || selected.size) return;
     if (settings.defaultPreset === "tekla") presetTekla();
     else if (settings.defaultPreset === "ifc") presetIFC();
     else presetRecommended();
   }, [rows, settings.defaultPreset]);
-
   useEffect(() => {
     const currentSet = new Set(columnOrder);
     const missingKeys = allKeys.filter(k => !currentSet.has(k));
@@ -957,7 +922,6 @@ export default function AssemblyExporter({ api }: Props) {
     else if (!columnOrder.length && allKeys.length)
       setColumnOrder([...LOCKED_ORDER, ...allKeys.filter(k => !LOCKED_ORDER.includes(k as any))]);
   }, [allKeys]);
-
   useEffect(() => {
     if (!api?.viewer) return;
     let selectionTimeout: any;
@@ -979,10 +943,8 @@ export default function AssemblyExporter({ api }: Props) {
       } catch {}
     };
   }, [api, busy]);
-
   useEffect(() => { if (tab === "export" && !busy) discover(); }, [tab]);
   useEffect(() => { if (tab === "discover" && !busy) discover(); }, [tab]);
-
   const matches = useCallback((k: string) => filteredKeysSet.has(k), [filteredKeysSet]);
   const toggle = useCallback(
     (k: string) =>
@@ -1003,7 +965,6 @@ export default function AssemblyExporter({ api }: Props) {
     []
   );
   const selectAll = useCallback((on: boolean) => setSelected(() => (on ? new Set(allKeys) : new Set())), [allKeys]);
-
   function presetRecommended() {
     const wanted = new Set([...LOCKED_ORDER, "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
@@ -1015,7 +976,6 @@ export default function AssemblyExporter({ api }: Props) {
     const wanted = new Set(["GUID_IFC", "GUID_MS", "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
-
   async function discover() {
     if (!api?.viewer) {
       setDiscoverMsg(t.apiError);
@@ -1025,35 +985,27 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(true);
       setDiscoverMsg(t.selectObjects);
       setProgress({ current: 0, total: 0, objects: 0, totalObjects: 0 });
-
       const selectedWithBasic = await getSelectedObjects(api);
       if (!selectedWithBasic.length) {
         setDiscoverMsg(t.selectObjects);
         setRows([]);
         return;
       }
-
       const projectName = await getProjectName(api);
       const modelIds = selectedWithBasic.map(m => m.modelId);
       const nameMap = await buildModelNameMap(api, modelIds);
-
       const out: Row[] = [];
       const lastSel: Array<{ modelId: string; ids: number[] }> = [];
-
       const totalObjs = selectedWithBasic.reduce((sum, m) => sum + (m.objects?.length || 0), 0);
       setProgress({ current: 0, total: selectedWithBasic.length, objects: 0, totalObjects: totalObjs });
-
       let processedObjects = 0;
-
       for (let i = 0; i < selectedWithBasic.length; i++) {
         const { modelId, objects } = selectedWithBasic[i];
         setDiscoverMsg(
           t.processing.replace("{current}", String(i + 1)).replace("{total}", String(selectedWithBasic.length)) +
             ` (${processedObjects}/${totalObjs} ${settings.language === "et" ? "objekti" : "objects"})`
         );
-
         const objectRuntimeIds = objects.map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
-
         let fullObjects = objects;
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
@@ -1064,10 +1016,8 @@ export default function AssemblyExporter({ api }: Props) {
         } catch (e) {
           console.warn(`getObjectProperties failed for model ${modelId}:`, e);
         }
-
         const flattened = await Promise.all(fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api)));
         out.push(...flattened);
-
         lastSel.push({ modelId, ids: objectRuntimeIds });
         processedObjects += objects.length;
         setProgress({
@@ -1077,7 +1027,6 @@ export default function AssemblyExporter({ api }: Props) {
           totalObjects: totalObjs,
         });
       }
-
       setRows(out);
       setLastSelection(lastSel);
       setDiscoverMsg(
@@ -1092,7 +1041,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
   const cancelSearch = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -1101,20 +1049,18 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }, [t]);
-
   async function searchAndSelect(clearPrevious: boolean = false) {
     if (clearPrevious) {
       setSearchResults([]);
       setMarkedResults(new Set());
     }
-    
+   
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
     try {
       setBusy(true);
       setSearchMsg(t.searching);
       setProgress({ current: 0, total: 0, objects: 0, totalObjects: 0 });
-
       const searchValues = searchInput.split(/[\n,;\t]+/).map(s => s.trim()).filter(Boolean);
       const uniqueSearchValues = [...new Set(searchValues)];
       const hasDuplicates = searchValues.length > uniqueSearchValues.length;
@@ -1123,7 +1069,6 @@ export default function AssemblyExporter({ api }: Props) {
         setBusy(false);
         return;
       }
-
       const viewer = api?.viewer;
       let mos = searchScope === "selected" ? await viewer?.getObjects({ selected: true }) : await viewer?.getObjects();
       if (!Array.isArray(mos)) {
@@ -1132,7 +1077,6 @@ export default function AssemblyExporter({ api }: Props) {
         setBusy(false);
         return;
       }
-
       const totalObjs = mos.reduce((sum, mo) => sum + (mo.objects?.length || 0), 0);
       const found: Array<{ modelId: string; ids: number[] }> = [];
       const foundValues = new Map<
@@ -1140,18 +1084,14 @@ export default function AssemblyExporter({ api }: Props) {
         { original: string; modelId: string; ids: number[]; isPartial: boolean; actualValue: string }
       >();
       setProgress({ current: 0, total: mos.length, objects: 0, totalObjects: totalObjs });
-
       const MAX_RESULTS = 500;
       let processedObjects = 0;
-
       for (let mIdx = 0; mIdx < mos.length; mIdx++) {
         if (abortController.signal.aborted) return;
         const mo = mos[mIdx];
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter(Number.isFinite);
-
         if (!objectRuntimeIds.length) continue;
-
         let fullProperties: any[] = [];
         try {
           fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
@@ -1160,7 +1100,6 @@ export default function AssemblyExporter({ api }: Props) {
           console.warn(`getObjectProperties failed for model ${modelId}:`, e);
           fullProperties = mo.objects || [];
         }
-
         const matchIds: number[] = [];
         for (let i = 0; i < fullProperties.length; i++) {
           if (abortController.signal.aborted) return;
@@ -1172,11 +1111,9 @@ export default function AssemblyExporter({ api }: Props) {
             );
             break;
           }
-
           const obj = fullProperties[i];
           const objId = objectRuntimeIds[i];
           let matchValue = "";
-
           if (searchField === "AssemblyMark") {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
@@ -1194,8 +1131,8 @@ export default function AssemblyExporter({ api }: Props) {
               for (const p of set?.properties ?? []) {
                 if (/guid|globalid/i.test(String(p?.name))) {
                   const val = String(p?.value || p?.displayValue || "").trim();
-                  const cls = classifyGuid(val);
-                  if ((searchField === "GUID_IFC" && cls === "IFC") || (searchField === "GUID_MS" && cls === "MS")) {
+                  const valCls = classifyGuid(val);
+                  if ((searchField === "GUID_IFC" && valCls === "IFC") || (searchField === "GUID_MS" && valCls === "MS")) {
                     matchValue = val;
                     break;
                   }
@@ -1244,16 +1181,13 @@ export default function AssemblyExporter({ api }: Props) {
               if (matchValue) break;
             }
           }
-
           const matchLower = matchValue.toLowerCase();
           if (!matchValue || !matchLower) continue;
-
           const originalMatch = uniqueSearchValues.find(v => {
             const vLower = v.toLowerCase();
             if (fuzzySearch) return vLower && matchLower && (matchLower.includes(vLower) || vLower.includes(matchLower));
             return vLower === matchLower;
           });
-
           if (originalMatch) {
             matchIds.push(objId);
             const isPartial = fuzzySearch && originalMatch.toLowerCase() !== matchLower;
@@ -1270,9 +1204,7 @@ export default function AssemblyExporter({ api }: Props) {
             foundValues.get(uniqueKey)!.ids.push(objId);
           }
         }
-
         if (matchIds.length) found.push({ modelId, ids: matchIds });
-
         processedObjects += fullProperties.length;
         setProgress({ current: mIdx + 1, total: mos.length, objects: processedObjects, totalObjects: totalObjs });
         setSearchMsg(
@@ -1280,10 +1212,8 @@ export default function AssemblyExporter({ api }: Props) {
             ? `Otsin... ${processedObjects}/${totalObjs} objekti töödeldud`
             : `Searching... ${processedObjects}/${totalObjs} objects processed`
         );
-
         if (found.reduce((sum, f) => sum + f.ids.length, 0) >= MAX_RESULTS) break;
       }
-
       if (searchField === "GUID_IFC" && found.length === 0) {
         const allModels = await api.viewer.getModels();
         for (const originalValue of uniqueSearchValues) {
@@ -1306,10 +1236,9 @@ export default function AssemblyExporter({ api }: Props) {
           }
         }
       }
-
       const newResults: any[] = [];
       let nextId = searchResults.length > 0 ? Math.max(...searchResults.map(r => r.id)) + 1 : 0;
-      
+     
       if (fuzzySearch) {
         for (const [, data] of foundValues) {
           newResults.push({
@@ -1346,19 +1275,18 @@ export default function AssemblyExporter({ api }: Props) {
             }
           }
           if (!foundEntry) {
-            newResults.push({ 
-              id: nextId++, 
-              originalValue, 
-              value: lower, 
+            newResults.push({
+              id: nextId++,
+              originalValue,
+              value: lower,
               status: "notfound",
               color: defaultColor,
             });
           }
         }
       }
-
       setSearchResults(prev => clearPrevious ? newResults : [...prev, ...newResults]);
-      
+     
       if (found.length) {
         const selector = { modelObjectIds: found.map(f => ({ modelId: f.modelId, objectRuntimeIds: f.ids })) };
         await viewer?.setSelection?.(selector);
@@ -1372,7 +1300,7 @@ export default function AssemblyExporter({ api }: Props) {
       } else {
         setSearchMsg(`${t.noneFound} ${uniqueSearchValues.join(", ")}`);
       }
-      
+     
       // Värvi kõik halliks kui see on sisse lülitatud
       if (greyOutAll && found.length) {
         await greyOutAllModels();
@@ -1388,7 +1316,6 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }
-
   const toggleResultMark = useCallback((id: number) => {
     setMarkedResults(prev => {
       const next = new Set(prev);
@@ -1397,21 +1324,18 @@ export default function AssemblyExporter({ api }: Props) {
       return next;
     });
   }, []);
-
   const markAllResults = useCallback(() => {
     const foundIds = searchResults.filter(r => r.status === "found").map(r => r.id);
     setMarkedResults(new Set(foundIds));
   }, [searchResults]);
-
   const clearAllMarks = useCallback(() => {
     setMarkedResults(new Set());
   }, []);
-
   const selectMarkedResults = useCallback(async () => {
     try {
       const markedItems = searchResults.filter(r => markedResults.has(r.id) && r.status === "found");
       if (markedItems.length === 0) return;
-      
+     
       const selector = {
         modelObjectIds: markedItems.map(r => ({
           modelId: r.modelId,
@@ -1426,21 +1350,18 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(t.selectAllError);
     }
   }, [searchResults, markedResults, api, t]);
-
   const removeMarkedResults = useCallback(() => {
     setSearchResults(prev => prev.filter(r => !markedResults.has(r.id)));
     setMarkedResults(new Set());
   }, [markedResults]);
-
   const changeResultColor = useCallback((id: number, color: string) => {
     setSearchResults(prev => prev.map(r => r.id === id ? { ...r, color } : r));
   }, []);
-
   const colorAllResults = useCallback(async () => {
     try {
       setBusy(true);
       setSearchMsg(t.coloring);
-      
+     
       for (const result of searchResults) {
         if (result.status !== "found") continue;
         const selector = {
@@ -1451,7 +1372,7 @@ export default function AssemblyExporter({ api }: Props) {
           color: { r: rgb.r, g: rgb.g, b: rgb.b, a: 255 }
         });
       }
-      
+     
       setSearchMsg("✅ " + (settings.language === "et" ? "Kõik tulemused värvitud" : "All results colored"));
     } catch (e: any) {
       console.error("Color all error:", e);
@@ -1460,7 +1381,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }, [searchResults, api, defaultColor, t, settings.language]);
-
   const greyOutAllModels = useCallback(async () => {
     try {
       await api?.viewer?.setObjectState?.(
@@ -1471,14 +1391,13 @@ export default function AssemblyExporter({ api }: Props) {
       console.error("Grey out failed:", e);
     }
   }, [api]);
-
   const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
     try {
       const viewer = api?.viewer;
       const selector = { modelObjectIds: [{ modelId, objectRuntimeIds: ids }] };
       await viewer?.setSelection?.(selector);
       await viewer?.setCamera?.(selector, { animationTime: 500 });
-      
+     
       // Värvi see tulemus kui grey out on sisse lülitatud
       if (greyOutAll) {
         const result = searchResults.find(r => r.modelId === modelId && JSON.stringify(r.ids) === JSON.stringify(ids));
@@ -1493,7 +1412,6 @@ export default function AssemblyExporter({ api }: Props) {
       console.error("Zoom error:", e);
     }
   }, [api, greyOutAll, searchResults, defaultColor]);
-
   const initSaveView = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -1505,7 +1423,6 @@ export default function AssemblyExporter({ api }: Props) {
     setViewName(defaultName);
     setShowViewSave(true);
   }, []);
-
   const saveView = useCallback(async () => {
     if (!lastSelection.length || !viewName.trim()) return;
     try {
@@ -1518,12 +1435,10 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(t.viewSaveError.replace("{error}", e?.message || t.unknownError));
     }
   }, [lastSelection, viewName, api, t]);
-
   const cancelSaveView = useCallback(() => {
     setShowViewSave(false);
     setViewName("");
   }, []);
-
   const initSaveOrganizer = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -1535,30 +1450,29 @@ export default function AssemblyExporter({ api }: Props) {
     setOrganizerName(defaultName);
     setShowOrganizerSave(true);
   }, []);
-
   const saveToOrganizer = useCallback(async () => {
     if (!lastSelection.length || !organizerName.trim()) return;
     try {
       setBusy(true);
       const projectId = await api.project.getProject().then((p: any) => p.id);
-      
+     
       // 1. Ensure "AE RESULT" group exists
       const trees = await api.organizer.getTrees(projectId);
       let aeResultTree = trees.find((t: any) => t.name === "AE RESULT");
-      
+     
       if (!aeResultTree) {
         aeResultTree = await api.organizer.createTree(projectId, {
           name: "AE RESULT",
           type: "manual"
         });
       }
-      
+     
       // 2. Create child node
       const childNode = await api.organizer.createNode(projectId, aeResultTree.id, {
         name: organizerName,
         parentId: aeResultTree.rootNodeId
       });
-      
+     
       // 3. Link objects
       let linkedCount = 0;
       for (const block of lastSelection) {
@@ -1571,7 +1485,7 @@ export default function AssemblyExporter({ api }: Props) {
           linkedCount++;
         }
       }
-      
+     
       const path = `AE RESULT → ${organizerName}`;
       setSearchMsg(t.organizerSaved.replace("{path}", path));
       setShowOrganizerSave(false);
@@ -1582,12 +1496,10 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }, [lastSelection, organizerName, api, t]);
-
   const cancelSaveOrganizer = useCallback(() => {
     setShowOrganizerSave(false);
     setOrganizerName("");
   }, []);
-
   const removeResult = useCallback((id: number) => {
     setSearchResults(prev => prev.filter(r => r.id !== id));
     setMarkedResults(prev => {
@@ -1596,7 +1508,6 @@ export default function AssemblyExporter({ api }: Props) {
       return next;
     });
   }, []);
-
   const moveColumn = useCallback(
     (from: number, to: number) => {
       const newOrder = [...columnOrder];
@@ -1608,7 +1519,6 @@ export default function AssemblyExporter({ api }: Props) {
     },
     [columnOrder]
   );
-
   const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
@@ -1636,7 +1546,6 @@ export default function AssemblyExporter({ api }: Props) {
     },
     [draggedIndex, columnOrder]
   );
-
   async function exportData() {
     await discover();
     if (!rows.length) {
@@ -1684,7 +1593,6 @@ export default function AssemblyExporter({ api }: Props) {
       setExportMsg(t.exportError.replace("{error}", e?.message || e));
     }
   }
-
   async function sendToGoogleSheet() {
     const { scriptUrl, secret, autoColorize } = settings;
     if (!scriptUrl || !secret) {
@@ -1724,7 +1632,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
   async function colorLastSelection() {
     const viewer = api?.viewer;
     let blocks = lastSelection;
@@ -1745,7 +1652,6 @@ export default function AssemblyExporter({ api }: Props) {
       await viewer?.setObjectState?.(selector, { color: { r, g, b, a: 255 } });
     }
   }
-
   async function resetState() {
     try {
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
@@ -1754,22 +1660,20 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(t.resetFailed.replace("{error}", e?.message || e));
     }
   }
-
   const c = styles;
   const scopeButtonStyle = (isActive: boolean): CSSProperties => ({
-    padding: "6px 10px",
-    borderRadius: 8,
+    padding: "4px 8px", // Kompaktsem
+    borderRadius: 6,
     border: "1px solid #cfd6df",
     background: isActive ? "#0a3a67" : "#f6f8fb",
-    color: isActive ? "#fff" : "#000",
+    color: isActive ? "#fff" : "#757575", // Hallikas tekst
     cursor: "pointer",
     flex: 1,
+    fontSize: 11,
   });
-
   const ScanAppLazy = React.lazy(() =>
     import("./ScanApp").catch(() => ({ default: () => <div style={c.note}>{t.inDevelopment}</div> }))
   );
-
   return (
     <div style={c.shell}>
       <div style={c.topbar}>
@@ -1792,12 +1696,10 @@ export default function AssemblyExporter({ api }: Props) {
           {t.about}
         </button>
       </div>
-
       <div style={c.page}>
         {tab === "search" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.searchAndSelect}</h3>
-
             <div style={c.fieldGroup}>
               <label style={c.labelTop}>{t.searchBy}</label>
               <div
@@ -1847,10 +1749,9 @@ export default function AssemblyExporter({ api }: Props) {
                 )}
               </div>
             </div>
-
             <div style={c.fieldGroup}>
               <label style={c.labelTop}>{t.searchScope}</label>
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 4 }}>
                 <button style={scopeButtonStyle(searchScope === "available")} onClick={() => setSearchScope("available")}>
                   {t.scopeAll}
                 </button>
@@ -1859,26 +1760,23 @@ export default function AssemblyExporter({ api }: Props) {
                 </button>
               </div>
             </div>
-
             <div style={c.fieldGroup}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                 <MiniToggle checked={fuzzySearch} onChange={setFuzzySearch} color="blue" />
-                <span style={{ fontSize: 12 }}>{t.fuzzySearch}</span>
+                <span style={{ fontSize: 11 }}>{t.fuzzySearch}</span>
               </label>
             </div>
-
             <div style={c.fieldGroup}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                 <MiniToggle checked={greyOutAll} onChange={setGreyOutAll} color="purple" />
-                <span style={{ fontSize: 12 }}>{t.greyOutAll}</span>
+                <span style={{ fontSize: 11 }}>{t.greyOutAll}</span>
               </label>
             </div>
-
             <textarea
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
               placeholder={t.searchPlaceholder}
-              style={{ ...c.textarea, height: 200 }}
+              style={{ ...c.textarea, height: 160 }} // Kompaktsem
             />
             <div style={c.controls}>
               <button style={c.btn} onClick={() => searchAndSelect(true)} disabled={busy || !searchInput.trim()}>
@@ -1904,7 +1802,6 @@ export default function AssemblyExporter({ api }: Props) {
                 {t.clear}
               </button>
             </div>
-
             {!!progress.total && progress.total > 1 && (
               <div style={c.small}>
                 {t.searchProgress} {progress.current}/{progress.total} {t.models}
@@ -1912,18 +1809,17 @@ export default function AssemblyExporter({ api }: Props) {
               </div>
             )}
             {searchMsg && <div style={c.note}>{searchMsg}</div>}
-
             {searchResults.length > 0 && (
               <div style={c.resultsBox}>
-                <div style={{ marginBottom: 8, padding: 8, background: "#e7f3ff", borderRadius: 8, fontSize: 12 }}>
+                <div style={{ marginBottom: 6, padding: 6, background: "#e7f3ff", borderRadius: 6, fontSize: 11 }}>
                   {t.searchHint}
                 </div>
-                
+               
                 <h4 style={c.resultsHeading}>
                   {t.results} ({searchResults.length}) • {t.marked} {markedCount}
                 </h4>
-                
-                <div style={{ ...c.controls, marginBottom: 8 }}>
+               
+                <div style={{ ...c.controls, marginBottom: 6 }}>
                   <button style={c.btnGhost} onClick={markAllResults}>
                     {t.markAll}
                   </button>
@@ -1937,7 +1833,7 @@ export default function AssemblyExporter({ api }: Props) {
                     {t.removeMarked}
                   </button>
                 </div>
-                
+               
                 <div style={c.resultsTable}>
                   {searchResults.map(result => (
                     <ResultRow
@@ -1949,11 +1845,12 @@ export default function AssemblyExporter({ api }: Props) {
                       onColorChange={changeResultColor}
                       isMarked={markedResults.has(result.id)}
                       t={t}
+                      rowHeight={rowHeight}
                     />
                   ))}
                 </div>
-                
-                <div style={{ ...c.controls, marginTop: 8 }}>
+               
+                <div style={{ ...c.controls, marginTop: 6 }}>
                   <button style={c.btn} onClick={colorAllResults} disabled={totalFoundCount === 0}>
                     {t.colorResults}
                   </button>
@@ -1964,12 +1861,12 @@ export default function AssemblyExporter({ api }: Props) {
                     {t.saveToOrganizer}
                   </button>
                 </div>
-                
+               
                 {showViewSave && (
-                  <div style={{ marginTop: 12, padding: 8, border: "1px solid #cfd6df", borderRadius: 8, background: "#e7f3ff" }}>
+                  <div style={{ marginTop: 8, padding: 6, border: "1px solid #cfd6df", borderRadius: 6, background: "#e7f3ff" }}>
                     <label style={c.labelTop}>{t.viewNameLabel}</label>
                     <input type="text" value={viewName} onChange={e => setViewName(e.target.value)} style={c.input} />
-                    <div style={{ ...c.controls, marginTop: 8 }}>
+                    <div style={{ ...c.controls, marginTop: 6 }}>
                       <button style={c.btn} onClick={saveView} disabled={!viewName.trim()}>
                         {t.saveViewButton}
                       </button>
@@ -1979,12 +1876,12 @@ export default function AssemblyExporter({ api }: Props) {
                     </div>
                   </div>
                 )}
-                
+               
                 {showOrganizerSave && (
-                  <div style={{ marginTop: 12, padding: 8, border: "1px solid #F97316", borderRadius: 8, background: "#fff7ed" }}>
+                  <div style={{ marginTop: 8, padding: 6, border: "1px solid #F97316", borderRadius: 6, background: "#fff7ed" }}>
                     <label style={c.labelTop}>{t.organizerNameLabel}</label>
                     <input type="text" value={organizerName} onChange={e => setOrganizerName(e.target.value)} style={c.input} />
-                    <div style={{ ...c.controls, marginTop: 8 }}>
+                    <div style={{ ...c.controls, marginTop: 6 }}>
                       <button style={{ ...c.btn, background: "#F97316", borderColor: "#F97316" }} onClick={saveToOrganizer} disabled={!organizerName.trim()}>
                         {t.saveOrganizerButton}
                       </button>
@@ -1998,7 +1895,6 @@ export default function AssemblyExporter({ api }: Props) {
             )}
           </div>
         )}
-
         {tab === "discover" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.discoverFields}</h3>
@@ -2024,7 +1920,7 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>
                 {t.deselectAll}
               </button>
-              <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>
+              <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>
                 {t.selected} {selected.size}
               </span>
             </div>
@@ -2039,7 +1935,7 @@ export default function AssemblyExporter({ api }: Props) {
                     <div key={groupName} style={c.group}>
                       <div style={c.groupHeader}>
                         <b>{groupName}</b>
-                        <div style={{ display: "flex", gap: 6 }}>
+                        <div style={{ display: "flex", gap: 4 }}>
                           <button style={c.mini} onClick={() => toggleGroup(keys, true)}>
                             {t.selectAll}
                           </button>
@@ -2057,10 +1953,10 @@ export default function AssemblyExporter({ api }: Props) {
                               onChange={() => toggle(k)}
                               style={{
                                 appearance: "none",
-                                width: 18,
-                                height: 18,
-                                borderRadius: 4,
-                                border: "2px solid #cfd6df",
+                                width: 16,
+                                height: 16,
+                                borderRadius: 3,
+                                border: "1px solid #cfd6df",
                                 cursor: "pointer",
                                 position: "relative",
                                 background: selected.has(k) ? "#1E88E5" : "#fff",
@@ -2090,7 +1986,6 @@ export default function AssemblyExporter({ api }: Props) {
             {discoverMsg && <div style={c.note}>{discoverMsg}</div>}
           </div>
         )}
-
         {tab === "export" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.exportData}</h3>
@@ -2106,18 +2001,17 @@ export default function AssemblyExporter({ api }: Props) {
               <button style={c.btnGhost} onClick={() => selectAll(false)} disabled={!rows.length}>
                 {t.deselectAll}
               </button>
-              <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>
+              <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>
                 {t.selected} {selected.size}
               </span>
             </div>
-            
+           
             <div style={c.row}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                 <MiniToggle checked={includeHeaders} onChange={setIncludeHeaders} color="green" />
-                <span style={{ fontSize: 12 }}>{t.includeHeaders}</span>
+                <span style={{ fontSize: 11 }}>{t.includeHeaders}</span>
               </label>
             </div>
-
             <div style={c.columnListNoscroll}>
               {exportableColumns.map(col => {
                 const actualIdx = columnOrder.indexOf(col);
@@ -2139,10 +2033,10 @@ export default function AssemblyExporter({ api }: Props) {
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 6,
+                        gap: 4,
                         flex: 1,
                         cursor: "pointer",
-                        width: "calc(100% - 80px)",
+                        width: "calc(100% - 60px)",
                       }}
                     >
                       <input
@@ -2151,10 +2045,10 @@ export default function AssemblyExporter({ api }: Props) {
                         onChange={() => toggle(col)}
                         style={{
                           appearance: "none",
-                          width: 18,
-                          height: 18,
-                          borderRadius: 4,
-                          border: "2px solid #cfd6df",
+                          width: 16,
+                          height: 16,
+                          borderRadius: 3,
+                          border: "1px solid #cfd6df",
                           cursor: "pointer",
                           position: "relative",
                           background: selected.has(col) ? "#1E88E5" : "#fff",
@@ -2167,7 +2061,7 @@ export default function AssemblyExporter({ api }: Props) {
                         {col}
                       </span>
                     </label>
-                    <div style={{ display: "flex", gap: 4, marginLeft: 8, minWidth: 80 }}>
+                    <div style={{ display: "flex", gap: 3, marginLeft: 6, minWidth: 60 }}>
                       <span style={{ ...c.dragHandle, cursor: "grab" }}>⋮⋮</span>
                       {actualIdx > 0 && (
                         <button style={c.miniBtn} onClick={() => moveColumn(actualIdx, actualIdx - 1)} title="Move up">
@@ -2184,7 +2078,6 @@ export default function AssemblyExporter({ api }: Props) {
                 );
               })}
             </div>
-
             <div style={c.controls}>
               <button style={c.btn} onClick={() => { setExportFormat("clipboard"); exportData(); }} disabled={!rows.length || !selected.size}>
                 {t.clipboard}
@@ -2203,11 +2096,9 @@ export default function AssemblyExporter({ api }: Props) {
                 {busy ? t.sending : t.googleSheets}
               </button>
             </div>
-
             {exportMsg && <div style={c.note}>{exportMsg}</div>}
           </div>
         )}
-
         {tab === "scan" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.scanTitle}</h3>
@@ -2234,12 +2125,11 @@ export default function AssemblyExporter({ api }: Props) {
             </Suspense>
           </div>
         )}
-
         {tab === "settings" && (
           <div style={c.section}>
             <div style={c.row}>
               <label style={c.label}>Keel / Language</label>
-              <div style={{ display: "flex", gap: 6, flex: 1 }}>
+              <div style={{ display: "flex", gap: 4, flex: 1 }}>
                 <button style={scopeButtonStyle(settings.language === "et")} onClick={() => updateSettings({ language: "et" })}>ET</button>
                 <button style={scopeButtonStyle(settings.language === "en")} onClick={() => updateSettings({ language: "en" })}>EN</button>
               </div>
@@ -2262,14 +2152,14 @@ export default function AssemblyExporter({ api }: Props) {
             </div>
             <div style={c.row}>
               <label style={c.label}>{t.ocrPrompt}</label>
-              <textarea value={settings.ocrPrompt} onChange={e => updateSettings({ ocrPrompt: e.target.value})} placeholder={t.pasteHint} style={{ ...c.textarea, height: 80, flex: 1 }} />
+              <textarea value={settings.ocrPrompt} onChange={e => updateSettings({ ocrPrompt: e.target.value})} placeholder={t.pasteHint} style={{ ...c.textarea, height: 60, flex: 1 }} />
             </div>
-            
-            <div style={{ padding: 12, border: "1px solid #e6eaf0", borderRadius: 10, background: "#f6f8fb" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+           
+            <div style={{ padding: 8, border: "1px solid #e6eaf0", borderRadius: 6, background: "#f6f8fb" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <div>
-                  <p style={{ fontWeight: 600, margin: 0, marginBottom: 4 }}>{t.autoColorize}</p>
-                  <p style={{ fontSize: 11, opacity: 0.7, margin: 0 }}>{t.autoColorizeDesc}</p>
+                  <p style={{ fontWeight: 500, margin: 0, marginBottom: 3 }}>{t.autoColorize}</p>
+                  <p style={{ fontSize: 10, opacity: 0.7, margin: 0 }}>{t.autoColorizeDesc}</p>
                 </div>
                 <LargeToggle
                   checked={settings.autoColorize}
@@ -2277,14 +2167,14 @@ export default function AssemblyExporter({ api }: Props) {
                 />
               </div>
             </div>
-            
+           
             <div style={c.row}>
               <label style={c.label} title={t.colorTooltip}>{t.color}</label>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 32px)", gap: 6 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 24px)", gap: 4 }}>
                   {COLORS.map(color => {
                     const rgb = hexToRgb(color);
-                    const isSelected = 
+                    const isSelected =
                       rgb.r === settings.colorizeColor.r &&
                       rgb.g === settings.colorizeColor.g &&
                       rgb.b === settings.colorizeColor.b;
@@ -2297,9 +2187,9 @@ export default function AssemblyExporter({ api }: Props) {
                           setSettingsMsg(t.defaultColorChanged);
                         }}
                         style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: 6,
+                          width: 24,
+                          height: 24,
+                          borderRadius: 4,
                           border: isSelected ? "2px solid #1E88E5" : "1px solid #e6eaf0",
                           background: color,
                           cursor: "pointer",
@@ -2309,14 +2199,14 @@ export default function AssemblyExporter({ api }: Props) {
                           transition: "transform 0.15s ease",
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = "scale(1.15)";
+                          e.currentTarget.style.transform = "scale(1.1)";
                         }}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.transform = "scale(1)";
                         }}
                       >
                         {isSelected && (
-                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                             <path d="M13 4L6 11L3 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                           </svg>
                         )}
@@ -2324,13 +2214,12 @@ export default function AssemblyExporter({ api }: Props) {
                     );
                   })}
                 </div>
-                <p style={{ fontSize: 11, opacity: 0.6, margin: 0 }}>{t.colorDefault}</p>
+                <p style={{ fontSize: 10, opacity: 0.6, margin: 0 }}>{t.colorDefault}</p>
               </div>
             </div>
-
             <div style={c.row}>
               <label style={c.label}>{t.defaultPreset}</label>
-              <div style={{ display: "flex", gap: 6, flex: 1 }}>
+              <div style={{ display: "flex", gap: 4, flex: 1 }}>
                 <button
                   style={scopeButtonStyle(settings.defaultPreset === "recommended")}
                   onClick={() => updateSettings({ defaultPreset: "recommended" })}
@@ -2351,12 +2240,33 @@ export default function AssemblyExporter({ api }: Props) {
                 </button>
               </div>
             </div>
-
+            <div style={c.row}>
+              <label style={c.label}>Rea kõrgus otsingutulemustes</label>
+              <div style={{ display: "flex", gap: 4, flex: 1 }}>
+                <button
+                  style={scopeButtonStyle(rowHeight === "small")}
+                  onClick={() => setRowHeight("small")}
+                >
+                  Väike
+                </button>
+                <button
+                  style={scopeButtonStyle(rowHeight === "medium")}
+                  onClick={() => setRowHeight("medium")}
+                >
+                  Keskmine
+                </button>
+                <button
+                  style={scopeButtonStyle(rowHeight === "large")}
+                  onClick={() => setRowHeight("large")}
+                >
+                  Suur
+                </button>
+              </div>
+            </div>
             {settingsMsg && <div style={c.note}>{settingsMsg}</div>}
             <div style={c.small}>{t.saved}</div>
           </div>
         )}
-
         {tab === "about" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.version}</h3>
@@ -2368,13 +2278,11 @@ export default function AssemblyExporter({ api }: Props) {
     </div>
   );
 }
-
 /* ------------------------------- STYLES ---------------------------------- */
-
 const styles: Record<string, CSSProperties> = {
   shell: {
     fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-    color: "#0b1221",
+    color: "#757575", // Hallikas tekst
     background: "#fff",
     height: "100%",
     display: "flex",
@@ -2383,21 +2291,22 @@ const styles: Record<string, CSSProperties> = {
   topbar: {
     display: "flex",
     flexWrap: "wrap",
-    gap: 6,
-    padding: 6,
+    gap: 4, // Kompaktsem
+    padding: 4,
     borderBottom: "1px solid #e6eaf0",
-    background: "#f6f8fb",
+    background: "#fff",
     position: "sticky",
     top: 0,
     zIndex: 20,
   },
   tab: {
-    padding: "8px 10px",
-    borderRadius: 10,
+    padding: "4px 6px", // Kompaktsem
+    borderRadius: 6,
     border: "1px solid #cfd6df",
     background: "#fff",
     cursor: "pointer",
-    fontWeight: 600,
+    fontWeight: 500,
+    fontSize: 11,
   },
   tabActive: {
     background: "#0a3a67",
@@ -2405,123 +2314,126 @@ const styles: Record<string, CSSProperties> = {
     borderColor: "#0a3a67",
   },
   page: {
-    padding: 10,
+    padding: 8, // Kompaktsem
     overflow: "auto",
     flex: 1,
   },
   section: {
     display: "flex",
     flexDirection: "column",
-    gap: 10,
+    gap: 8, // Kompaktsem
     maxWidth: 920,
   },
   heading: {
     margin: 0,
-    fontSize: 18,
+    fontSize: 16, // Kompaktsem
   },
   fieldGroup: {
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 4, // Kompaktsem
   },
   labelTop: {
-    fontSize: 12,
+    fontSize: 11,
     opacity: 0.75,
   },
   input: {
-    padding: "6px 8px",
+    padding: "4px 6px", // Kompaktsem
     border: "1px solid #cfd6df",
-    borderRadius: 8,
+    borderRadius: 6,
     outline: "none",
   },
   inputFilter: {
     width: "100%",
-    maxHeight: "150px",
-    padding: "6px 8px",
+    maxHeight: "120px", // Kompaktsem
+    padding: "4px 6px",
     border: "1px solid #cfd6df",
-    borderRadius: 8,
+    borderRadius: 6,
     outline: "none",
     resize: "vertical",
   },
   textarea: {
     width: "100%",
-    padding: "8px",
+    padding: "6px",
     border: "1px solid #cfd6df",
-    borderRadius: 8,
+    borderRadius: 6,
     outline: "none",
     fontFamily: "monospace",
-    fontSize: 12,
+    fontSize: 11,
   },
   controls: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
+    gap: 4, // Kompaktsem
     flexWrap: "wrap",
     position: "relative",
     zIndex: 10,
   },
   btn: {
-    padding: "8px 12px",
-    borderRadius: 10,
+    padding: "6px 8px", // Kompaktsem
+    borderRadius: 6,
     border: "1px solid #0a3a67",
     background: "#0a3a67",
     color: "#fff",
     cursor: "pointer",
-    fontWeight: 600,
+    fontWeight: 500,
+    fontSize: 11,
   },
   btnGhost: {
-    padding: "8px 12px",
-    borderRadius: 10,
+    padding: "6px 8px",
+    borderRadius: 6,
     border: "1px solid #cfd6df",
     background: "#fff",
-    color: "#0b1221",
+    color: "#757575",
     cursor: "pointer",
+    fontSize: 11,
   },
   miniBtn: {
-    padding: "4px 8px",
-    borderRadius: 8,
+    padding: "3px 6px", // Kompaktsem
+    borderRadius: 6,
     border: "1px solid #cfd6df",
     background: "#fff",
     cursor: "pointer",
-    fontSize: 12,
+    fontSize: 10,
   },
   note: {
-    padding: 10,
+    padding: 8,
     border: "1px solid #cfd6df",
-    borderRadius: 10,
+    borderRadius: 6,
     background: "#f6f8fb",
   },
   small: {
-    fontSize: 12,
+    fontSize: 11,
     opacity: 0.75,
   },
   resultsBox: {
     border: "1px solid #e6eaf0",
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 6,
+    padding: 8,
     background: "#fff",
   },
   resultsHeading: {
     margin: 0,
-    marginBottom: 6,
+    marginBottom: 4,
+    fontSize: 14,
   },
   resultsTable: {
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 4, // Kompaktsem, et 100+ rida mahuks
   },
   resultRow: {
     display: "grid",
-    gridTemplateColumns: "20px 32px 32px 1fr 48px 160px",
-    gap: 6,
+    gridTemplateColumns: "16px 24px 24px 1fr 36px 120px", // Kitsamad veerud, et ei peitu
+    gap: 4,
     alignItems: "center",
-    padding: 8,
-    borderRadius: 8,
+    padding: 4,
+    borderRadius: 6,
     border: "1px solid #e6eaf0",
   },
   resultRowMarked: {
     background: "#e7f3ff",
-    border: "2px solid #1E88E5",
+    border: "1px solid #1E88E5",
   },
   resultRowFound: {
     background: "#f7fff7",
@@ -2534,56 +2446,58 @@ const styles: Record<string, CSSProperties> = {
   },
   resultStatus: {
     textAlign: "center",
+    fontSize: 11,
   },
   resultValue: {
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
     fontFamily: "monospace",
-    fontSize: 12,
+    fontSize: 11,
   },
   resultCount: {
     textAlign: "right",
     fontVariantNumeric: "tabular-nums",
+    fontSize: 11,
   },
   resultActions: {
     display: "flex",
-    gap: 6,
+    gap: 4,
     justifyContent: "flex-end",
   },
   list: {
     display: "flex",
     flexDirection: "column",
-    gap: 10,
-    maxHeight: 420,
+    gap: 8,
+    maxHeight: 360, // Kompaktsem
     overflow: "auto",
     border: "1px solid #e6eaf0",
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 6,
+    padding: 8,
     background: "#fff",
   },
   group: {
     border: "1px solid #f0f2f6",
-    borderRadius: 8,
-    padding: 8,
+    borderRadius: 6,
+    padding: 6,
   },
   groupHeader: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 6,
+    marginBottom: 4,
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-    gap: 6,
+    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", // Kompaktsem
+    gap: 4,
   },
   checkRow: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
-    padding: 6,
-    borderRadius: 6,
+    gap: 4,
+    padding: 4,
+    borderRadius: 4,
     border: "1px solid #eef1f6",
     cursor: "pointer",
   },
@@ -2594,81 +2508,82 @@ const styles: Record<string, CSSProperties> = {
   },
   presetsRow: {
     display: "flex",
-    gap: 6,
+    gap: 4,
   },
   columnListNoscroll: {
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 4,
     border: "1px solid #e6eaf0",
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 6,
+    padding: 8,
     background: "#fff",
-    maxHeight: 520,
+    maxHeight: 480,
     overflow: "auto",
   },
   columnItem: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
-    padding: 8,
-    borderRadius: 8,
+    gap: 4,
+    padding: 6,
+    borderRadius: 6,
     border: "1px solid #eef1f6",
     background: "#fff",
   },
   columnItemHighlight: {
-    boxShadow: "0 0 0 3px rgba(22,119,255,0.25)",
+    boxShadow: "0 0 0 2px rgba(22,119,255,0.2)",
   },
   columnItemDragging: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
   dragHandle: {
     userSelect: "none",
-    fontWeight: 700,
+    fontWeight: 600,
   },
   row: {
     display: "flex",
-    gap: 8,
+    gap: 6,
     alignItems: "center",
   },
   label: {
-    width: 220,
-    fontSize: 12,
+    width: 180, // Optimeeritud proportsioon
+    fontSize: 11,
     opacity: 0.75,
   },
   helpBox: {
     whiteSpace: "pre-wrap",
-    padding: 10,
+    padding: 8,
     border: "1px solid #cfd6df",
-    borderRadius: 10,
+    borderRadius: 6,
     background: "#f6f8fb",
   },
   dropdown: {
     position: "absolute",
-    top: 38,
+    top: 32,
     left: 0,
     right: 0,
     border: "1px solid #cfd6df",
-    borderRadius: 10,
+    borderRadius: 6,
     background: "#fff",
-    boxShadow: "0 8px 20px rgba(0,0,0,0.06)",
-    maxHeight: 260,
+    boxShadow: "0 6px 16px rgba(0,0,0,0.04)",
+    maxHeight: 220,
     overflow: "auto",
     zIndex: 50,
   },
   dropdownItem: {
-    padding: 8,
+    padding: 6,
     cursor: "pointer",
+    fontSize: 11,
   },
   dropdownItemSelected: {
     background: "#e7f3ff",
   },
   mini: {
-    padding: "4px 8px",
-    borderRadius: 8,
+    padding: "3px 6px",
+    borderRadius: 6,
     border: "1px solid #cfd6df",
     background: "#fff",
     cursor: "pointer",
-    fontSize: 12,
+    fontSize: 10,
   },
 };
