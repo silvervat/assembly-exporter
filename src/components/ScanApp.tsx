@@ -1,12 +1,14 @@
 import React, { useMemo, useRef, useState, useEffect } from "react";
+import * as pdfjs from 'pdfjs-dist';
+pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.js'; // Lisa see fail oma projekti
 
 type Row = Record<string, string> & {
   _confidence?: number;
   _warning?: string;
   _foundInModel?: boolean | null;
   _modelQuantity?: number;
-  _objectId?: number;  // Lisatud zoomi jaoks
-  modelId?: string;  // Lisatud zoomi jaoks
+  _objectId?: number;
+  modelId?: string;
 };
 
 type Props = {
@@ -47,10 +49,11 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [additionalPrompt, setAdditionalPrompt] = useState(localStorage.getItem('ocrAdditionalPrompt') || '');
   const [showViewSave, setShowViewSave] = useState(false);
   const [viewName, setViewName] = useState("");
-  const [showOrganizerSave, setShowOrganizerSave] = useState(false);
-  const [organizerName, setOrganizerName] = useState("");
   const [showImageModal, setShowImageModal] = useState(false);
   const [ocrFeedback, setOcrFeedback] = useState("");
+  const [showCopyModal, setShowCopyModal] = useState(false);
+  const [copyIncludeHeaders, setCopyIncludeHeaders] = useState(true);
+  const [copyColumns, setCopyColumns] = useState<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -117,7 +120,24 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
         setImagePreview(e.target?.result as string || "");
       };
       reader.readAsDataURL(file);
+    } else if (file.type === 'application/pdf') {
+      setImagePreview(''); // PDF jaoks ei näita preview'd, aga käsitle runOcr'is
     }
+  }
+
+  async function pdfToImages(file: File): Promise<string[]> {
+    const pdf = await pdfjs.getDocument(await file.arrayBuffer()).promise;
+    const images: string[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+      images.push(canvas.toDataURL('image/jpeg'));
+    }
+    return images;
   }
 
   async function runGptOcr(imageBase64: string): Promise<string> {
@@ -162,7 +182,7 @@ ${settings?.ocrPrompt || ""}
                 {
                   type: "image_url",
                   image_url: {
-                    url: `data:${files[0]?.type || "image/jpeg"};base64,${imageBase64}`
+                    url: `data:image/jpeg;base64,${imageBase64}`
                   }
                 }
               ]
@@ -238,8 +258,17 @@ Anna lühike kokkuvõte eesti keeles.`;
         return;
       }
       setMsg("🔍 OCR töötab...");
-      const base64 = await fileToBase64(files[0]);
-      const text = await runGptOcr(base64);
+      let text = '';
+      if (files[0].type === 'application/pdf') {
+        const images = await pdfToImages(files[0]);
+        for (const img of images) {
+          const base64 = img.split(',')[1];
+          text += await runGptOcr(base64) + '\n';
+        }
+      } else {
+        const base64 = await fileToBase64(files[0]);
+        text = await runGptOcr(base64);
+      }
       setRawText(text);
       const feedback = await getOcrFeedback(text);
       setOcrFeedback(feedback);
@@ -320,7 +349,7 @@ Anna lühike kokkuvõte eesti keeles.`;
     const qtyIdx = lower.findIndex((h) => /\b(qty|pcs|kogus|tk|amount)\b/.test(h));
     setMarkKey(normalizedHeaders[markIdx >= 0 ? markIdx : 0] || "");
     setQtyKey(normalizedHeaders[qtyIdx >= 0 ? qtyIdx : normalizedHeaders.length - 1] || "");
-    setSelectedColumns([...normalizedHeaders, "_modelQuantity"]);
+    setSelectedColumns([...normalizedHeaders]);
     const warnMsg = warnings > 0 ? ` ⚠️ ${warnings} rida jäeti vahele.` : "";
     const ocrWarnings = outRows.filter(r => r._warning?.includes("ei suutnud")).length;
     const ocrWarnMsg = ocrWarnings > 0 ? ` ⚠️ ${ocrWarnings} lahtrit ???` : "";
@@ -385,6 +414,7 @@ Anna lühike kokkuvõte eesti keeles.`;
         return newRow;
       });
     });
+    setRawText(rawText.replace(new RegExp(findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), replaceText));
     setMsg(`✓ Asendatud ${replacedCount} kohta.`);
     setShowFindReplace(false);
   }
@@ -406,7 +436,7 @@ Anna lühike kokkuvõte eesti keeles.`;
         setSearchingModel(false);
         return;
       }
-      const foundMarks = new Map<string, number>(); // mark -> count in model
+      const foundMarks = new Map<string, number>();
       const foundObjects: any[] = [];
       for (const mo of mos) {
         const modelId = String(mo.modelId);
@@ -447,14 +477,20 @@ Anna lühike kokkuvõte eesti keeles.`;
           warning = `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
         }
       
+        const object = foundObjects.find(obj => obj.mark.toLowerCase() === mark.toLowerCase());
         return {
           ...r,
           _foundInModel: found,
           _modelQuantity: modelCount,
-          _warning: warning || undefined
+          _warning: warning || undefined,
+          modelId: object?.modelId,
+          _objectId: object?.objectId
         };
       });
       setRows(updatedRows);
+      if (foundObjects.length > 0) {
+        setSelectedColumns(prev => [...new Set([...prev, "_modelQuantity"])]);
+      }
       const foundCount = updatedRows.filter(r => r._foundInModel === true).length;
       const notFoundCount = updatedRows.filter(r => r._foundInModel === false).length;
       const qtyMismatch = updatedRows.filter(r => r._warning?.includes("ei vasta")).length;
@@ -491,6 +527,16 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("❌ Selectimine ebaõnnestus: " + (e?.message || String(e)));
     }
   }
+  async function zoomToRow(modelId: string | undefined, objectId: number | undefined) {
+    if (!modelId || !objectId) return;
+    try {
+      const viewer = api?.viewer;
+      await viewer?.selectObjects(modelId, [objectId], true);
+      await viewer?.setCamera?.({ modelObjectIds: [{ modelId, objectRuntimeIds: [objectId] }] }, { animationTime: 500 });
+    } catch (e: any) {
+      setMsg("❌ Zoom ebaõnnestus: " + (e?.message || String(e)));
+    }
+  }
   function exportToCSV() {
     if (!rows.length) return;
   
@@ -512,6 +558,17 @@ Anna lühike kokkuvõte eesti keeles.`;
     URL.revokeObjectURL(url);
   
     setMsg("✓ Eksporditud CSV-sse.");
+  }
+  function copyToClipboard() {
+    if (!rows.length) return;
+    const csvHeaders = copyIncludeHeaders ? copyColumns.join("\t") + '\n' : '';
+    const csvRows = rows.map(r =>
+      copyColumns.map(col => String(r[col] || "")).join("\t")
+    ).join("\n");
+    const text = csvHeaders + csvRows;
+    navigator.clipboard.writeText(text);
+    setMsg("✅ Kopeeritud lõikelauale.");
+    setShowCopyModal(false);
   }
   const totalRows = rows.length;
   const warningRows = rows.filter(r => r._warning).length;
@@ -578,6 +635,8 @@ T5.11.MG2005\t2`;
     setMsg("📋 Näidis laaditud.");
   }
   const initSaveView = () => {
+    if (!modelObjects.length) return;
+    selectInModel();
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
     const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -593,59 +652,18 @@ T5.11.MG2005\t2`;
     try {
       const modelObjectIds = modelObjects.map(obj => ({ modelId: obj.modelId, objectRuntimeIds: [obj.objectId] }));
       await api.view.createView({ name: viewName, modelObjectIds });
-      setMsg(t.viewSaved.replace("{name}", viewName));
+      setMsg(`✓ Vaade salvestatud: ${viewName}`);
       setShowViewSave(false);
     } catch (e: any) {
-      setMsg(t.viewSaveError.replace("{error}", e?.message || t.unknownError));
+      setMsg("❌ Viga vaate salvestamisel: " + (e?.message || "tundmatu viga"));
     }
   };
   const cancelSaveView = () => {
     setShowViewSave(false);
     setViewName("");
   };
-  const initSaveOrganizer = () => {
-    const now = new Date();
-    const dd = String(now.getDate()).padStart(2, "0");
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
-    const yy = String(now.getFullYear() % 100).padStart(2, "0");
-    const hh = String(now.getHours()).padStart(2, "0");
-    const min = String(now.getMinutes()).padStart(2, "0");
-    const defaultName = `scan ${dd}.${mm}.${yy}.${hh}.${min}`;
-    setOrganizerName(defaultName);
-    setShowOrganizerSave(true);
-  };
-  const saveToOrganizer = async () => {
-    if (!modelObjects.length || !organizerName.trim()) return;
-    try {
-      setBusy(true);
-      const projectId = await api.project.getProject().then((p: any) => p.id);
-      const trees = await api.organizer.getTrees(projectId);
-      let aeResultTree = trees.find((tree: any) => tree.name === "AE RESULT");
-      if (!aeResultTree) {
-        aeResultTree = await api.organizer.createTree(projectId, { name: "AE RESULT", type: "manual" });
-      }
-      const childNode = await api.organizer.createNode(projectId, aeResultTree.id, { name: organizerName, parentId: aeResultTree.rootNodeId });
-      let linkedCount = 0;
-      for (const obj of modelObjects) {
-        await api.organizer.createLink(projectId, aeResultTree.id, childNode.id, { resourceId: obj.objectId, resourceType: "MODEL_OBJECT", modelId: obj.modelId });
-        linkedCount++;
-      }
-      const path = `AE RESULT → ${organizerName}`;
-      setMsg(t.organizerSaved.replace("{path}", path));
-      setShowOrganizerSave(false);
-    } catch (e: any) {
-      setMsg(t.organizerSaveError.replace("{error}", e?.message || t.unknownError));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const cancelSaveOrganizer = () => {
-    setShowOrganizerSave(false);
-    setOrganizerName("");
-  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
-      {/* API võtme nupp paremas ülanurgas */}
       <button
         style={{
           position: "absolute",
@@ -665,7 +683,6 @@ T5.11.MG2005\t2`;
       >
         ⚙️
       </button>
-      {/* API võtme modaal */}
       {showApiKeyModal && (
         <div style={{
           position: "fixed",
@@ -716,7 +733,6 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-      {/* Sisend */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <div>
@@ -754,6 +770,35 @@ T5.11.MG2005\t2`;
               alt="Preview"
               style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 6, border: "1px solid #e5e7eb" }}
             />
+            <button
+              style={{ marginTop: 4, padding: "4px 8px", background: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+              onClick={() => setShowImageModal(true)}
+            >
+              🔍 Suurenda / Laadi alla
+            </button>
+          </div>
+        )}
+        {showImageModal && (
+          <div style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.8)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000
+          }} onClick={() => setShowImageModal(false)}>
+            <img src={imagePreview} alt="Large preview" style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: 8 }} />
+            <a
+              href={imagePreview}
+              download="scan_image.jpg"
+              style={{ position: "absolute", bottom: 20, color: "#fff", background: "#10b981", padding: "8px 16px", borderRadius: 6 }}
+            >
+              Laadi alla
+            </a>
           </div>
         )}
         <div>
@@ -981,18 +1026,17 @@ T5.11.MG2005\t2`;
                 📥 CSV
               </button>
               <button
+                style={{ padding: "6px 12px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                onClick={() => setShowCopyModal(true)}
+              >
+                📋 Kopeeri lõikelauale
+              </button>
+              <button
                 style={{ padding: "6px 12px", background: "#10b981", color: "#fff", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={initSaveView}
                 disabled={!modelObjects.length}
               >
                 Salvesta vaatesse
-              </button>
-              <button
-                style={{ padding: "6px 12px", background: "#F97316", color: "#fff", border: "1px solid #F97316", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
-                onClick={initSaveOrganizer}
-                disabled={!modelObjects.length}
-              >
-                Salvesta Organiserisse
               </button>
             </div>
           </div>
@@ -1077,10 +1121,10 @@ T5.11.MG2005\t2`;
                       {key}
                       {key === markKey && " 🔖"}
                       {key === qtyKey && " 🔢"}
-                      {key === "_modelQuantity" && " (mudel)"}
+                      {key === "_modelQuantity" && " (Kogus mudelis)"}
                     </th>
                   ))}
-                  <th style={{ textAlign: "center", borderBottom: "2px solid #e5e7eb", padding: "6px", background: "#f9fafb", position: "sticky", top: 0, width: 60, zIndex: 10 }}>-</th>
+                  <th style={{ textAlign: "center", borderBottom: "2px solid #e5e7eb", padding: "6px", background: "#f9fafb", position: "sticky", top: 0, width: 100, zIndex: 10 }}>-</th>
                 </tr>
               </thead>
               <tbody>
@@ -1123,6 +1167,14 @@ T5.11.MG2005\t2`;
                         >
                           ❌
                         </button>
+                        {r._foundInModel && r.modelId && r._objectId && (
+                          <button
+                            onClick={() => zoomToRow(r.modelId, r._objectId)}
+                            style={{ padding: "2px 6px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginLeft: 4 }}
+                          >
+                            🔍
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1187,24 +1239,65 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-      {showOrganizerSave && (
-        <div style={{ marginTop: 8, padding: 6, border: "1px solid #F97316", borderRadius: 6, background: "#fff7ed" }}>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Organizer grupp nimi (AE RESULT → ...):</label>
-          <input type="text" value={organizerName} onChange={e => setOrganizerName(e.target.value)} style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }} />
-          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-            <button
-              onClick={saveToOrganizer}
-              style={{ flex: 1, padding: "8px", background: "#F97316", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
-              disabled={!organizerName.trim()}
-            >
-              Salvesta
-            </button>
-            <button
-              onClick={cancelSaveOrganizer}
-              style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
-            >
-              Tühista
-            </button>
+      {showCopyModal && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: "#fff",
+            borderRadius: 8,
+            padding: 20,
+            maxWidth: 400,
+            width: "90%",
+            boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
+          }}>
+            <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>📋 Kopeeri lõikelauale</h3>
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={copyIncludeHeaders}
+                onChange={(e) => setCopyIncludeHeaders(e.target.checked)}
+              />
+              <span>Kaasa päised</span>
+            </label>
+            <div style={{ marginTop: 8 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {headers.map((h) => (
+                  <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={copyColumns.includes(h)}
+                      onChange={() => setCopyColumns(prev => prev.includes(h) ? prev.filter(c => c !== h) : [...prev, h])}
+                    />
+                    <span>{h}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button
+                onClick={copyToClipboard}
+                style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+              >
+                Kopeeri
+              </button>
+              <button
+                onClick={() => setShowCopyModal(false)}
+                style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+              >
+                Tühista
+              </button>
+            </div>
           </div>
         </div>
       )}
