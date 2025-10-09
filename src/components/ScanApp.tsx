@@ -1,6 +1,4 @@
 import React, { useMemo, useRef, useState, useEffect } from "react";
-import * as pdfjs from 'pdfjs-dist';
-pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.js'; // Lisa see fail oma projekti
 
 type Row = Record<string, string> & {
   _confidence?: number;
@@ -120,24 +118,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
         setImagePreview(e.target?.result as string || "");
       };
       reader.readAsDataURL(file);
-    } else if (file.type === 'application/pdf') {
-      setImagePreview(''); // PDF jaoks ei näita preview'd, aga käsitle runOcr'is
     }
-  }
-
-  async function pdfToImages(file: File): Promise<string[]> {
-    const pdf = await pdfjs.getDocument(await file.arrayBuffer()).promise;
-    const images: string[] = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 2 });
-      const canvas = document.createElement('canvas');
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
-      images.push(canvas.toDataURL('image/jpeg'));
-    }
-    return images;
   }
 
   async function runGptOcr(imageBase64: string): Promise<string> {
@@ -182,7 +163,7 @@ ${settings?.ocrPrompt || ""}
                 {
                   type: "image_url",
                   image_url: {
-                    url: `data:image/jpeg;base64,${imageBase64}`
+                    url: `data:${files[0]?.type || "image/jpeg"};base64,${imageBase64}`
                   }
                 }
               ]
@@ -258,17 +239,8 @@ Anna lühike kokkuvõte eesti keeles.`;
         return;
       }
       setMsg("🔍 OCR töötab...");
-      let text = '';
-      if (files[0].type === 'application/pdf') {
-        const images = await pdfToImages(files[0]);
-        for (const img of images) {
-          const base64 = img.split(',')[1];
-          text += await runGptOcr(base64) + '\n';
-        }
-      } else {
-        const base64 = await fileToBase64(files[0]);
-        text = await runGptOcr(base64);
-      }
+      const base64 = await fileToBase64(files[0]);
+      const text = await runGptOcr(base64);
       setRawText(text);
       const feedback = await getOcrFeedback(text);
       setOcrFeedback(feedback);
@@ -740,7 +712,7 @@ T5.11.MG2005\t2`;
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*,application/pdf"
+              accept="image/*"
               onChange={(e) => handleFileSelect(e.target.files)}
               style={{ fontSize: 12, width: "100%" }}
             />
@@ -756,7 +728,7 @@ T5.11.MG2005\t2`;
               style={{ display: "none" }}
             />
             <button
-              style={{ width: "100%", padding: "6px 12px", background: "#d1fae5", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
+              style={{ width: "100%", padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
               onClick={() => cameraInputRef.current?.click()}
             >
               📷 Kaamera
@@ -771,7 +743,7 @@ T5.11.MG2005\t2`;
               style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 6, border: "1px solid #e5e7eb" }}
             />
             <button
-              style={{ marginTop: 4, padding: "4px 8px", background: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+              style={{ marginTop: 4, padding: "4px 8px", background: "#aaa", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
               onClick={() => setShowImageModal(true)}
             >
               🔍 Suurenda / Laadi alla
@@ -795,7 +767,7 @@ T5.11.MG2005\t2`;
             <a
               href={imagePreview}
               download="scan_image.jpg"
-              style={{ position: "absolute", bottom: 20, color: "#fff", background: "#10b981", padding: "8px 16px", borderRadius: 6 }}
+              style={{ position: "absolute", bottom: 20, color: "#fff", background: "#aaa", padding: "8px 16px", borderRadius: 6 }}
             >
               Laadi alla
             </a>
@@ -807,7 +779,7 @@ T5.11.MG2005\t2`;
             value={targetColumns}
             onChange={(e) => setTargetColumns(e.target.value)}
             placeholder="Component, Pcs, Profile, Length..."
-            style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
+            style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
           />
           <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>
             Sisesta koma eraldatult või numbritena: '1, 2, 3'
@@ -820,13 +792,13 @@ T5.11.MG2005\t2`;
             value={additionalPrompt}
             onChange={(e) => setAdditionalPrompt(e.target.value)}
             placeholder="nt: 'Loe täpselt T ja 5 erinevusega, numbrid on kogused.'"
-            style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 60 }}
+            style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 60 }}
           />
         </div>
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Või kleebi tekst</label>
           <textarea
-            style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 100 }}
+            style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 100 }}
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             placeholder="Tekst..."
@@ -834,7 +806,7 @@ T5.11.MG2005\t2`;
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
-            style={{ padding: "6px 12px", background: "#10b981", color: "#fff", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+            style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
             disabled={busy}
             onClick={runOcr}
           >
@@ -842,14 +814,14 @@ T5.11.MG2005\t2`;
           </button>
         
           <button
-            style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+            style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             onClick={loadSampleData}
           >
             📋 Näidis
           </button>
         
           <button
-            style={{ padding: "6px 12px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
+            style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
             onClick={() => {
               if (!rawText.trim()) {
                 setMsg("❌ Pole teksti.");
@@ -862,7 +834,7 @@ T5.11.MG2005\t2`;
           </button>
         
           <button
-            style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+            style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             onClick={() => {
               setRawText("");
               setRows([]);
@@ -938,7 +910,7 @@ T5.11.MG2005\t2`;
                 value={findText}
                 onChange={(e) => setFindText(e.target.value)}
                 placeholder="nt: ."
-                style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
+                style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
               />
             </div>
           
@@ -948,20 +920,20 @@ T5.11.MG2005\t2`;
                 value={replaceText}
                 onChange={(e) => setReplaceText(e.target.value)}
                 placeholder="nt: -"
-                style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
+                style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
               />
             </div>
           
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
-                style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+                style={{ flex: 1, padding: "8px", background: "#333", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
               >
                 ✓ Asenda
               </button>
               <button
                 onClick={() => setShowFindReplace(false)}
-                style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+                style={{ flex: 1, padding: "8px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
               >
                 Tühista
               </button>
@@ -978,7 +950,7 @@ T5.11.MG2005\t2`;
               <select
                 value={markKey}
                 onChange={(e) => setMarkKey(e.target.value)}
-                style={{ padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 4, fontSize: 12 }}
+                style={{ padding: "4px 6px", border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
               >
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
@@ -989,7 +961,7 @@ T5.11.MG2005\t2`;
               <select
                 value={qtyKey}
                 onChange={(e) => setQtyKey(e.target.value)}
-                style={{ padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 4, fontSize: 12 }}
+                style={{ padding: "4px 6px", border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
               >
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
@@ -997,7 +969,7 @@ T5.11.MG2005\t2`;
           
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button
-                style={{ padding: "6px 12px", background: "#7c3aed", color: "#fff", border: "1px solid #7c3aed", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
+                style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={searchingModel}
                 onClick={searchInModel}
               >
@@ -1005,7 +977,7 @@ T5.11.MG2005\t2`;
               </button>
             
               <button
-                style={{ padding: "6px 12px", background: "#f59e0b", color: "#fff", border: "1px solid #f59e0b", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
+                style={{ padding: "6px 12px", background: "#555", color: "#fff", border: "1px solid #555", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={!modelObjects.length}
                 onClick={selectInModel}
               >
@@ -1013,26 +985,26 @@ T5.11.MG2005\t2`;
               </button>
             
               <button
-                style={{ padding: "6px 12px", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
+                style={{ padding: "6px 12px", background: "#777", color: "#fff", border: "1px solid #777", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
             
               <button
-                style={{ padding: "6px 12px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                style={{ padding: "6px 12px", background: "#aaa", color: "#fff", border: "1px solid #aaa", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={exportToCSV}
               >
                 📥 CSV
               </button>
               <button
-                style={{ padding: "6px 12px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                style={{ padding: "6px 12px", background: "#aaa", color: "#fff", border: "1px solid #aaa", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={() => setShowCopyModal(true)}
               >
                 📋 Kopeeri lõikelauale
               </button>
               <button
-                style={{ padding: "6px 12px", background: "#10b981", color: "#fff", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={initSaveView}
                 disabled={!modelObjects.length}
               >
@@ -1184,7 +1156,7 @@ T5.11.MG2005\t2`;
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
             <button
-              style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+              style={{ padding: "6px 12px", background: "transparent", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
               onClick={addRow}
             >
               ➕ Lisa rida
@@ -1198,7 +1170,7 @@ T5.11.MG2005\t2`;
               style={{
                 width: "100%",
                 padding: "12px",
-                background: (warningRows > 0 || notFoundRows > 0) ? "#d1d5db" : "#10b981",
+                background: (warningRows > 0 || notFoundRows > 0) ? "#d1d5db" : "#333",
                 color: "#fff",
                 border: "none",
                 borderRadius: 6,
@@ -1219,20 +1191,20 @@ T5.11.MG2005\t2`;
         </div>
       )}
       {showViewSave && (
-        <div style={{ marginTop: 8, padding: 6, border: "1px solid #cfd6df", borderRadius: 6, background: "#e7f3ff" }}>
+        <div style={{ marginTop: 8, padding: 6, border: "1px solid #ccc", borderRadius: 6, background: "#f0f0f0" }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Vaate nimi:</label>
-          <input type="text" value={viewName} onChange={e => setViewName(e.target.value)} style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }} />
+          <input type="text" value={viewName} onChange={e => setViewName(e.target.value)} style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             <button
               onClick={saveView}
-              style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+              style={{ flex: 1, padding: "8px", background: "#333", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
               disabled={!viewName.trim()}
             >
               Salvesta vaade
             </button>
             <button
               onClick={cancelSaveView}
-              style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+              style={{ flex: 1, padding: "8px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             >
               Tühista
             </button>
@@ -1287,13 +1259,13 @@ T5.11.MG2005\t2`;
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               <button
                 onClick={copyToClipboard}
-                style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+                style={{ flex: 1, padding: "8px", background: "#333", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
               >
                 Kopeeri
               </button>
               <button
                 onClick={() => setShowCopyModal(false)}
-                style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+                style={{ flex: 1, padding: "8px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
               >
                 Tühista
               </button>
