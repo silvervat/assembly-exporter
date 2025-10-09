@@ -52,6 +52,8 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [copyIncludeHeaders, setCopyIncludeHeaders] = useState(true);
   const [copyColumns, setCopyColumns] = useState<string[]>([]);
+  const [modelMarkProperty, setModelMarkProperty] = useState("Tekla_Assembly.AssemblyCast_unit_Mark");
+  const [rowCountWarning, setRowCountWarning] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -125,12 +127,10 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     if (!apiKey) {
       throw new Error("❌ Sisesta OpenAI API võti!");
     }
-
     const columns = targetColumns.trim();
     const columnInstruction = columns
       ? `Väljavõtte AINULT need veerud täpselt selles järjekorras: ${columns}. Kui veerunimed ei ole pildil nähtavad, kasuta veeru positsioone (1. veerg vasakult = ${columns.split(',')[0]?.trim() || '1'}, 2. veerg = ${columns.split(',')[1]?.trim() || '2'}, jne).`
       : "Väljavõtte kõik nähtavad veerud.";
-
     const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises. Ole väga täpne tähtede ja numbrite eristamisel (nt "T" ja "5" on erinevad, "TS" ei ole "T5"). Numbrid on kogused, loe neid täpselt, ära muuda neid.
 ${columnInstruction}
 Tagasta andmed TSV (tab-separated values) formaadis, kus esimene rida on päised.
@@ -139,10 +139,10 @@ Hoia TÄPNE ALGINE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
 Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???".
 Ära jäta ühtegi rida vahele.
 Ära lisa lisaridu.
+Ära lisa lisaridu ega tühje ridu. Veendu, et ridade arv vastab täpselt dokumendi sisule.
 ${additionalPrompt || ""}
 ${settings?.ocrPrompt || ""}
 Ära lisa mingit teksti ega selgitust, ära kasuta Markdowni formaati ega koodiblokke - ainult puhas TSV tabel!`;
-
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -172,7 +172,6 @@ ${settings?.ocrPrompt || ""}
           max_tokens: 4000,
         })
       });
-
       if (!response.ok) {
         throw new Error(`API viga: ${response.status}`);
       }
@@ -183,6 +182,38 @@ ${settings?.ocrPrompt || ""}
       return cleanedText;
     } catch (error: any) {
       throw new Error(`OpenAI API viga: ${error.message}`);
+    }
+  }
+
+  async function verifyRowCount(text: string): Promise<string> {
+    if (!apiKey) return "";
+    const prompt = `Analüüsi seda TSV teksti: ${text}
+Loenda read (välja arvatud päis). Kui on ekstra ridu või puuduvad read, anna hoiatus. Tagasta: "OK, ridu: X" või "Hoiatus: ekstra Y rida".`;
+
+    try {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          max_tokens: 300,
+        })
+      });
+
+      if (!response.ok) return "Kontroll ebaõnnestus.";
+      const data = await response.json();
+      return data.choices[0]?.message?.content || "";
+    } catch {
+      return "Kontroll ebaõnnestus.";
     }
   }
 
@@ -241,10 +272,12 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("🔍 OCR töötab...");
       const base64 = await fileToBase64(files[0]);
       const text = await runGptOcr(base64);
+      const rowCheck = await verifyRowCount(text);
+      setRowCountWarning(rowCheck);
       setRawText(text);
       const feedback = await getOcrFeedback(text);
       setOcrFeedback(feedback);
-      setMsg(`✅ OCR valmis! Vajuta 'Parsi tabelisse'.\n\nTagasiside: ${feedback}`);
+      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside: ${feedback}`);
     } catch (e: any) {
       setMsg("❌ Viga: " + (e?.message || String(e)));
     } finally {
@@ -330,6 +363,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       : "";
     setMsg(`✓ Tabel valmis: ${outRows.length} rida.${warnMsg}${ocrWarnMsg}${rowCountMsg}`);
   }
+
   function cleanHeader(s: string) {
     const x = s.replace(/\s+/g, " ").trim();
     if (!x) return "";
@@ -340,6 +374,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       .replace(/Quantity/i, "Qty");
     return m.replace(/[^\w\s.-]/g, "").trim();
   }
+
   function changeCell(rIdx: number, key: string, value: string) {
     setRows((prev) => {
       const next = [...prev];
@@ -351,14 +386,17 @@ Anna lühike kokkuvõte eesti keeles.`;
       return next;
     });
   }
+
   function addRow() {
     const base: Row = { _confidence: 1.0 };
     headers.forEach(h => base[h] = "");
     setRows((prev) => [...prev, base]);
   }
+
   function removeRow(rIdx: number) {
     setRows((prev) => prev.filter((_, i) => i !== rIdx));
   }
+
   function toggleColumn(col: string) {
     setSelectedColumns(prev =>
       prev.includes(col)
@@ -366,6 +404,7 @@ Anna lühike kokkuvõte eesti keeles.`;
         : [...prev, col]
     );
   }
+
   function findAndReplace() {
     if (!findText.trim()) {
       setMsg("❌ Sisesta otsitav tekst!");
@@ -390,6 +429,7 @@ Anna lühike kokkuvõte eesti keeles.`;
     setMsg(`✓ Asendatud ${replacedCount} kohta.`);
     setShowFindReplace(false);
   }
+
   async function searchInModel() {
     if (!markKey || !rows.length) {
       setMsg("❌ Parsi esmalt tabel!");
@@ -401,7 +441,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       const viewer = api?.viewer;
       const marks = rows.map(r => String(r[markKey] || "").trim()).filter(Boolean);
       const uniqueMarks = [...new Set(marks)];
-    
+   
       const mos = await viewer?.getObjects();
       if (!Array.isArray(mos)) {
         setMsg("❌ API viga");
@@ -413,17 +453,17 @@ Anna lühike kokkuvõte eesti keeles.`;
       for (const mo of mos) {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
-      
+     
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
-        
+       
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                if (/tekla_assembly.assemblycast_unit_mark/i.test(String(p?.name))) {
+                if (p?.name === modelMarkProperty) {  // Kasuta valitud property't, vaikimisi "Tekla_Assembly.AssemblyCast_unit_Mark"
                   const val = String(p?.value || p?.displayValue || "").trim();
-                  if (uniqueMarks.some(m => m.toLowerCase() === val.toLowerCase())) {
+                  if (uniqueMarks.some(m => val === m || val.includes(m))) {  // Täpne või osaline vaste
                     const count = foundMarks.get(val) || 0;
                     foundMarks.set(val, count + 1);
                     foundObjects.push({ modelId, objectId: obj.id, mark: val });
@@ -441,14 +481,14 @@ Anna lühike kokkuvõte eesti keeles.`;
         const mark = String(r[markKey] || "").trim();
         const modelCount = foundMarks.get(mark) || 0;
         const found = modelCount > 0;
-      
+     
         const sheetQty = qtyKey ? parseInt(String(r[qtyKey] || "0")) || 0 : 0;
-      
+     
         let warning = r._warning || "";
         if (found && qtyKey && modelCount !== sheetQty) {
           warning = `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
         }
-      
+     
         const object = foundObjects.find(obj => obj.mark.toLowerCase() === mark.toLowerCase());
         return {
           ...r,
@@ -477,6 +517,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       setSearchingModel(false);
     }
   }
+
   async function selectInModel() {
     if (!modelObjects.length) {
       setMsg("❌ Tee esmalt otsing mudelist!");
@@ -484,7 +525,7 @@ Anna lühike kokkuvõte eesti keeles.`;
     }
     try {
       const viewer = api?.viewer;
-    
+   
       const byModel = new Map<string, number[]>();
       for (const obj of modelObjects) {
         const ids = byModel.get(obj.modelId) || [];
@@ -499,6 +540,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("❌ Selectimine ebaõnnestus: " + (e?.message || String(e)));
     }
   }
+
   async function zoomToRow(modelId: string | undefined, objectId: number | undefined) {
     if (!modelId || !objectId) return;
     try {
@@ -509,9 +551,10 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("❌ Zoom ebaõnnestus: " + (e?.message || String(e)));
     }
   }
+
   function exportToCSV() {
     if (!rows.length) return;
-  
+ 
     const csvHeaders = selectedColumns.join(",");
     const csvRows = rows.map(r =>
       selectedColumns.map(col => {
@@ -519,7 +562,7 @@ Anna lühike kokkuvõte eesti keeles.`;
         return val.includes(",") ? `"${val}"` : val;
       }).join(",")
     );
-  
+ 
     const csv = [csvHeaders, ...csvRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -528,9 +571,10 @@ Anna lühike kokkuvõte eesti keeles.`;
     a.download = `scan_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  
+ 
     setMsg("✓ Eksporditud CSV-sse.");
   }
+
   function copyToClipboard() {
     if (!rows.length) return;
     const csvHeaders = copyIncludeHeaders ? copyColumns.join("\t") + '\n' : '';
@@ -542,6 +586,7 @@ Anna lühike kokkuvõte eesti keeles.`;
     setMsg("✅ Kopeeritud lõikelauale.");
     setShowCopyModal(false);
   }
+
   const totalRows = rows.length;
   const warningRows = rows.filter(r => r._warning).length;
   const notFoundRows = rows.filter(r => r._foundInModel === false).length;
@@ -572,6 +617,7 @@ Anna lühike kokkuvõte eesti keeles.`;
   const totalModelQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + (r._modelQuantity || 0), 0);
   }, [rows]);
+
   function onConfirmClick() {
     if (!rows.length) {
       setMsg("❌ Tabel on tühi.");
@@ -589,12 +635,13 @@ Anna lühike kokkuvõte eesti keeles.`;
       const confirmed = window.confirm(`⚠️ ${notFoundRows} ei leitud mudelist! Jätka ikkagi?`);
       if (!confirmed) return;
     }
-  
+ 
     if (onConfirm) {
       onConfirm(previewMarks, rows, markKey, qtyKey);
     }
     setMsg("✅ Kinnitatud: " + previewMarks.length + " kirjet.");
   }
+
   function loadSampleData() {
     const sample = `Component\tPcs
 T5.11.MG2001\t2
@@ -606,6 +653,7 @@ T5.11.MG2005\t2`;
     setTargetColumns("Component, Pcs");
     setMsg("📋 Näidis laaditud.");
   }
+
   const initSaveView = () => {
     if (!modelObjects.length) return;
     selectInModel();
@@ -619,6 +667,7 @@ T5.11.MG2005\t2`;
     setViewName(defaultName);
     setShowViewSave(true);
   };
+
   const saveView = async () => {
     if (!modelObjects.length || !viewName.trim()) return;
     try {
@@ -630,12 +679,16 @@ T5.11.MG2005\t2`;
       setMsg("❌ Viga vaate salvestamisel: " + (e?.message || "tundmatu viga"));
     }
   };
+
   const cancelSaveView = () => {
     setShowViewSave(false);
     setViewName("");
   };
+
+  const hasInput = files.length > 0 || rawText.trim().length > 0;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+    <div style={{ ...c.section, background: "#f6f8fb", border: "1px solid #e6eaf0", borderRadius: 6, padding: "12px" }}>
       <button
         style={{
           position: "absolute",
@@ -740,14 +793,9 @@ T5.11.MG2005\t2`;
             <img
               src={imagePreview}
               alt="Preview"
-              style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 6, border: "1px solid #e5e7eb" }}
-            />
-            <button
-              style={{ marginTop: 4, padding: "4px 8px", background: "#aaa", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+              style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 6, border: "1px solid #e5e7eb", cursor: "pointer" }}
               onClick={() => setShowImageModal(true)}
-            >
-              🔍 Suurenda / Laadi alla
-            </button>
+            />
           </div>
         )}
         {showImageModal && (
@@ -774,7 +822,7 @@ T5.11.MG2005\t2`;
           </div>
         )}
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud</label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud <span title="Kirjuta komaga eraldatud veergude nimed või numbrid (nt 'Component, Pcs' või '1,2'). Kasutatakse OCR-is täpseks väljavõtteks.">ℹ️</span></label>
           <input
             value={targetColumns}
             onChange={(e) => setTargetColumns(e.target.value)}
@@ -785,9 +833,9 @@ T5.11.MG2005\t2`;
             Sisesta koma eraldatult või numbritena: '1, 2, 3'
           </div>
         </div>
-      
+     
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Lisa OCR juhised</label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Lisa OCR juhised <span title="Lisa täiendavad juhised OCR-ile, nt 'Tunnusta ainult numbrid ja tähed, ignoreeri jooni'.">ℹ️</span></label>
           <textarea
             value={additionalPrompt}
             onChange={(e) => setAdditionalPrompt(e.target.value)}
@@ -796,7 +844,7 @@ T5.11.MG2005\t2`;
           />
         </div>
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Või kleebi tekst</label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Või kleebi tekst <span title="Kleebi siia eelnevalt kopeeritud tekst saatelehelt või mujalt.">ℹ️</span></label>
           <textarea
             style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 100 }}
             value={rawText}
@@ -812,14 +860,16 @@ T5.11.MG2005\t2`;
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
           </button>
-        
-          <button
-            style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
-            onClick={loadSampleData}
-          >
-            📋 Näidis
-          </button>
-        
+       
+          {!hasInput && (
+            <button
+              style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+              onClick={loadSampleData}
+            >
+              📋 Näidis
+            </button>
+          )}
+       
           <button
             style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
             onClick={() => {
@@ -832,7 +882,7 @@ T5.11.MG2005\t2`;
           >
             ⚡ Parsi
           </button>
-        
+       
           <button
             style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             onClick={() => {
@@ -903,7 +953,7 @@ T5.11.MG2005\t2`;
             boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
           }}>
             <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>🔄 Otsi ja asenda</h3>
-          
+         
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Otsi</label>
               <input
@@ -913,7 +963,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
               />
             </div>
-          
+         
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Asenda</label>
               <input
@@ -923,7 +973,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
               />
             </div>
-          
+         
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
@@ -946,7 +996,7 @@ T5.11.MG2005\t2`;
         <div style={{ border: "1px solid #edf0f4", borderRadius: 8, padding: 12, background: "#fafbfc" }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mark veerg</div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mark veerg <span title="Vali veerg, mis sisaldab mark'i (nt 'T5.11.MG2001'), mida otsitakse mudelist.">ℹ️</span></div>
               <select
                 value={markKey}
                 onChange={(e) => setMarkKey(e.target.value)}
@@ -955,9 +1005,9 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-          
+         
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Kogus veerg</div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Kogus veerg <span title="Vali veerg, mis sisaldab kogust (nt '2'), mida võrreldakse mudeli kogusega.">ℹ️</span></div>
               <select
                 value={qtyKey}
                 onChange={(e) => setQtyKey(e.target.value)}
@@ -966,7 +1016,22 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-          
+         
+            <div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mudeli property <span title="Vali atribuut mudelist, nt 'Tekla_Assembly.AssemblyCast_unit_Mark' mark'i sobitamiseks.">ℹ️</span></div>
+              <select
+                value={modelMarkProperty}
+                onChange={(e) => setModelMarkProperty(e.target.value)}
+                style={{ padding: "4px 6px", border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
+              >
+                <option value="Tekla_Assembly.AssemblyCast_unit_Mark">Tekla_Assembly.AssemblyCast_unit_Mark</option>
+                <option value="ASSEMBLY_POS">ASSEMBLY_POS</option>
+                <option value="NAME">NAME</option>
+                <option value="PART_POS">PART_POS</option>
+                <option value="ID">ID</option>
+              </select>
+            </div>
+         
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button
                 style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
@@ -975,7 +1040,7 @@ T5.11.MG2005\t2`;
               >
                 {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
               </button>
-            
+           
               <button
                 style={{ padding: "6px 12px", background: "#555", color: "#fff", border: "1px solid #555", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={!modelObjects.length}
@@ -983,14 +1048,14 @@ T5.11.MG2005\t2`;
               >
                 🎯 Selecti mudelist
               </button>
-            
+           
               <button
                 style={{ padding: "6px 12px", background: "#777", color: "#fff", border: "1px solid #777", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
-            
+           
               <button
                 style={{ padding: "6px 12px", background: "#aaa", color: "#fff", border: "1px solid #aaa", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={exportToCSV}
@@ -1039,42 +1104,42 @@ T5.11.MG2005\t2`;
               <div style={{ fontWeight: 600, color: "#1e40af" }}>📊 Ridu kokku</div>
               <div style={{ fontSize: 18, fontWeight: 700, color: "#1e40af" }}>{totalRows}</div>
             </div>
-          
+         
             {foundRows > 0 && (
               <div style={{ padding: 8, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#15803d" }}>✅ Leitud</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#15803d" }}>{foundRows}</div>
               </div>
             )}
-          
+         
             {notFoundRows > 0 && (
               <div style={{ padding: 8, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#c2410c" }}>❌ Ei leitud</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#c2410c" }}>{notFoundRows}</div>
               </div>
             )}
-          
+         
             {warningRows > 0 && (
               <div style={{ padding: 8, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#dc2626" }}>⚠️ Hoiatused</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#dc2626" }}>{warningRows}</div>
               </div>
             )}
-          
+         
             {qtyKey && totalSheetQty > 0 && (
               <div style={{ padding: 8, background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#92400e" }}>📋 Saateleht</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#92400e" }}>{totalSheetQty} tk</div>
               </div>
             )}
-          
+         
             {totalModelQty > 0 && (
               <div style={{ padding: 8, background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#6b21a8" }}>🏗️ Mudel</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#6b21a8" }}>{totalModelQty} tk</div>
               </div>
             )}
-          
+         
             {qtyMismatchRows > 0 && (
               <div style={{ padding: 8, background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#ea580c" }}>⚠️ Erinevused</div>
@@ -1106,7 +1171,7 @@ T5.11.MG2005\t2`;
                   const found = r._foundInModel === true;
                   const qtyMismatch = r._warning?.includes("ei vasta");
                   const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? "#fff" : "#fafafa");
-                
+               
                   return (
                     <tr key={idx} style={{ background: rowBg }}>
                       <td style={{ padding: "4px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
