@@ -80,18 +80,19 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
 
     const columns = targetColumns.trim();
     const columnInstruction = columns
-      ? `Extract ONLY these columns in this exact order: ${columns}. If column names are not visible in the image, use column positions (1st column from left = ${columns.split(',')[0]?.trim() || '1'}, 2nd = ${columns.split(',')[1]?.trim() || '2'}, etc).`
-      : "Extract all visible columns.";
+      ? `Väljavõtte AINULT need veerud täpselt selles järjekorras: ${columns}. Kui veerunimed ei ole pildil nähtavad, kasuta veeru positsioone (1. veerg vasakult = ${columns.split(',')[0]?.trim() || '1'}, 2. veerg = ${columns.split(',')[1]?.trim() || '2'}, jne).`
+      : "Väljavõtte kõik nähtavad veerud.";
 
-    const prompt = `You are an expert in reading logistics transport sheets and production lists.
+    const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises.
 ${columnInstruction}
-Return the data in TSV (tab-separated values) format, with the first row as headers.
-Keep the EXACT ORIGINAL ORDER of rows as they appear in the image (top to bottom).
-If you can't clearly read a cell, put "???" there.
-Do not skip any rows.
-Do not add extra rows.
+Tagasta andmed TSV (tab-separated values) formaadis, kus esimene rida on päised.
+Kasuta veergude eraldamiseks AINULT TAB-märki (\t). Ära kasuta tühikuid ega muid eraldajaid.
+Hoia TÄPNE ALGNE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
+Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???".
+Ära jäta ühtegi rida vahele.
+Ära lisa lisaridu.
 ${settings?.ocrPrompt || ""}
-Do not add any text or explanations - only the TSV table!`;
+Ära lisa mingit teksti ega selgitust, ära kasuta Markdowni formaati ega koodiblokke - ainult puhas TSV tabel!`;
 
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -128,7 +129,10 @@ Do not add any text or explanations - only the TSV table!`;
       }
       const data = await response.json();
       const text = data.choices[0]?.message?.content || "";
-      return text;
+      // Eemalda võimalikud Markdown koodiblokid
+      let cleanedText = text.trim();
+      cleanedText = cleanedText.replace(/^```(?:tsv|csv|plaintext)?\s*\n?/, '').replace(/\n?```$/, '');
+      return cleanedText;
     } catch (error: any) {
       throw new Error(`OpenAI API viga: ${error.message}`);
     }
@@ -165,7 +169,7 @@ Do not add any text or explanations - only the TSV table!`;
   function parseTextToTable(text: string) {
     const lines = text
       .split(/\r?\n/)
-      .map((s) => s.replace(/\t+/g, " ").trim())
+      .map(s => s.trim())
       .filter(Boolean);
     setTotalScannedRows(lines.length - 1); // -1 for header
     if (lines.length === 0) {
@@ -177,7 +181,7 @@ Do not add any text or explanations - only the TSV table!`;
     let headerIdx = 0;
     let bestScore = -1;
     for (let i = 0; i < Math.min(lines.length, 20); i++) {
-      const cols = lines[i].split(/\s{2,}|\t/).filter(Boolean);
+      const cols = lines[i].split(/\s+|\t/).filter(Boolean);
       const hasKeywords = /\b(component|mark|qty|pcs|kogus|profile|length|weight|komponent)\b/i.test(lines[i]) ? 3 : 0;
       const score = cols.length + hasKeywords;
       if (score > bestScore) {
@@ -186,18 +190,18 @@ Do not add any text or explanations - only the TSV table!`;
       }
     }
     const rawHeaders = lines[headerIdx]
-      .split(/\s{2,}|\t/)
+      .split(/\s+|\t/)
       .map((s) => cleanHeader(s))
       .filter(Boolean);
     const normalizedHeaders = rawHeaders.length > 0
       ? rawHeaders
-      : lines[0].split(/\s{2,}|\t/).map((_, i) => "Col" + (i + 1));
+      : lines[0].split(/\s+|\t/).map((_, i) => "Col" + (i + 1));
     const outRows: Row[] = [];
     let warnings = 0;
 
     for (let i = 0; i < lines.length; i++) {
       if (i === headerIdx) continue;
-      const cols = lines[i].split(/\s{2,}|\t/);
+      const cols = lines[i].split(/\s+|\t/);
 
       if (cols.length < 2) {
         warnings++;
@@ -514,13 +518,25 @@ T5.11.MG2005\t2`;
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
-      {/* API võtme nupp */}
+    <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+      {/* API võtme nupp - väike, ülemine parem nurk, tagasihoidlik */}
       <button
-        style={{ padding: "6px 12px", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+        style={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          padding: "4px 8px",
+          background: "#f3f4f6",
+          color: "#6b7280",
+          border: "1px solid #d1d5db",
+          borderRadius: 6,
+          cursor: "pointer",
+          fontSize: 12,
+          fontWeight: 500
+        }}
         onClick={() => setShowApiKeyModal(true)}
       >
-        ⚙️ API võti
+        ⚙️
       </button>
 
       {/* API võtme modaal */}
@@ -641,7 +657,7 @@ T5.11.MG2005\t2`;
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
             style={{ padding: "6px 12px", background: "#10b981", color: "#fff", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
-            disabled={busy}
+            disabled={busy || !apiKey}
             onClick={runOcr}
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
@@ -684,6 +700,24 @@ T5.11.MG2005\t2`;
             🗑️ Tühjenda
           </button>
         </div>
+        {/* Püsiv hoiatus, kui API võti puudub */}
+        {!apiKey && (
+          <div style={{
+            padding: "8px 12px",
+            borderRadius: 6,
+            fontSize: 13,
+            background: "#ffebee",
+            border: "1px solid #ef9a9a",
+            marginTop: 8
+          }}>
+            ⚠️ API võti puudub! OCR ei tööta ilma võtmeta. Vajuta ülaosas paremas nurgas ⚙️ nupule ja sisesta võti.<br/>
+            <strong>Juhend võtme saamiseks:</strong><br/>
+            1. Mine <a href="https://platform.openai.com/signup" target="_blank" rel="noopener noreferrer">platform.openai.com/signup</a> ja registreeru/looge konto (kui pole veel).<br/>
+            2. Logi sisse ja mine vasakul menüüs "API keys" sektsiooni.<br/>
+            3. Vajuta "Create new secret key", anna sellele nimi ja kopeeri võti (sk-... formaadis).<br/>
+            4. Kleebi see siia modaalaknasse ja salvesta.
+          </div>
+        )}
         {msg && (
           <div style={{
             padding: "8px 12px",
