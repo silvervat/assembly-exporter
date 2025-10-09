@@ -67,7 +67,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [copyColumns, setCopyColumns] = useState<string[]>([]);
   const [modelMarkProperty, setModelMarkProperty] = useState("AssemblyMark");
   const [rowCountWarning, setRowCountWarning] = useState("");
- 
   // UUS: Modaalaknad
   const [showSearchScopeModal, setShowSearchScopeModal] = useState(false);
   const [showOcrPromptModal, setShowOcrPromptModal] = useState(false);
@@ -75,7 +74,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
- 
   const t = translations || {};
   const c = parentStyles || {};
   // Load state from localStorage
@@ -169,7 +167,22 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
       ? `Väljavõtte AINULT need veerud täpselt selles järjekorras: ${columns}. Kui veerunimed ei ole pildil nähtavad, kasuta veeru positsioone (1. veerg vasakult = ${columns.split(',')[0]?.trim() || '1'}, 2. veerg = ${columns.split(',')[1]?.trim() || '2'}, jne).`
       : "Väljavõtte kõik nähtavad veerud.";
     const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises. Ole väga täpne tähtede ja numbrite eristamisel (nt "T" ja "5" on erinevad, "TS" ei ole "T5"). Numbrid on kogused, loe neid täpselt, ära muuda neid.
+Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade OCR-lugemises. Loe täpselt paberi pealt, ignoreeri värvilisi numbreid (nt roosad ringid) – need pole originaalis. Ignoreeri allapoole jäävaid allkirju, templeid, kuupäevi ja pastakaga lisatud märkusi (kui need pole tabeli osad). Dokument on kergelt viltu, kuid veerud on selgelt eraldatud.
+
+Veerud on täpselt need ja selles järjekorras: Nõ, Component, Rev, Pcs, Profile, Length mm, Weight kg/pcs, Total weight kg, Phase VM.
+- Nõ: rea number (1 kuni 81, kasvavalt).
+- Component: kood nagu T5.13.SB2036 (täht + numbrid, punktidega, iga rida eraldi lahter, mitte joru).
+- Rev: sageli tühi või number.
+- Pcs: kogus (tavaliselt 1-3).
+- Profile: tüüp nagu HEA140 või RHS070x070x05.
+- Length mm: pikkus millimeetrites (nt 6547).
+- Weight kg/pcs: kaal tk kohta (nt 171.0, komaga).
+- Total weight kg: kogukaal (nt 171.00, komaga).
+- Phase VM: faas nagu Z21-4.
+
+Ole väga täpne: erista "T" ja "5", "S" ja "5", "O" ja "0". Numbrid on täpsed, ära muuda neid (nt ära ümarda). Hoia originaalformaati: komad kaaludes, punktid koodides. Iga rida peab olema eraldi, mitte pikk joru Component veerus.
 ${columnInstruction}
+
 Tagasta andmed TSV (tab-separated values) formaadis, kus esimene rida on päised.
 Kasuta veergude eraldamiseks AINULT TAB-märki (\t). Ära kasuta tühikuid ega muid eraldajaid.
 Hoia TÄPNE ALGINE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
@@ -247,11 +260,12 @@ Loenda read (välja arvatud päis). Kui on ekstra ridu või puuduvad read, anna 
   async function getOcrFeedback(text: string): Promise<string> {
     if (!apiKey) return "";
     const prompt = `Analüüsi seda OCR tulemust (TSV formaat): ${text}
-Hinda:
-1. Kas dokument oli hästi loetav? (nt pilt kvaliteet, font, skaneerimine)
-2. Kas said kõigist ridadest ilusti aru? Kui mitte, millised probleemid?
-3. Kas soovitad uuesti scanida lisajuhistega (nt parem valgustus, täpsem prompt)?
-Anna lühike kokkuvõte eesti keeles.`;
+Hinda eesti keeles lühidalt ja struktureeritult:
+1. Dokumendi loetavus: (hea/keskmine/halb, selgitus nt pilt kvaliteet, font, skaneerimine, viltus asend).
+2. Probleemsed read/lahtrid: (loetle, nt "Rida 5: kahtlane number '???'", või "Component veerg: pikk joru – võimalik veergude segunemine").
+3. Kahtlased märkused: (nt pastakaga lisatud tekst, käsitsi kirjutatu, arusaamatud sümbolid – loetle kui tuvastad, nt "All allkiri pastakaga: ignoreeritud").
+4. Soovitused: (nt "Uuesti skaneeri parema valgustusega", "Lisa prompti täpsem veergude kirjeldus", "Kontrolli kahtlasi lahtreid käsitsi").
+Tagasta AINULT nummerdatud loeteluna, ilma lisatekstita.`;
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -296,7 +310,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       setRawText(text);
       const feedback = await getOcrFeedback(text);
       setOcrFeedback(feedback);
-      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside: ${feedback}`);
+      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside:\n${feedback}`);
     } catch (e: any) {
       setMsg("❌ Viga: " + (e?.message || String(e)));
     } finally {
@@ -450,21 +464,20 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("❌ Parsi esmalt tabel!");
       return;
     }
-   
+  
     try {
       setSearchingModel(true);
       setMsg("🔍 Otsin mudelist...");
       const viewer = api?.viewer;
       const marks = rows.map(r => String(r[markKey] || "").trim()).filter(Boolean);
       const uniqueMarks = [...new Set(marks)];
- 
       let mos;
       if (searchScope === "scopeSelected") {
         mos = await viewer?.getObjects?.({ selected: true });
       } else {
         mos = await viewer?.getObjects?.();
       }
-     
+    
       if (!Array.isArray(mos)) {
         setMsg("❌ API viga");
         return;
@@ -474,17 +487,17 @@ Anna lühike kokkuvõte eesti keeles.`;
       const modelPromises = mos.map(async (mo) => {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
-   
+  
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
-      
+     
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 let shouldCheck = false;
                 const propName = String(p?.name || "");
-               
+              
                 if (modelMarkProperty === "AssemblyMark") {
                   shouldCheck = /assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(propName);
                 } else if (modelMarkProperty === "ASSEMBLY_POS") {
@@ -519,14 +532,14 @@ Anna lühike kokkuvõte eesti keeles.`;
         const mark = String(r[markKey] || "").trim();
         const modelCount = foundMarks.get(mark) || 0;
         const found = modelCount > 0;
-   
+  
         const sheetQty = qtyKey ? parseInt(String(r[qtyKey] || "0")) || 0 : 0;
-   
+  
         let warning = r._warning || "";
         if (found && qtyKey && modelCount !== sheetQty) {
           warning = `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
         }
-   
+  
         const object = foundObjects.find(obj => obj.mark.toLowerCase() === mark.toLowerCase());
         return {
           ...r,
@@ -537,17 +550,17 @@ Anna lühike kokkuvõte eesti keeles.`;
           _objectId: object?.objectId
         };
       });
-     
+    
       setRows(updatedRows);
-     
+    
       if (foundObjects.length > 0) {
         setSelectedColumns(prev => [...new Set([...prev, "_modelQuantity"])]);
       }
-     
+    
       const foundCount = updatedRows.filter(r => r._foundInModel === true).length;
       const notFoundCount = updatedRows.filter(r => r._foundInModel === false).length;
       const qtyMismatch = updatedRows.filter(r => r._warning?.includes("ei vasta")).length;
-     
+    
       let resultMsg = `✓ ${foundCount} ✅ leitud, ${notFoundCount} ❌ ei leitud.`;
       if (qtyMismatch > 0) {
         resultMsg += ` ⚠️ ${qtyMismatch} koguste erinevus!`;
@@ -567,7 +580,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     }
     try {
       const viewer = api?.viewer;
- 
       const byModel = new Map<string, number[]>();
       for (const obj of modelObjects) {
         const ids = byModel.get(obj.modelId) || [];
@@ -584,16 +596,38 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("❌ Selectimine ebaõnnestus: " + (e?.message || String(e)));
     }
   }
-  async function zoomToRow(modelId: string | undefined, objectId: number | undefined) {
-    if (!modelId || !objectId) return;
+  async function zoomToRow(row: Row) {
+    const mark = String(row[markKey] || "").trim().toLowerCase();
+    if (!mark) return;
+
+    // Leia KÕIK sobivad objektid sama mark'iga modelObjects'st
+    const matchingObjects = modelObjects.filter(obj => obj.mark.toLowerCase() === mark);
+    if (matchingObjects.length === 0) {
+      setMsg("❌ Pole sobivaid objekte selle mark'i jaoks.");
+      return;
+    }
+
     try {
       const viewer = api?.viewer;
-      await viewer?.setSelection({
-        modelObjectIds: [{ modelId, objectRuntimeIds: [objectId] }]
-      }, 'set');
-      await viewer?.setCamera?.({ modelObjectIds: [{ modelId, objectRuntimeIds: [objectId] }] }, { animationTime: 500 });
+
+      // Kogume kõik modelObjectIds (kõik sama mark'iga objektid)
+      const byModel = new Map<string, number[]>();
+      for (const obj of matchingObjects) {
+        const ids = byModel.get(obj.modelId) || [];
+        ids.push(obj.objectId);
+        byModel.set(obj.modelId, ids);
+      }
+      const modelObjectIds = Array.from(byModel.entries()).map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds }));
+
+      // Märgista (selekteeri) kõik
+      await viewer?.setSelection({ modelObjectIds }, 'set');
+
+      // Zoomi kõigile korraga
+      await viewer?.setCamera?.({ modelObjectIds }, { animationTime: 500 });
+
+      setMsg(`✓ Märgistatud ja zoomitud ${matchingObjects.length} detailile mark'iga "${mark}".`);
     } catch (e: any) {
-      setMsg("❌ Zoom ebaõnnestus: " + (e?.message || String(e)));
+      setMsg("❌ Zoom/märgistus ebaõnnestus: " + (e?.message || String(e)));
     }
   }
   function exportToCSV() {
@@ -631,11 +665,9 @@ Anna lühike kokkuvõte eesti keeles.`;
   const notFoundRows = rows.filter(r => r._foundInModel === false).length;
   const foundRows = rows.filter(r => r._foundInModel === true).length;
   const qtyMismatchRows = rows.filter(r => r._warning?.includes("ei vasta")).length;
- 
   const displayColumns = useMemo(() => {
     return selectedColumns.length > 0 ? selectedColumns : headers;
   }, [selectedColumns, headers]);
- 
   const previewMarks = useMemo(() => {
     const marks: string[] = [];
     if (!markKey || !qtyKey) return marks;
@@ -648,7 +680,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     }
     return marks;
   }, [rows, markKey, qtyKey]);
- 
   const totalSheetQty = useMemo(() => {
     if (!qtyKey) return 0;
     return rows.reduce((sum, r) => {
@@ -656,7 +687,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       return sum + qty;
     }, 0);
   }, [rows, qtyKey]);
- 
   const totalModelQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + (r._modelQuantity || 0), 0);
   }, [rows]);
@@ -889,7 +919,7 @@ T5.11.MG2005\t2`;
             Sisesta koma eraldatult või numbritena: '1, 2, 3'
           </div>
         </div>
-   
+  
         {/* UUS: Lisa OCR juhised nupp */}
         <div>
           <button
@@ -982,7 +1012,7 @@ T5.11.MG2005\t2`;
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
           </button>
-     
+    
           {!hasInput && (
             <button
               style={{ ...btnSecondaryStyle }}
@@ -991,7 +1021,7 @@ T5.11.MG2005\t2`;
               📋 Näidis
             </button>
           )}
-     
+    
           <button
             style={{ ...btnSecondaryStyle }}
             onClick={() => {
@@ -1004,7 +1034,7 @@ T5.11.MG2005\t2`;
           >
             ⚡ Parsi
           </button>
-     
+    
           <button
             style={{ ...btnSecondaryStyle }}
             onClick={() => {
@@ -1051,7 +1081,7 @@ T5.11.MG2005\t2`;
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
             <h3 style={modalHeadingStyle}>🔄 Otsi ja asenda</h3>
-       
+      
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Otsi</label>
               <input
@@ -1061,7 +1091,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
-       
+      
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Asenda</label>
               <input
@@ -1071,7 +1101,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
-       
+      
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
@@ -1097,7 +1127,7 @@ T5.11.MG2005\t2`;
             <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 16 }}>
               Vali otsingu ulatus ja vajuta "Otsi" nuppu.
             </p>
-           
+          
             <div style={{ marginBottom: 20 }}>
               <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeAll" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, marginBottom: 8, background: searchScope === "scopeAll" ? "#e3f2fd" : COLORS.white }}>
                 <input
@@ -1111,7 +1141,7 @@ T5.11.MG2005\t2`;
                   Otsi kõigist mudelis olevatest objektidest
                 </div>
               </label>
-             
+            
               <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeSelected" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, background: searchScope === "scopeSelected" ? "#e3f2fd" : COLORS.white }}>
                 <input
                   type="radio"
@@ -1125,7 +1155,7 @@ T5.11.MG2005\t2`;
                 </div>
               </label>
             </div>
-           
+          
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={() => {
@@ -1161,7 +1191,7 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-       
+      
             <div>
               <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>Kogus veerg</div>
               <select
@@ -1172,7 +1202,7 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-       
+      
             <div>
               <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>
                 Mudeli property <span title="Vali atribuut mudelist, nt 'AssemblyMark' mark'i sobitamiseks.">ℹ️</span>
@@ -1189,7 +1219,7 @@ T5.11.MG2005\t2`;
                 <option value="ID">ID</option>
               </select>
             </div>
-       
+      
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
               {/* Otsi mudelist modal nupp */}
               <button
@@ -1199,7 +1229,7 @@ T5.11.MG2005\t2`;
               >
                 {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
               </button>
-         
+        
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12, background: COLORS.secondary, color: COLORS.white, border: "none" }}
                 disabled={!modelObjects.length}
@@ -1207,21 +1237,21 @@ T5.11.MG2005\t2`;
               >
                 🎯 Selecti mudelist
               </button>
-         
+        
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
-         
+        
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={exportToCSV}
               >
                 📥 CSV
               </button>
-             
+            
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => {
@@ -1231,7 +1261,7 @@ T5.11.MG2005\t2`;
               >
                 📋 Kopeeri
               </button>
-             
+            
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={initSaveView}
@@ -1269,42 +1299,42 @@ T5.11.MG2005\t2`;
               <div style={{ fontWeight: 500, color: "#1e40af" }}>📋 Rid. kokku</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#1e40af" }}>{totalRows}</div>
             </div>
-       
+      
             {foundRows > 0 && (
               <div style={{ padding: "6px 10px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#15803d" }}>✅ Leitud</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#15803d" }}>{foundRows}</div>
               </div>
             )}
-       
+      
             {notFoundRows > 0 && (
               <div style={{ padding: "6px 10px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#c2410c" }}>❌ Ei leitud</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#c2410c" }}>{notFoundRows}</div>
               </div>
             )}
-       
+      
             {warningRows > 0 && (
               <div style={{ padding: "6px 10px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#dc2626" }}>⚠️ Hoiat.</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#dc2626" }}>{warningRows}</div>
               </div>
             )}
-       
+      
             {qtyKey && totalSheetQty > 0 && (
               <div style={{ padding: "6px 10px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#92400e" }}>📄 Saateleht</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e" }}>{totalSheetQty} tk</div>
               </div>
             )}
-       
+      
             {totalModelQty > 0 && (
               <div style={{ padding: "6px 10px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#6b21a8" }}>🏗️ Mudel</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#6b21a8" }}>{totalModelQty} tk</div>
               </div>
             )}
-       
+      
             {qtyMismatchRows > 0 && (
               <div style={{ padding: "6px 10px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#ea580c" }}>⚠️ Erinev.</div>
@@ -1335,7 +1365,7 @@ T5.11.MG2005\t2`;
                   const notFound = r._foundInModel === false;
                   const found = r._foundInModel === true;
                   const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? COLORS.white : "#fafafa");
-             
+            
                   return (
                     <tr key={idx} style={{ background: rowBg }}>
                       <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
@@ -1368,9 +1398,9 @@ T5.11.MG2005\t2`;
                         >
                           ❌
                         </button>
-                        {r._foundInModel && r.modelId && r._objectId && (
+                        {r._foundInModel && (
                           <button
-                            onClick={() => zoomToRow(r.modelId, r._objectId)}
+                            onClick={() => zoomToRow(r)}
                             style={{ padding: "3px 8px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginLeft: 4 }}
                           >
                             🔍
