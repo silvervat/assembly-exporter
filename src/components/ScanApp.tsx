@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState, useEffect } from "react";
+import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
 
 type Row = Record<string, string> & {
   _confidence?: number;
@@ -23,6 +23,7 @@ type Props = {
 };
 
 const LOCAL_STORAGE_KEY = "scanAppState";
+const DEBOUNCE_SAVE_MS = 500; // Debounce localStorage salvestust
 
 export default function ScanApp({ api, settings, onConfirm, translations, styles: parentStyles }: Props) {
   const [files, setFiles] = useState<File[]>([]);
@@ -52,51 +53,79 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [copyIncludeHeaders, setCopyIncludeHeaders] = useState(true);
   const [copyColumns, setCopyColumns] = useState<string[]>([]);
-  const [modelMarkProperty, setModelMarkProperty] = useState("tekla_assembly.assemblycast_unit_mark"); // Väiketähtedega regex'i jaoks
+  const [modelMarkProperty, setModelMarkProperty] = useState("AssemblyMark");
   const [rowCountWarning, setRowCountWarning] = useState("");
-  const [showSearchScopePopup, setShowSearchScopePopup] = useState(false); // Uus: popup ulatuse valikuks
-  const [searchScope, setSearchScope] = useState("scopeAll"); // Uus: ulatus, vaikimisi "Kõik saadaval"
+  const [showSearchScopePopup, setShowSearchScopePopup] = useState(false);
+  const [searchScope, setSearchScope] = useState("scopeAll");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
   const t = translations || {};
   const c = parentStyles || {};
 
+  // Load state from localStorage
   useEffect(() => {
     const savedState = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (savedState) {
-      const parsed = JSON.parse(savedState);
-      setRawText(parsed.rawText || "");
-      setHeaders(parsed.headers || []);
-      setRows(parsed.rows || []);
-      setMarkKey(parsed.markKey || "");
-      setQtyKey(parsed.qtyKey || "");
-      setSelectedColumns(parsed.selectedColumns || []);
-      setImagePreview(parsed.imagePreview || "");
-      setTargetColumns(parsed.targetColumns || "Component, Pcs");
-      setTotalScannedRows(parsed.totalScannedRows || 0);
-      setModelObjects(parsed.modelObjects || []);
+      try {
+        const parsed = JSON.parse(savedState);
+        setRawText(parsed.rawText || "");
+        setHeaders(parsed.headers || []);
+        setRows(parsed.rows || []);
+        setMarkKey(parsed.markKey || "");
+        setQtyKey(parsed.qtyKey || "");
+        setSelectedColumns(parsed.selectedColumns || []);
+        setImagePreview(parsed.imagePreview || "");
+        setTargetColumns(parsed.targetColumns || "Component, Pcs");
+        setTotalScannedRows(parsed.totalScannedRows || 0);
+        setModelObjects(parsed.modelObjects || []);
+      } catch (e) {
+        console.error("Failed to parse saved state:", e);
+      }
     }
   }, []);
 
+  // Save state to localStorage with debounce
   useEffect(() => {
-    const state = {
-      rawText,
-      headers,
-      rows,
-      markKey,
-      qtyKey,
-      selectedColumns,
-      imagePreview,
-      targetColumns,
-      totalScannedRows,
-      modelObjects,
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+
+    saveTimerRef.current = setTimeout(() => {
+      const state = {
+        rawText,
+        headers,
+        rows,
+        markKey,
+        qtyKey,
+        selectedColumns,
+        imagePreview,
+        targetColumns,
+        totalScannedRows,
+        modelObjects,
+      };
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
+      } catch (e) {
+        console.error("Failed to save state:", e);
+      }
+    }, DEBOUNCE_SAVE_MS);
+
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
     };
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
   }, [rawText, headers, rows, markKey, qtyKey, selectedColumns, imagePreview, targetColumns, totalScannedRows, modelObjects]);
 
   useEffect(() => {
-    localStorage.setItem('ocrAdditionalPrompt', additionalPrompt);
+    try {
+      localStorage.setItem('ocrAdditionalPrompt', additionalPrompt);
+    } catch (e) {
+      console.error("Failed to save additional prompt:", e);
+    }
   }, [additionalPrompt]);
 
   async function fileToBase64(f: File): Promise<string> {
@@ -137,7 +166,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
 ${columnInstruction}
 Tagasta andmed TSV (tab-separated values) formaadis, kus esimene rida on päised.
 Kasuta veergude eraldamiseks AINULT TAB-märki (\t). Ära kasuta tühikuid ega muid eraldajaid.
-Hoia TÄPNE ALGINE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
+Hoia TÄPNE ALGNE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
 Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???".
 Ära jäta ühtegi rida vahele.
 Ära lisa lisaridu.
@@ -432,10 +461,17 @@ Anna lühike kokkuvõte eesti keeles.`;
   }
 
   async function searchInModel() {
+    // Race condition kaitse
+    if (searchingModel) {
+      console.log("Search already in progress, skipping...");
+      return;
+    }
+
     if (!markKey || !rows.length) {
       setMsg("❌ Parsi esmalt tabel!");
       return;
     }
+    
     try {
       setSearchingModel(true);
       setMsg("🔍 Otsin mudelist...");
@@ -445,29 +481,53 @@ Anna lühike kokkuvõte eesti keeles.`;
   
       let mos;
       if (searchScope === "scopeSelected") {
-        mos = await viewer?.getSelectedObjects();  // Valitud objektid
+        mos = await viewer?.getObjects?.({ selected: true });
       } else {
-        mos = await viewer?.getObjects();  // Kõik saadaval
+        mos = await viewer?.getObjects?.();
       }
+      
       if (!Array.isArray(mos)) {
         setMsg("❌ API viga");
-        setSearchingModel(false);
         return;
       }
+
       const foundMarks = new Map<string, number>();
       const foundObjects: any[] = [];
-      for (const mo of mos) {
+
+      // PARANDUS: Paralleelne töötlemine Promise.all'iga
+      const modelPromises = mos.map(async (mo) => {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
     
         try {
-          const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
+          // PARANDUS #1: Lisa includeHidden: true
+          const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
        
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                if (/tekla_assembly\.assemblycast_unit_mark/i.test(String(p?.name))) {
+                // PARANDUS #2: Dünaamiline regex vastavalt modelMarkProperty'le
+                let shouldCheck = false;
+                const propName = String(p?.name || "");
+                
+                if (modelMarkProperty === "AssemblyMark") {
+                  // Otsib Assembly/Block marki - nagu AssemblyExporter
+                  shouldCheck = /assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(propName);
+                } else if (modelMarkProperty === "ASSEMBLY_POS") {
+                  shouldCheck = /assembly[_\s]?pos/i.test(propName);
+                } else if (modelMarkProperty === "NAME") {
+                  shouldCheck = /^name$/i.test(propName);
+                } else if (modelMarkProperty === "PART_POS") {
+                  shouldCheck = /part[_\s]?pos/i.test(propName);
+                } else if (modelMarkProperty === "ID") {
+                  shouldCheck = /^id$/i.test(propName);
+                } else {
+                  // Custom property
+                  shouldCheck = propName.toLowerCase().includes(modelMarkProperty.toLowerCase());
+                }
+
+                if (shouldCheck) {
                   const val = String(p?.value || p?.displayValue || "").trim();
                   if (uniqueMarks.some(m => val.toLowerCase() === m.toLowerCase())) {
                     const count = foundMarks.get(val) || 0;
@@ -481,7 +541,11 @@ Anna lühike kokkuvõte eesti keeles.`;
         } catch (e) {
           console.warn(`Model ${modelId} error:`, e);
         }
-      }
+      });
+
+      // Oota kõik paralleelsed päringud ära
+      await Promise.all(modelPromises);
+
       setModelObjects(foundObjects);
       const updatedRows = rows.map(r => {
         const mark = String(r[markKey] || "").trim();
@@ -505,19 +569,24 @@ Anna lühike kokkuvõte eesti keeles.`;
           _objectId: object?.objectId
         };
       });
+      
       setRows(updatedRows);
+      
       if (foundObjects.length > 0) {
         setSelectedColumns(prev => [...new Set([...prev, "_modelQuantity"])]);
       }
+      
       const foundCount = updatedRows.filter(r => r._foundInModel === true).length;
       const notFoundCount = updatedRows.filter(r => r._foundInModel === false).length;
       const qtyMismatch = updatedRows.filter(r => r._warning?.includes("ei vasta")).length;
+      
       let resultMsg = `✓ ${foundCount} ✅ leitud, ${notFoundCount} ❌ ei leitud.`;
       if (qtyMismatch > 0) {
         resultMsg += ` ⚠️ ${qtyMismatch} koguste erinevus!`;
       }
       setMsg(resultMsg);
     } catch (e: any) {
+      console.error("Search error:", e);
       setMsg("❌ Viga: " + (e?.message || String(e)));
     } finally {
       setSearchingModel(false);
@@ -595,9 +664,11 @@ Anna lühike kokkuvõte eesti keeles.`;
   const notFoundRows = rows.filter(r => r._foundInModel === false).length;
   const foundRows = rows.filter(r => r._foundInModel === true).length;
   const qtyMismatchRows = rows.filter(r => r._warning?.includes("ei vasta")).length;
+  
   const displayColumns = useMemo(() => {
     return selectedColumns.length > 0 ? selectedColumns : headers;
   }, [selectedColumns, headers]);
+  
   const previewMarks = useMemo(() => {
     const marks: string[] = [];
     if (!markKey || !qtyKey) return marks;
@@ -610,6 +681,7 @@ Anna lühike kokkuvõte eesti keeles.`;
     }
     return marks;
   }, [rows, markKey, qtyKey]);
+  
   const totalSheetQty = useMemo(() => {
     if (!qtyKey) return 0;
     return rows.reduce((sum, r) => {
@@ -617,6 +689,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       return sum + qty;
     }, 0);
   }, [rows, qtyKey]);
+  
   const totalModelQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + (r._modelQuantity || 0), 0);
   }, [rows]);
@@ -689,59 +762,28 @@ T5.11.MG2005\t2`;
 
   const hasInput = files.length > 0 || rawText.trim().length > 0;
 
-  // Uus: Popup ulatuse valikuks
-  const renderSearchScopePopup = () => (
-    <div style={{
-      position: "absolute",
-      zIndex: 100,
-      background: "#fff",
-      border: "1px solid #cfd6df",
-      borderRadius: 6,
-      padding: 8,
-      boxShadow: "0 6px 16px rgba(0,0,0,0.04)",
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Otsi ulatus:</div>
-      <label style={{ display: "block", cursor: "pointer" }}>
-        <input type="radio" checked={searchScope === "scopeAll"} onChange={() => setSearchScope("scopeAll")} />
-        Kõik saadaval
-      </label>
-      <label style={{ display: "block", cursor: "pointer" }}>
-        <input type="radio" checked={searchScope === "scopeSelected"} onChange={() => setSearchScope("scopeSelected")} />
-        Valitud
-      </label>
-      <button
-        style={{ marginTop: 8, padding: "4px 8px", background: "#333", color: "#fff", borderRadius: 4 }}
-        onClick={() => {
-          setShowSearchScopePopup(false);
-          searchInModel();
-        }}
-      >
-        Otsi
-      </button>
-    </div>
-  );
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
-      <button
-        style={{
-          position: "absolute",
-          top: 10,
-          right: 10,
-          padding: "4px 8px",
-          background: "#f3f4f6",
-          color: "#6b7280",
-          border: "1px solid #d1d5db",
-          borderRadius: 6,
-          cursor: "pointer",
-          fontSize: 12,
-          fontWeight: 500,
-          zIndex: 1000
-        }}
-        onClick={() => setShowApiKeyModal(true)}
-      >
-        ⚙️
-      </button>
+      {/* PARANDUS: Hammasratas pealkiri joonele */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>OCR | SCANNI SAATELEHELT TOOTED</h3>
+        <button
+          style={{
+            padding: "4px 8px",
+            background: "#f3f4f6",
+            color: "#6b7280",
+            border: "1px solid #d1d5db",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 12,
+            fontWeight: 500,
+          }}
+          onClick={() => setShowApiKeyModal(true)}
+        >
+          ⚙️
+        </button>
+      </div>
+
       {showApiKeyModal && (
         <div style={{
           position: "fixed",
@@ -792,6 +834,7 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <div>
@@ -822,6 +865,7 @@ T5.11.MG2005\t2`;
             </button>
           </div>
         </div>
+
         {imagePreview && (
           <div>
             <img
@@ -832,6 +876,7 @@ T5.11.MG2005\t2`;
             />
           </div>
         )}
+
         {showImageModal && (
           <div style={{
             position: "fixed",
@@ -855,6 +900,7 @@ T5.11.MG2005\t2`;
             </a>
           </div>
         )}
+
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud <span title="Kirjuta komaga eraldatud veergude nimed või numbrid (nt 'Component, Pcs' või '1,2'). Kasutatakse OCR-is täpseks väljavõtteks.">ℹ️</span></label>
           <input
@@ -877,6 +923,7 @@ T5.11.MG2005\t2`;
             style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 60 }}
           />
         </div>
+
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Või kleebi tekst <span title="Kleebi siia eelnevalt kopeeritud tekst saatelehelt või mujalt.">ℹ️</span></label>
           <textarea
@@ -886,6 +933,7 @@ T5.11.MG2005\t2`;
             placeholder="Tekst..."
           />
         </div>
+
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
             style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
@@ -934,6 +982,7 @@ T5.11.MG2005\t2`;
             🗑️ Tühjenda
           </button>
         </div>
+
         {!apiKey && (
           <div style={{
             padding: "8px 12px",
@@ -943,7 +992,7 @@ T5.11.MG2005\t2`;
             border: "1px solid #ef9a9a",
             marginTop: 8
           }}>
-            ⚠️ API võti puudub! OCR ei tööta ilma võtmeta. Vajuta paremas ülanurgas ⚙️ nupule ja sisesta võti.<br/>
+            ⚠️ API võti puudub! OCR ei tööta ilma võtmeta. Vajuta üleval ⚙️ nupule ja sisesta võti.<br/>
             <strong>Juhend võtme saamiseks:</strong><br/>
             1. Mine <a href="https://platform.openai.com/signup" target="_blank" rel="noopener noreferrer">platform.openai.com/signup</a> ja registreeru/looge konto (kui pole veel).<br/>
             2. Logi sisse ja mine vasakul menüüs "API keys" sektsiooni.<br/>
@@ -951,6 +1000,7 @@ T5.11.MG2005\t2`;
             4. Kleebi see siia modaalaknasse ja salvesta.
           </div>
         )}
+
         {msg && (
           <div style={{
             padding: "8px 12px",
@@ -964,6 +1014,7 @@ T5.11.MG2005\t2`;
           </div>
         )}
       </div>
+
       {/* Find & Replace Modal */}
       {showFindReplace && (
         <div style={{
@@ -1025,6 +1076,7 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
+
       {/* Tabel */}
       {rows.length > 0 && (
         <div style={{ border: "1px solid #edf0f4", borderRadius: 8, padding: 12, background: "#fafbfc" }}>
@@ -1052,13 +1104,13 @@ T5.11.MG2005\t2`;
             </div>
         
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mudeli property <span title="Vali atribuut mudelist, nt 'Tekla_Assembly.AssemblyCast_unit_Mark' mark'i sobitamiseks.">ℹ️</span></div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mudeli property <span title="Vali atribuut mudelist, nt 'AssemblyMark' mark'i sobitamiseks.">ℹ️</span></div>
               <select
                 value={modelMarkProperty}
                 onChange={(e) => setModelMarkProperty(e.target.value)}
                 style={{ padding: "4px 6px", border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
               >
-                <option value="tekla_assembly.assemblycast_unit_mark">Kooste märk (BLOCK)</option>
+                <option value="AssemblyMark">Kooste märk (BLOCK)</option>
                 <option value="ASSEMBLY_POS">ASSEMBLY_POS</option>
                 <option value="NAME">NAME</option>
                 <option value="PART_POS">PART_POS</option>
@@ -1066,15 +1118,60 @@ T5.11.MG2005\t2`;
               </select>
             </div>
         
-            <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap", position: "relative" }}>
+              {/* PARANDUS: Popup "Otsi mudelist" nupule */}
               <button
                 style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={searchingModel}
-                onClick={() => setShowSearchScopePopup(true)} // Uus: avab popup'i
+                onClick={() => setShowSearchScopePopup(!showSearchScopePopup)}
               >
                 {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
               </button>
-              {showSearchScopePopup && renderSearchScopePopup()}
+              
+              {showSearchScopePopup && (
+                <div style={{
+                  position: "absolute",
+                  top: "100%",
+                  right: 0,
+                  marginTop: 4,
+                  zIndex: 100,
+                  background: "#fff",
+                  border: "1px solid #cfd6df",
+                  borderRadius: 6,
+                  padding: 12,
+                  boxShadow: "0 6px 16px rgba(0,0,0,0.08)",
+                  minWidth: 200,
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Otsi ulatus:</div>
+                  <label style={{ display: "block", cursor: "pointer", marginBottom: 6, fontSize: 12 }}>
+                    <input 
+                      type="radio" 
+                      checked={searchScope === "scopeAll"} 
+                      onChange={() => setSearchScope("scopeAll")}
+                      style={{ marginRight: 6 }}
+                    />
+                    Kõik saadaval
+                  </label>
+                  <label style={{ display: "block", cursor: "pointer", marginBottom: 12, fontSize: 12 }}>
+                    <input 
+                      type="radio" 
+                      checked={searchScope === "scopeSelected"} 
+                      onChange={() => setSearchScope("scopeSelected")}
+                      style={{ marginRight: 6 }}
+                    />
+                    Valitud
+                  </label>
+                  <button
+                    style={{ width: "100%", padding: "6px 12px", background: "#333", color: "#fff", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 500 }}
+                    onClick={() => {
+                      setShowSearchScopePopup(false);
+                      searchInModel();
+                    }}
+                  >
+                    Otsi
+                  </button>
+                </div>
+              )}
           
               <button
                 style={{ padding: "6px 12px", background: "#555", color: "#fff", border: "1px solid #555", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
@@ -1097,12 +1194,17 @@ T5.11.MG2005\t2`;
               >
                 📥 CSV
               </button>
+              
               <button
                 style={{ padding: "6px 12px", background: "#aaa", color: "#fff", border: "1px solid #aaa", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
-                onClick={() => setShowCopyModal(true)}
+                onClick={() => {
+                  setCopyColumns([...headers]);
+                  setShowCopyModal(true);
+                }}
               >
                 📋 Kopeeri lõikelauale
               </button>
+              
               <button
                 style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={initSaveView}
@@ -1112,6 +1214,7 @@ T5.11.MG2005\t2`;
               </button>
             </div>
           </div>
+
           {/* Column selector */}
           <div style={{ marginBottom: 12, padding: 8, background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
             <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, opacity: 0.7 }}>Näidatavad veerud:</div>
@@ -1128,7 +1231,8 @@ T5.11.MG2005\t2`;
               ))}
             </div>
           </div>
-          {/* Statistics – teemakohasem ja kompaktne */}
+
+          {/* Statistics */}
           <div style={{
             display: "flex",
             gap: 8,
@@ -1183,6 +1287,7 @@ T5.11.MG2005\t2`;
               </div>
             )}
           </div>
+
           <div style={{ overflow: "auto", maxHeight: 400, border: "1px solid #e5e7eb", borderRadius: 6 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
@@ -1255,6 +1360,7 @@ T5.11.MG2005\t2`;
               </tbody>
             </table>
           </div>
+
           <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
             <button
               style={{ padding: "6px 12px", background: "transparent", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
@@ -1266,6 +1372,7 @@ T5.11.MG2005\t2`;
               Otsingusse: <strong>{previewMarks.length}</strong> kirjet
             </div>
           </div>
+
           <div style={{ marginTop: 12 }}>
             <button
               style={{
@@ -1291,6 +1398,7 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
+
       {showViewSave && (
         <div style={{ marginTop: 8, padding: 6, border: "1px solid #ccc", borderRadius: 6, background: "#f0f0f0" }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Vaate nimi:</label>
@@ -1312,6 +1420,8 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
+
+      {/* PARANDUS: Copy modal nagu AssemblyExporter's */}
       {showCopyModal && (
         <div style={{
           position: "fixed",
@@ -1334,7 +1444,7 @@ T5.11.MG2005\t2`;
             boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
           }}>
             <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>📋 Kopeeri lõikelauale</h3>
-            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer", marginBottom: 12 }}>
               <input
                 type="checkbox"
                 checked={copyIncludeHeaders}
@@ -1342,9 +1452,9 @@ T5.11.MG2005\t2`;
               />
               <span>Kaasa päised</span>
             </label>
-            <div style={{ marginTop: 8 }}>
+            <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud</label>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxHeight: 200, overflowY: "auto", padding: 4 }}>
                 {headers.map((h) => (
                   <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
                     <input
@@ -1357,10 +1467,11 @@ T5.11.MG2005\t2`;
                 ))}
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={copyToClipboard}
                 style={{ flex: 1, padding: "8px", background: "#333", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+                disabled={copyColumns.length === 0}
               >
                 Kopeeri
               </button>
@@ -1377,3 +1488,7 @@ T5.11.MG2005\t2`;
     </div>
   );
 }
+
+
+
+
