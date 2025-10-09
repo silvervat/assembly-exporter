@@ -52,7 +52,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [copyIncludeHeaders, setCopyIncludeHeaders] = useState(true);
   const [copyColumns, setCopyColumns] = useState<string[]>([]);
-  const [modelMarkProperty, setModelMarkProperty] = useState("Tekla_Assembly.AssemblyCast_unit_Mark");
+  const [modelMarkProperty, setModelMarkProperty] = useState("tekla_assembly.assemblycast_unit_mark"); // Väiketähtedega regex'i jaoks
   const [rowCountWarning, setRowCountWarning] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -419,14 +419,15 @@ Anna lühike kokkuvõte eesti keeles.`;
      
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
+          console.log('API response for model', modelId, fullProperties);  // Logi API tagastus kontrolliks
        
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                if (new RegExp(modelMarkProperty.replace(/\./g, '\\.'), 'i').test(String(p?.name))) {  // Regex case-insensitive, nagu originaalis
+                if (/tekla_assembly\.assemblycast_unit_mark/i.test(String(p?.name))) {  // Regex case-insensitive, nagu originaalis
                   const val = String(p?.value || p?.displayValue || "").trim();
-                  if (uniqueMarks.some(m => val.toLowerCase() === m.toLowerCase() || val.toLowerCase().includes(m.toLowerCase()))) {  // Case-insensitive täpne või osaline
+                  if (uniqueMarks.some(m => val.toLowerCase() === m.toLowerCase())) {  // Case-insensitive täpne match
                     const count = foundMarks.get(val) || 0;
                     foundMarks.set(val, count + 1);
                     foundObjects.push({ modelId, objectId: obj.id, mark: val });
@@ -439,6 +440,7 @@ Anna lühike kokkuvõte eesti keeles.`;
           console.warn(`Model ${modelId} error:`, e);
         }
       }
+      console.log('Found marks:', foundMarks);  // Logi leitud mark'id
       setModelObjects(foundObjects);
       const updatedRows = rows.map(r => {
         const mark = String(r[markKey] || "").trim();
@@ -651,7 +653,7 @@ T5.11.MG2005\t2`;
   const hasInput = files.length > 0 || rawText.trim().length > 0;
 
   return (
-    <div style={{ ...c.section, background: "#f6f8fb", border: "1px solid #e6eaf0", borderRadius: 6, padding: "12px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
       <button
         style={{
           position: "absolute",
@@ -987,7 +989,7 @@ T5.11.MG2005\t2`;
                 onChange={(e) => setModelMarkProperty(e.target.value)}
                 style={{ padding: "4px 6px", border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
               >
-                <option value="Tekla_Assembly.AssemblyCast_unit_Mark">Tekla_Assembly.AssemblyCast_unit_Mark</option>
+                <option value="tekla_assembly.assemblycast_unit_mark">Kooste märk (BLOCK)</option>
                 <option value="ASSEMBLY_POS">ASSEMBLY_POS</option>
                 <option value="NAME">NAME</option>
                 <option value="PART_POS">PART_POS</option>
