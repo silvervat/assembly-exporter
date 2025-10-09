@@ -139,7 +139,6 @@ Hoia TÄPNE ALGINE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
 Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???".
 Ära jäta ühtegi rida vahele.
 Ära lisa lisaridu.
-Ära lisa lisaridu ega tühje ridu. Veendu, et ridade arv vastab täpselt dokumendi sisule.
 ${additionalPrompt || ""}
 ${settings?.ocrPrompt || ""}
 Ära lisa mingit teksti ega selgitust, ära kasuta Markdowni formaati ega koodiblokke - ainult puhas TSV tabel!`;
@@ -185,38 +184,6 @@ ${settings?.ocrPrompt || ""}
     }
   }
 
-  async function verifyRowCount(text: string): Promise<string> {
-    if (!apiKey) return "";
-    const prompt = `Analüüsi seda TSV teksti: ${text}
-Loenda read (välja arvatud päis). Kui on ekstra ridu või puuduvad read, anna hoiatus. Tagasta: "OK, ridu: X" või "Hoiatus: ekstra Y rida".`;
-
-    try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
-          max_tokens: 300,
-        })
-      });
-
-      if (!response.ok) return "Kontroll ebaõnnestus.";
-      const data = await response.json();
-      return data.choices[0]?.message?.content || "";
-    } catch {
-      return "Kontroll ebaõnnestus.";
-    }
-  }
-
   async function getOcrFeedback(text: string): Promise<string> {
     if (!apiKey) return "";
     const prompt = `Analüüsi seda OCR tulemust (TSV formaat): ${text}
@@ -225,7 +192,6 @@ Hinda:
 2. Kas said kõigist ridadest ilusti aru? Kui mitte, millised probleemid?
 3. Kas soovitad uuesti scanida lisajuhistega (nt parem valgustus, täpsem prompt)?
 Anna lühike kokkuvõte eesti keeles.`;
-
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -244,7 +210,6 @@ Anna lühike kokkuvõte eesti keeles.`;
           max_tokens: 300,
         })
       });
-
       if (!response.ok) return "";
       const data = await response.json();
       return data.choices[0]?.message?.content || "";
@@ -272,12 +237,10 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("🔍 OCR töötab...");
       const base64 = await fileToBase64(files[0]);
       const text = await runGptOcr(base64);
-      const rowCheck = await verifyRowCount(text);
-      setRowCountWarning(rowCheck);
       setRawText(text);
       const feedback = await getOcrFeedback(text);
       setOcrFeedback(feedback);
-      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside: ${feedback}`);
+      setMsg(`✅ OCR valmis! Vajuta 'Parsi tabelisse'.\n\nTagasiside: ${feedback}`);
     } catch (e: any) {
       setMsg("❌ Viga: " + (e?.message || String(e)));
     } finally {
@@ -461,9 +424,9 @@ Anna lühike kokkuvõte eesti keeles.`;
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                if (p?.name === modelMarkProperty) {  // Kasuta valitud property't, vaikimisi "Tekla_Assembly.AssemblyCast_unit_Mark"
+                if (new RegExp(modelMarkProperty.replace(/\./g, '\\.'), 'i').test(String(p?.name))) {  // Regex case-insensitive, nagu originaalis
                   const val = String(p?.value || p?.displayValue || "").trim();
-                  if (uniqueMarks.some(m => val === m || val.includes(m))) {  // Täpne või osaline vaste
+                  if (uniqueMarks.some(m => val.toLowerCase() === m.toLowerCase() || val.toLowerCase().includes(m.toLowerCase()))) {  // Case-insensitive täpne või osaline
                     const count = foundMarks.get(val) || 0;
                     foundMarks.set(val, count + 1);
                     foundObjects.push({ modelId, objectId: obj.id, mark: val });
@@ -996,7 +959,7 @@ T5.11.MG2005\t2`;
         <div style={{ border: "1px solid #edf0f4", borderRadius: 8, padding: 12, background: "#fafbfc" }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mark veerg <span title="Vali veerg, mis sisaldab mark'i (nt 'T5.11.MG2001'), mida otsitakse mudelist.">ℹ️</span></div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mark veerg</div>
               <select
                 value={markKey}
                 onChange={(e) => setMarkKey(e.target.value)}
@@ -1007,7 +970,7 @@ T5.11.MG2005\t2`;
             </div>
          
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Kogus veerg <span title="Vali veerg, mis sisaldab kogust (nt '2'), mida võrreldakse mudeli kogusega.">ℹ️</span></div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Kogus veerg</div>
               <select
                 value={qtyKey}
                 onChange={(e) => setQtyKey(e.target.value)}
@@ -1093,57 +1056,58 @@ T5.11.MG2005\t2`;
               ))}
             </div>
           </div>
-          {/* Statistics */}
+          {/* Statistics – teemakohasem ja kompaktne */}
           <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+            display: "flex",
             gap: 8,
-            marginBottom: 12
+            marginBottom: 12,
+            flexWrap: "wrap",
+            justifyContent: "space-between"
           }}>
-            <div style={{ padding: 8, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, fontSize: 12 }}>
-              <div style={{ fontWeight: 600, color: "#1e40af" }}>📊 Ridu kokku</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: "#1e40af" }}>{totalRows}</div>
+            <div style={{ padding: "4px 8px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+              <div style={{ fontWeight: 500, color: "#1e40af" }}>📋 Rid. kokku</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#1e40af" }}>{totalRows}</div>
             </div>
          
             {foundRows > 0 && (
-              <div style={{ padding: 8, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#15803d" }}>✅ Leitud</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#15803d" }}>{foundRows}</div>
+              <div style={{ padding: "4px 8px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+                <div style={{ fontWeight: 500, color: "#15803d" }}>✅ Leitud</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#15803d" }}>{foundRows}</div>
               </div>
             )}
          
             {notFoundRows > 0 && (
-              <div style={{ padding: 8, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#c2410c" }}>❌ Ei leitud</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#c2410c" }}>{notFoundRows}</div>
+              <div style={{ padding: "4px 8px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+                <div style={{ fontWeight: 500, color: "#c2410c" }}>❌ Ei leitud</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#c2410c" }}>{notFoundRows}</div>
               </div>
             )}
          
             {warningRows > 0 && (
-              <div style={{ padding: 8, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#dc2626" }}>⚠️ Hoiatused</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#dc2626" }}>{warningRows}</div>
+              <div style={{ padding: "4px 8px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+                <div style={{ fontWeight: 500, color: "#dc2626" }}>⚠️ Hoiat.</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#dc2626" }}>{warningRows}</div>
               </div>
             )}
          
             {qtyKey && totalSheetQty > 0 && (
-              <div style={{ padding: 8, background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#92400e" }}>📋 Saateleht</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#92400e" }}>{totalSheetQty} tk</div>
+              <div style={{ padding: "4px 8px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+                <div style={{ fontWeight: 500, color: "#92400e" }}>📄 Saateleht</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e" }}>{totalSheetQty} tk</div>
               </div>
             )}
          
             {totalModelQty > 0 && (
-              <div style={{ padding: 8, background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#6b21a8" }}>🏗️ Mudel</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#6b21a8" }}>{totalModelQty} tk</div>
+              <div style={{ padding: "4px 8px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+                <div style={{ fontWeight: 500, color: "#6b21a8" }}>🏗️ Mudel</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#6b21a8" }}>{totalModelQty} tk</div>
               </div>
             )}
          
             {qtyMismatchRows > 0 && (
-              <div style={{ padding: 8, background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#ea580c" }}>⚠️ Erinevused</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#ea580c" }}>{qtyMismatchRows}</div>
+              <div style={{ padding: "4px 8px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+                <div style={{ fontWeight: 500, color: "#ea580c" }}>⚠️ Erinev.</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#ea580c" }}>{qtyMismatchRows}</div>
               </div>
             )}
           </div>
