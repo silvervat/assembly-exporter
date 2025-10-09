@@ -5,6 +5,8 @@ type Row = Record<string, string> & {
   _warning?: string;
   _foundInModel?: boolean | null;
   _modelQuantity?: number;
+  _objectId?: number;  // Lisatud zoomi jaoks
+  modelId?: string;  // Lisatud zoomi jaoks
 };
 
 type Props = {
@@ -47,6 +49,8 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [viewName, setViewName] = useState("");
   const [showOrganizerSave, setShowOrganizerSave] = useState(false);
   const [organizerName, setOrganizerName] = useState("");
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [ocrFeedback, setOcrFeedback] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -107,7 +111,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     if (!fileList || !fileList.length) return;
     const file = fileList[0];
     setFiles([file]);
-
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -119,7 +122,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
 
   async function runGptOcr(imageBase64: string): Promise<string> {
     if (!apiKey) {
-      throw new Error(t.apiKeyMissing || "❌ Sisesta OpenAI API võti!");
+      throw new Error("❌ Sisesta OpenAI API võti!");
     }
 
     const columns = targetColumns.trim();
@@ -127,7 +130,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
       ? `Väljavõtte AINULT need veerud täpselt selles järjekorras: ${columns}. Kui veerunimed ei ole pildil nähtavad, kasuta veeru positsioone (1. veerg vasakult = ${columns.split(',')[0]?.trim() || '1'}, 2. veerg = ${columns.split(',')[1]?.trim() || '2'}, jne).`
       : "Väljavõtte kõik nähtavad veerud.";
 
-    const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises. Ole väga täpne tähtede ja numbrite eristamisel (nt "T" ja "5" on erinevad, "TS" ei ole "T5").
+    const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises. Ole väga täpne tähtede ja numbrite eristamisel (nt "T" ja "5" on erinevad, "TS" ei ole "T5"). Numbrid on kogused, loe neid täpselt, ära muuda neid.
 ${columnInstruction}
 Tagasta andmed TSV (tab-separated values) formaadis, kus esimene rida on päised.
 Kasuta veergude eraldamiseks AINULT TAB-märki (\t). Ära kasuta tühikuid ega muid eraldajaid.
@@ -182,29 +185,67 @@ ${settings?.ocrPrompt || ""}
     }
   }
 
+  async function getOcrFeedback(text: string): Promise<string> {
+    if (!apiKey) return "";
+    const prompt = `Analüüsi seda OCR tulemust (TSV formaat): ${text}
+Hinda:
+1. Kas dokument oli hästi loetav? (nt pilt kvaliteet, font, skaneerimine)
+2. Kas said kõigist ridadest ilusti aru? Kui mitte, millised probleemid?
+3. Kas soovitad uuesti scanida lisajuhistega (nt parem valgustus, täpsem prompt)?
+Anna lühike kokkuvõte eesti keeles.`;
+
+    try {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          max_tokens: 300,
+        })
+      });
+
+      if (!response.ok) return "";
+      const data = await response.json();
+      return data.choices[0]?.message?.content || "";
+    } catch {
+      return "";
+    }
+  }
+
   async function runOcr() {
     try {
       setMsg("");
       setBusy(true);
       if (!files.length) {
         if (!rawText.trim()) {
-          setMsg(t.noFilesOrText || "❌ Pole faile ega teksti.");
+          setMsg("❌ Pole faile ega teksti.");
         } else {
-          setMsg(t.textPasted || "✓ Tekst on kleebitud. Vajuta 'Parsi tabelisse'.");
+          setMsg("✓ Tekst on kleebitud. Vajuta 'Parsi tabelisse'.");
         }
         return;
       }
       if (!targetColumns.trim()) {
-        setMsg(t.setColumnsFirst || "❌ Määra esmalt veerud!");
+        setMsg("❌ Määra esmalt veerud!");
         return;
       }
-      setMsg(t.ocrRunning || "🔍 OCR töötab...");
+      setMsg("🔍 OCR töötab...");
       const base64 = await fileToBase64(files[0]);
       const text = await runGptOcr(base64);
       setRawText(text);
-      setMsg(t.ocrDone || "✅ OCR valmis! Vajuta 'Parsi tabelisse'.");
+      const feedback = await getOcrFeedback(text);
+      setOcrFeedback(feedback);
+      setMsg(`✅ OCR valmis! Vajuta 'Parsi tabelisse'.\n\nTagasiside: ${feedback}`);
     } catch (e: any) {
-      setMsg(t.error + (e?.message || String(e)));
+      setMsg("❌ Viga: " + (e?.message || String(e)));
     } finally {
       setBusy(false);
     }
@@ -219,7 +260,7 @@ ${settings?.ocrPrompt || ""}
     if (lines.length === 0) {
       setHeaders([]);
       setRows([]);
-      setMsg(t.empty || "❌ Tühjus.");
+      setMsg("❌ Tühjus.");
       return;
     }
     let headerIdx = 0;
@@ -242,11 +283,9 @@ ${settings?.ocrPrompt || ""}
       : lines[0].split(/\s+|\t/).map((_, i) => "Col" + (i + 1));
     const outRows: Row[] = [];
     let warnings = 0;
-
     for (let i = 0; i < lines.length; i++) {
       if (i === headerIdx) continue;
       const cols = lines[i].split(/\s+|\t/);
-
       if (cols.length < 2) {
         warnings++;
         continue;
@@ -254,27 +293,24 @@ ${settings?.ocrPrompt || ""}
       const r: Row = {};
       let hasData = false;
       let hasWarning = false;
-
       for (let c = 0; c < Math.min(cols.length, normalizedHeaders.length); c++) {
         const val = cols[c].trim();
         r[normalizedHeaders[c]] = val;
         if (val) hasData = true;
         if (val === "???") hasWarning = true;
       }
-
       if (hasWarning) {
-        r._warning = t.ocrReadFail || "⚠️ OCR ei suutnud lugeda";
+        r._warning = "⚠️ OCR ei suutnud lugeda";
         r._confidence = 0.5;
       } else if (cols.length < normalizedHeaders.length) {
-        r._warning = t.incompleteColumns || "⚠️ Puudulikud veerud";
+        r._warning = "⚠️ Puudulikud veerud";
         r._confidence = 0.6;
       } else if (!hasData) {
-        r._warning = t.emptyRow || "⚠️ Tühi rida";
+        r._warning = "⚠️ Tühi rida";
         r._confidence = 0.3;
       } else {
         r._confidence = 0.95;
       }
-
       outRows.push(r);
     }
     setHeaders(normalizedHeaders);
@@ -284,20 +320,15 @@ ${settings?.ocrPrompt || ""}
     const qtyIdx = lower.findIndex((h) => /\b(qty|pcs|kogus|tk|amount)\b/.test(h));
     setMarkKey(normalizedHeaders[markIdx >= 0 ? markIdx : 0] || "");
     setQtyKey(normalizedHeaders[qtyIdx >= 0 ? qtyIdx : normalizedHeaders.length - 1] || "");
-
     setSelectedColumns([...normalizedHeaders, "_modelQuantity"]);
-
     const warnMsg = warnings > 0 ? ` ⚠️ ${warnings} rida jäeti vahele.` : "";
     const ocrWarnings = outRows.filter(r => r._warning?.includes("ei suutnud")).length;
     const ocrWarnMsg = ocrWarnings > 0 ? ` ⚠️ ${ocrWarnings} lahtrit ???` : "";
-
     const rowCountMsg = totalScannedRows > 0
       ? ` 📊 Skaneerisin ${totalScannedRows} rida, parsisin ${outRows.length}.`
       : "";
-
-    setMsg(t.tableReady || `✓ Tabel valmis: ${outRows.length} rida.${warnMsg}${ocrWarnMsg}${rowCountMsg}`);
+    setMsg(`✓ Tabel valmis: ${outRows.length} rida.${warnMsg}${ocrWarnMsg}${rowCountMsg}`);
   }
-
   function cleanHeader(s: string) {
     const x = s.replace(/\s+/g, " ").trim();
     if (!x) return "";
@@ -308,7 +339,6 @@ ${settings?.ocrPrompt || ""}
       .replace(/Quantity/i, "Qty");
     return m.replace(/[^\w\s.-]/g, "").trim();
   }
-
   function changeCell(rIdx: number, key: string, value: string) {
     setRows((prev) => {
       const next = [...prev];
@@ -320,17 +350,14 @@ ${settings?.ocrPrompt || ""}
       return next;
     });
   }
-
   function addRow() {
     const base: Row = { _confidence: 1.0 };
     headers.forEach(h => base[h] = "");
     setRows((prev) => [...prev, base]);
   }
-
   function removeRow(rIdx: number) {
     setRows((prev) => prev.filter((_, i) => i !== rIdx));
   }
-
   function toggleColumn(col: string) {
     setSelectedColumns(prev =>
       prev.includes(col)
@@ -338,10 +365,9 @@ ${settings?.ocrPrompt || ""}
         : [...prev, col]
     );
   }
-
   function findAndReplace() {
     if (!findText.trim()) {
-      setMsg(t.enterSearchText || "❌ Sisesta otsitav tekst!");
+      setMsg("❌ Sisesta otsitav tekst!");
       return;
     }
     let replacedCount = 0;
@@ -359,25 +385,24 @@ ${settings?.ocrPrompt || ""}
         return newRow;
       });
     });
-    setMsg(t.replaced || `✓ Asendatud ${replacedCount} kohta.`);
+    setMsg(`✓ Asendatud ${replacedCount} kohta.`);
     setShowFindReplace(false);
   }
-
   async function searchInModel() {
     if (!markKey || !rows.length) {
-      setMsg(t.parseFirst || "❌ Parsi esmalt tabel!");
+      setMsg("❌ Parsi esmalt tabel!");
       return;
     }
     try {
       setSearchingModel(true);
-      setMsg(t.searchingModel || "🔍 Otsin mudelist...");
+      setMsg("🔍 Otsin mudelist...");
       const viewer = api?.viewer;
       const marks = rows.map(r => String(r[markKey] || "").trim()).filter(Boolean);
       const uniqueMarks = [...new Set(marks)];
-     
+    
       const mos = await viewer?.getObjects();
       if (!Array.isArray(mos)) {
-        setMsg(t.apiError || "❌ API viga");
+        setMsg("❌ API viga");
         setSearchingModel(false);
         return;
       }
@@ -386,10 +411,10 @@ ${settings?.ocrPrompt || ""}
       for (const mo of mos) {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
-       
+      
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
-         
+        
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
@@ -414,14 +439,14 @@ ${settings?.ocrPrompt || ""}
         const mark = String(r[markKey] || "").trim();
         const modelCount = foundMarks.get(mark) || 0;
         const found = modelCount > 0;
-       
+      
         const sheetQty = qtyKey ? parseInt(String(r[qtyKey] || "0")) || 0 : 0;
-       
+      
         let warning = r._warning || "";
         if (found && qtyKey && modelCount !== sheetQty) {
-          warning = t.quantityMismatch || `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
+          warning = `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
         }
-       
+      
         return {
           ...r,
           _foundInModel: found,
@@ -433,26 +458,25 @@ ${settings?.ocrPrompt || ""}
       const foundCount = updatedRows.filter(r => r._foundInModel === true).length;
       const notFoundCount = updatedRows.filter(r => r._foundInModel === false).length;
       const qtyMismatch = updatedRows.filter(r => r._warning?.includes("ei vasta")).length;
-      let resultMsg = t.found || `✓ ${foundCount} ✅ leitud, ${notFoundCount} ❌ ei leitud.`;
+      let resultMsg = `✓ ${foundCount} ✅ leitud, ${notFoundCount} ❌ ei leitud.`;
       if (qtyMismatch > 0) {
         resultMsg += ` ⚠️ ${qtyMismatch} koguste erinevus!`;
       }
       setMsg(resultMsg);
     } catch (e: any) {
-      setMsg(t.error + (e?.message || String(e)));
+      setMsg("❌ Viga: " + (e?.message || String(e)));
     } finally {
       setSearchingModel(false);
     }
   }
-
   async function selectInModel() {
     if (!modelObjects.length) {
-      setMsg(t.doSearchFirst || "❌ Tee esmalt otsing mudelist!");
+      setMsg("❌ Tee esmalt otsing mudelist!");
       return;
     }
     try {
       const viewer = api?.viewer;
-     
+    
       const byModel = new Map<string, number[]>();
       for (const obj of modelObjects) {
         const ids = byModel.get(obj.modelId) || [];
@@ -462,15 +486,14 @@ ${settings?.ocrPrompt || ""}
       for (const [modelId, ids] of byModel.entries()) {
         await viewer?.selectObjects(modelId, ids, true);
       }
-      setMsg(t.selectedModel || `✓ Selectitud ${modelObjects.length} objekti mudelist.`);
+      setMsg(`✓ Selectitud ${modelObjects.length} objekti mudelist.`);
     } catch (e: any) {
-      setMsg(t.selectFailed || "❌ Selectimine ebaõnnestus: " + (e?.message || String(e)));
+      setMsg("❌ Selectimine ebaõnnestus: " + (e?.message || String(e)));
     }
   }
-
   function exportToCSV() {
     if (!rows.length) return;
-   
+  
     const csvHeaders = selectedColumns.join(",");
     const csvRows = rows.map(r =>
       selectedColumns.map(col => {
@@ -478,7 +501,7 @@ ${settings?.ocrPrompt || ""}
         return val.includes(",") ? `"${val}"` : val;
       }).join(",")
     );
-   
+  
     const csv = [csvHeaders, ...csvRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -487,10 +510,9 @@ ${settings?.ocrPrompt || ""}
     a.download = `scan_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-   
-    setMsg(t.exportedCSV || "✓ Eksporditud CSV-sse.");
+  
+    setMsg("✓ Eksporditud CSV-sse.");
   }
-
   const totalRows = rows.length;
   const warningRows = rows.filter(r => r._warning).length;
   const notFoundRows = rows.filter(r => r._foundInModel === false).length;
@@ -521,31 +543,29 @@ ${settings?.ocrPrompt || ""}
   const totalModelQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + (r._modelQuantity || 0), 0);
   }, [rows]);
-
   function onConfirmClick() {
     if (!rows.length) {
-      setMsg(t.emptyTable || "❌ Tabel on tühi.");
+      setMsg("❌ Tabel on tühi.");
       return;
     }
     if (!markKey || !qtyKey) {
-      setMsg(t.selectColumns || "❌ Vali Mark ja Kogus veerud.");
+      setMsg("❌ Vali Mark ja Kogus veerud.");
       return;
     }
     if (warningRows > 0) {
-      const confirmed = window.confirm(t.warningRows || `⚠️ ${warningRows} hoiatust. Jätka ikkagi?`);
+      const confirmed = window.confirm(`⚠️ ${warningRows} hoiatust. Jätka ikkagi?`);
       if (!confirmed) return;
     }
     if (notFoundRows > 0) {
-      const confirmed = window.confirm(t.notFoundRows || `⚠️ ${notFoundRows} ei leitud mudelist! Jätka ikkagi?`);
+      const confirmed = window.confirm(`⚠️ ${notFoundRows} ei leitud mudelist! Jätka ikkagi?`);
       if (!confirmed) return;
     }
-   
+  
     if (onConfirm) {
       onConfirm(previewMarks, rows, markKey, qtyKey);
     }
-    setMsg(t.confirmed || "✅ Kinnitatud: " + previewMarks.length + " kirjet.");
+    setMsg("✅ Kinnitatud: " + previewMarks.length + " kirjet.");
   }
-
   function loadSampleData() {
     const sample = `Component\tPcs
 T5.11.MG2001\t2
@@ -555,9 +575,8 @@ T5.11.MG2004\t2
 T5.11.MG2005\t2`;
     setRawText(sample);
     setTargetColumns("Component, Pcs");
-    setMsg(t.sampleLoaded || "📋 Näidis laaditud.");
+    setMsg("📋 Näidis laaditud.");
   }
-
   const initSaveView = () => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -569,7 +588,6 @@ T5.11.MG2005\t2`;
     setViewName(defaultName);
     setShowViewSave(true);
   };
-
   const saveView = async () => {
     if (!modelObjects.length || !viewName.trim()) return;
     try {
@@ -581,12 +599,10 @@ T5.11.MG2005\t2`;
       setMsg(t.viewSaveError.replace("{error}", e?.message || t.unknownError));
     }
   };
-
   const cancelSaveView = () => {
     setShowViewSave(false);
     setViewName("");
   };
-
   const initSaveOrganizer = () => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -598,7 +614,6 @@ T5.11.MG2005\t2`;
     setOrganizerName(defaultName);
     setShowOrganizerSave(true);
   };
-
   const saveToOrganizer = async () => {
     if (!modelObjects.length || !organizerName.trim()) return;
     try {
@@ -624,12 +639,10 @@ T5.11.MG2005\t2`;
       setBusy(false);
     }
   };
-
   const cancelSaveOrganizer = () => {
     setShowOrganizerSave(false);
     setOrganizerName("");
   };
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
       {/* API võtme nupp paremas ülanurgas */}
@@ -652,7 +665,6 @@ T5.11.MG2005\t2`;
       >
         ⚙️
       </button>
-
       {/* API võtme modaal */}
       {showApiKeyModal && (
         <div style={{
@@ -688,7 +700,7 @@ T5.11.MG2005\t2`;
                 onClick={() => {
                   localStorage.setItem('openai_api_key', apiKey);
                   setShowApiKeyModal(false);
-                  setMsg(t.apiKeySaved || "✅ API võti salvestatud.");
+                  setMsg("✅ API võti salvestatud.");
                 }}
                 style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
               >
@@ -704,7 +716,6 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
       {/* Sisend */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -718,7 +729,6 @@ T5.11.MG2005\t2`;
               style={{ fontSize: 12, width: "100%" }}
             />
           </div>
-
           <div>
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>📷 Pildista</label>
             <input
@@ -747,7 +757,7 @@ T5.11.MG2005\t2`;
           </div>
         )}
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.columns || "Veerud"}</label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud</label>
           <input
             value={targetColumns}
             onChange={(e) => setTargetColumns(e.target.value)}
@@ -755,27 +765,26 @@ T5.11.MG2005\t2`;
             style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
           />
           <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>
-            {t.columnsHint || "Sisesta koma eraldatult või numbritena: '1, 2, 3'"}
+            Sisesta koma eraldatult või numbritena: '1, 2, 3'
           </div>
         </div>
-       
+      
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.additionalPrompt || "Lisa OCR juhised"}</label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Lisa OCR juhised</label>
           <textarea
             value={additionalPrompt}
             onChange={(e) => setAdditionalPrompt(e.target.value)}
-            placeholder={t.additionalPromptHint || "nt: 'Loe täpselt T ja 5 erinevusega, numbrid on kogused.'"}
+            placeholder="nt: 'Loe täpselt T ja 5 erinevusega, numbrid on kogused.'"
             style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 60 }}
           />
         </div>
-
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.pasteText || "Või kleebi tekst"}</label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Või kleebi tekst</label>
           <textarea
             style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 100 }}
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
-            placeholder={t.pasteHint || "Tekst..."}
+            placeholder="Tekst..."
           />
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -786,27 +795,27 @@ T5.11.MG2005\t2`;
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
           </button>
-         
+        
           <button
             style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             onClick={loadSampleData}
           >
-            📋 {t.sample || "Näidis"}
+            📋 Näidis
           </button>
-         
+        
           <button
             style={{ padding: "6px 12px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
             onClick={() => {
               if (!rawText.trim()) {
-                setMsg(t.noText || "❌ Pole teksti.");
+                setMsg("❌ Pole teksti.");
                 return;
               }
               parseTextToTable(rawText);
             }}
           >
-            ⚡ {t.parse || "Parsi"}
+            ⚡ Parsi
           </button>
-         
+        
           <button
             style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             onClick={() => {
@@ -818,10 +827,10 @@ T5.11.MG2005\t2`;
               setModelObjects([]);
               if (fileInputRef.current) fileInputRef.current.value = "";
               if (cameraInputRef.current) cameraInputRef.current.value = "";
-              setMsg(t.cleared || "🗑️ Tühjendatud.");
+              setMsg("🗑️ Tühjendatud.");
             }}
           >
-            🗑️ {t.clear || "Tühjenda"}
+            🗑️ Tühjenda
           </button>
         </div>
         {!apiKey && (
@@ -833,8 +842,8 @@ T5.11.MG2005\t2`;
             border: "1px solid #ef9a9a",
             marginTop: 8
           }}>
-            ⚠️ {t.apiKeyMissing || "API võti puudub! OCR ei tööta ilma võtmeta. Vajuta paremas ülanurgas ⚙️ nupule ja sisesta võti."}<br/>
-            <strong>{t.apiKeyGuide || "Juhend võtme saamiseks:"}</strong><br/>
+            ⚠️ API võti puudub! OCR ei tööta ilma võtmeta. Vajuta paremas ülanurgas ⚙️ nupule ja sisesta võti.<br/>
+            <strong>Juhend võtme saamiseks:</strong><br/>
             1. Mine <a href="https://platform.openai.com/signup" target="_blank" rel="noopener noreferrer">platform.openai.com/signup</a> ja registreeru/looge konto (kui pole veel).<br/>
             2. Logi sisse ja mine vasakul menüüs "API keys" sektsiooni.<br/>
             3. Vajuta "Create new secret key", anna sellele nimi ja kopeeri võti (sk-... formaadis).<br/>
@@ -876,10 +885,10 @@ T5.11.MG2005\t2`;
             width: "90%",
             boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
           }}>
-            <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>🔄 {t.findReplace || "Otsi ja asenda"}</h3>
-           
+            <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>🔄 Otsi ja asenda</h3>
+          
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.find || "Otsi"}</label>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Otsi</label>
               <input
                 value={findText}
                 onChange={(e) => setFindText(e.target.value)}
@@ -887,9 +896,9 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
               />
             </div>
-           
+          
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.replace || "Asenda"}</label>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Asenda</label>
               <input
                 value={replaceText}
                 onChange={(e) => setReplaceText(e.target.value)}
@@ -897,19 +906,19 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
               />
             </div>
-           
+          
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
                 style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
               >
-                ✓ {t.replace || "Asenda"}
+                ✓ Asenda
               </button>
               <button
                 onClick={() => setShowFindReplace(false)}
                 style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
               >
-                {t.cancel || "Tühista"}
+                Tühista
               </button>
             </div>
           </div>
@@ -920,7 +929,7 @@ T5.11.MG2005\t2`;
         <div style={{ border: "1px solid #edf0f4", borderRadius: 8, padding: 12, background: "#fafbfc" }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>{t.markColumn || "Mark veerg"}</div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mark veerg</div>
               <select
                 value={markKey}
                 onChange={(e) => setMarkKey(e.target.value)}
@@ -929,9 +938,9 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-           
+          
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>{t.qtyColumn || "Kogus veerg"}</div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Kogus veerg</div>
               <select
                 value={qtyKey}
                 onChange={(e) => setQtyKey(e.target.value)}
@@ -940,58 +949,56 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-           
+          
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button
                 style={{ padding: "6px 12px", background: "#7c3aed", color: "#fff", border: "1px solid #7c3aed", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={searchingModel}
                 onClick={searchInModel}
               >
-                {searchingModel ? "🔍..." : t.searchModel || "🔍 Otsi mudelist"}
+                {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
               </button>
-             
+            
               <button
                 style={{ padding: "6px 12px", background: "#f59e0b", color: "#fff", border: "1px solid #f59e0b", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={!modelObjects.length}
                 onClick={selectInModel}
               >
-                {t.selectModel || "🎯 Selecti mudelist"}
+                🎯 Selecti mudelist
               </button>
-             
+            
               <button
                 style={{ padding: "6px 12px", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 onClick={() => setShowFindReplace(true)}
               >
-                {t.findReplace || "🔄 Otsi/Asenda"}
+                🔄 Otsi/Asenda
               </button>
-             
+            
               <button
                 style={{ padding: "6px 12px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={exportToCSV}
               >
-                {t.csv || "📥 CSV"}
+                📥 CSV
               </button>
-
               <button
                 style={{ padding: "6px 12px", background: "#10b981", color: "#fff", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={initSaveView}
                 disabled={!modelObjects.length}
               >
-                {t.saveToView || "Salvesta vaatesse"}
+                Salvesta vaatesse
               </button>
-
               <button
                 style={{ padding: "6px 12px", background: "#F97316", color: "#fff", border: "1px solid #F97316", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={initSaveOrganizer}
                 disabled={!modelObjects.length}
               >
-                {t.saveToOrganizer || "Salvesta Organiserisse"}
+                Salvesta Organiserisse
               </button>
             </div>
           </div>
           {/* Column selector */}
           <div style={{ marginBottom: 12, padding: 8, background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, opacity: 0.7 }}>{t.showColumns || "Näidatavad veerud:"}</div>
+            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, opacity: 0.7 }}>Näidatavad veerud:</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {headers.map((h) => (
                 <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
@@ -1013,48 +1020,48 @@ T5.11.MG2005\t2`;
             marginBottom: 12
           }}>
             <div style={{ padding: 8, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, fontSize: 12 }}>
-              <div style={{ fontWeight: 600, color: "#1e40af" }}>{t.totalRows || "📊 Ridu kokku"}</div>
+              <div style={{ fontWeight: 600, color: "#1e40af" }}>📊 Ridu kokku</div>
               <div style={{ fontSize: 18, fontWeight: 700, color: "#1e40af" }}>{totalRows}</div>
             </div>
-           
+          
             {foundRows > 0 && (
               <div style={{ padding: 8, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#15803d" }}>{t.found || "✅ Leitud"}</div>
+                <div style={{ fontWeight: 600, color: "#15803d" }}>✅ Leitud</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#15803d" }}>{foundRows}</div>
               </div>
             )}
-           
+          
             {notFoundRows > 0 && (
               <div style={{ padding: 8, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#c2410c" }}>{t.notFound || "❌ Ei leitud"}</div>
+                <div style={{ fontWeight: 600, color: "#c2410c" }}>❌ Ei leitud</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#c2410c" }}>{notFoundRows}</div>
               </div>
             )}
-           
+          
             {warningRows > 0 && (
               <div style={{ padding: 8, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#dc2626" }}>{t.warnings || "⚠️ Hoiatused"}</div>
+                <div style={{ fontWeight: 600, color: "#dc2626" }}>⚠️ Hoiatused</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#dc2626" }}>{warningRows}</div>
               </div>
             )}
-           
+          
             {qtyKey && totalSheetQty > 0 && (
               <div style={{ padding: 8, background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#92400e" }}>{t.sheetQty || "📋 Saateleht"}</div>
+                <div style={{ fontWeight: 600, color: "#92400e" }}>📋 Saateleht</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#92400e" }}>{totalSheetQty} tk</div>
               </div>
             )}
-           
+          
             {totalModelQty > 0 && (
               <div style={{ padding: 8, background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#6b21a8" }}>{t.modelQty || "🏗️ Mudel"}</div>
+                <div style={{ fontWeight: 600, color: "#6b21a8" }}>🏗️ Mudel</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#6b21a8" }}>{totalModelQty} tk</div>
               </div>
             )}
-           
+          
             {qtyMismatchRows > 0 && (
               <div style={{ padding: 8, background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, color: "#ea580c" }}>{t.differences || "⚠️ Erinevused"}</div>
+                <div style={{ fontWeight: 600, color: "#ea580c" }}>⚠️ Erinevused</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#ea580c" }}>{qtyMismatchRows}</div>
               </div>
             )}
@@ -1083,7 +1090,7 @@ T5.11.MG2005\t2`;
                   const found = r._foundInModel === true;
                   const qtyMismatch = r._warning?.includes("ei vasta");
                   const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? "#fff" : "#fafafa");
-                 
+                
                   return (
                     <tr key={idx} style={{ background: rowBg }}>
                       <td style={{ padding: "4px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
@@ -1128,10 +1135,10 @@ T5.11.MG2005\t2`;
               style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
               onClick={addRow}
             >
-              ➕ {t.addRow || "Lisa rida"}
+              ➕ Lisa rida
             </button>
             <div style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>
-              {t.searchIn || "Otsingusse:"} <strong>{previewMarks.length}</strong> {t.items || "kirjet"}
+              Otsingusse: <strong>{previewMarks.length}</strong> kirjet
             </div>
           </div>
           <div style={{ marginTop: 12 }}>
@@ -1149,11 +1156,11 @@ T5.11.MG2005\t2`;
               }}
               onClick={onConfirmClick}
             >
-              ✅ {t.confirmAndUse || "Kinnita ja kasuta"} ({previewMarks.length})
+              ✅ Kinnita ja kasuta ({previewMarks.length})
             </button>
             {(warningRows > 0 || notFoundRows > 0) && (
               <div style={{ marginTop: 6, fontSize: 12, color: "#dc2626", textAlign: "center" }}>
-                ⚠️ {t.fixRows || "Parandamist vajavad read - vajuta ikkagi kinnitamiseks"}
+                ⚠️ Parandamist vajavad read - vajuta ikkagi kinnitamiseks
               </div>
             )}
           </div>
@@ -1161,7 +1168,7 @@ T5.11.MG2005\t2`;
       )}
       {showViewSave && (
         <div style={{ marginTop: 8, padding: 6, border: "1px solid #cfd6df", borderRadius: 6, background: "#e7f3ff" }}>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.viewNameLabel || "Vaate nimi:"}</label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Vaate nimi:</label>
           <input type="text" value={viewName} onChange={e => setViewName(e.target.value)} style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             <button
@@ -1169,20 +1176,20 @@ T5.11.MG2005\t2`;
               style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
               disabled={!viewName.trim()}
             >
-              {t.saveViewButton || "Salvesta vaade"}
+              Salvesta vaade
             </button>
             <button
               onClick={cancelSaveView}
               style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             >
-              {t.cancel || "Tühista"}
+              Tühista
             </button>
           </div>
         </div>
       )}
       {showOrganizerSave && (
         <div style={{ marginTop: 8, padding: 6, border: "1px solid #F97316", borderRadius: 6, background: "#fff7ed" }}>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.organizerNameLabel || "Organizer grupp nimi (AE RESULT → ...):"}</label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Organizer grupp nimi (AE RESULT → ...):</label>
           <input type="text" value={organizerName} onChange={e => setOrganizerName(e.target.value)} style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             <button
@@ -1190,13 +1197,13 @@ T5.11.MG2005\t2`;
               style={{ flex: 1, padding: "8px", background: "#F97316", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
               disabled={!organizerName.trim()}
             >
-              {t.saveOrganizerButton || "Salvesta"}
+              Salvesta
             </button>
             <button
               onClick={cancelSaveOrganizer}
               style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             >
-              {t.cancel || "Tühista"}
+              Tühista
             </button>
           </div>
         </div>
