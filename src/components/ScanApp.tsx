@@ -315,7 +315,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     reader.readAsDataURL(file);
   }
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const fileList = e.dataTransfer.files;
     handleFileSelect(fileList);
@@ -1144,11 +1144,11 @@ T5.11.MG2005\t2`;
         </div>
         <div
           ref={dropRef}
-          onDrop={handleDrop}
+          onDrop={handleFileDrop}
           onDragOver={(e) => e.preventDefault()}
           style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 6, padding: 16, textAlign: "center", marginBottom: 8 }}
         >
-          Lohista pilt siia või kleebi (Ctrl+V)
+          Lohista pilt siia siia või kleebi (Ctrl+V)
         </div>
         {imagePreview && (
           <div>
