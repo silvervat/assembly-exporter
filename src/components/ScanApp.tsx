@@ -1641,7 +1641,7 @@ T5.11.MG2005\t2`;
       {showViewSave && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
-            <h3 style={modalHeadingStyle}>💾 Salvesta vaatesse</h3>
+            <h3 style={modalHeadingStyle}>💾Salvesta vaatesse</h3>
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Vaate nimi:</label>
             <input
               type="text"
