@@ -23,7 +23,24 @@ type Props = {
 };
 
 const LOCAL_STORAGE_KEY = "scanAppState";
-const DEBOUNCE_SAVE_MS = 500; // Debounce localStorage salvestust
+const DEBOUNCE_SAVE_MS = 500;
+
+// Trimble Connect värviskeem
+const COLORS = {
+  primary: "#0a3a67",      // Tume sinine (Trimble Connect)
+  primaryHover: "#083254",
+  secondary: "#1E88E5",    // Hele sinine (accent)
+  background: "#f6f8fb",
+  backgroundLight: "#fafbfc",
+  border: "#cfd6df",
+  borderLight: "#e6eaf0",
+  text: "#333333",
+  textLight: "#757575",
+  success: "#10b981",
+  warning: "#f59e0b",
+  error: "#ef4444",
+  white: "#ffffff",
+};
 
 export default function ScanApp({ api, settings, onConfirm, translations, styles: parentStyles }: Props) {
   const [files, setFiles] = useState<File[]>([]);
@@ -55,7 +72,10 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [copyColumns, setCopyColumns] = useState<string[]>([]);
   const [modelMarkProperty, setModelMarkProperty] = useState("AssemblyMark");
   const [rowCountWarning, setRowCountWarning] = useState("");
-  const [showSearchScopePopup, setShowSearchScopePopup] = useState(false);
+  
+  // UUS: Modaalaknad
+  const [showSearchScopeModal, setShowSearchScopeModal] = useState(false);
+  const [showOcrPromptModal, setShowOcrPromptModal] = useState(false);
   const [searchScope, setSearchScope] = useState("scopeAll");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -229,12 +249,7 @@ Loenda read (välja arvatud päis). Kui on ekstra ridu või puuduvad read, anna 
         },
         body: JSON.stringify({
           model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
+          messages: [{ role: "user", content: prompt }],
           max_tokens: 300,
         })
       });
@@ -265,12 +280,7 @@ Anna lühike kokkuvõte eesti keeles.`;
         },
         body: JSON.stringify({
           model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
+          messages: [{ role: "user", content: prompt }],
           max_tokens: 300,
         })
       });
@@ -461,7 +471,6 @@ Anna lühike kokkuvõte eesti keeles.`;
   }
 
   async function searchInModel() {
-    // Race condition kaitse
     if (searchingModel) {
       console.log("Search already in progress, skipping...");
       return;
@@ -494,25 +503,21 @@ Anna lühike kokkuvõte eesti keeles.`;
       const foundMarks = new Map<string, number>();
       const foundObjects: any[] = [];
 
-      // PARANDUS: Paralleelne töötlemine Promise.all'iga
       const modelPromises = mos.map(async (mo) => {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
     
         try {
-          // PARANDUS #1: Lisa includeHidden: true
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
        
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                // PARANDUS #2: Dünaamiline regex vastavalt modelMarkProperty'le
                 let shouldCheck = false;
                 const propName = String(p?.name || "");
                 
                 if (modelMarkProperty === "AssemblyMark") {
-                  // Otsib Assembly/Block marki - nagu AssemblyExporter
                   shouldCheck = /assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(propName);
                 } else if (modelMarkProperty === "ASSEMBLY_POS") {
                   shouldCheck = /assembly[_\s]?pos/i.test(propName);
@@ -523,7 +528,6 @@ Anna lühike kokkuvõte eesti keeles.`;
                 } else if (modelMarkProperty === "ID") {
                   shouldCheck = /^id$/i.test(propName);
                 } else {
-                  // Custom property
                   shouldCheck = propName.toLowerCase().includes(modelMarkProperty.toLowerCase());
                 }
 
@@ -543,7 +547,6 @@ Anna lühike kokkuvõte eesti keeles.`;
         }
       });
 
-      // Oota kõik paralleelsed päringud ära
       await Promise.all(modelPromises);
 
       setModelObjects(foundObjects);
@@ -762,17 +765,69 @@ T5.11.MG2005\t2`;
 
   const hasInput = files.length > 0 || rawText.trim().length > 0;
 
+  // Ühtne modal stiil
+  const modalOverlayStyle: React.CSSProperties = {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0,0,0,0.5)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000
+  };
+
+  const modalContentStyle: React.CSSProperties = {
+    background: COLORS.white,
+    borderRadius: 8,
+    padding: 24,
+    maxWidth: 500,
+    width: "90%",
+    boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
+  };
+
+  const modalHeadingStyle: React.CSSProperties = {
+    margin: "0 0 16px 0",
+    fontSize: 18,
+    fontWeight: 600,
+    color: COLORS.text
+  };
+
+  const btnPrimaryStyle: React.CSSProperties = {
+    padding: "8px 16px",
+    background: COLORS.primary,
+    color: COLORS.white,
+    border: "none",
+    borderRadius: 6,
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 600,
+    transition: "background 0.2s"
+  };
+
+  const btnSecondaryStyle: React.CSSProperties = {
+    padding: "8px 16px",
+    background: COLORS.white,
+    color: COLORS.text,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 6,
+    cursor: "pointer",
+    fontSize: 13
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
-      {/* PARANDUS: Hammasratas pealkiri joonele */}
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: COLORS.text }}>
+      {/* Pealkiri + seaded nupp */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>OCR | SCANNI SAATELEHELT TOOTED</h3>
+        <h3 style={{ margin: 0, fontSize: 8, fontWeight: 40, color: COLORS.text }}>magic</h3>
         <button
           style={{
-            padding: "4px 8px",
-            background: "#f3f4f6",
-            color: "#6b7280",
-            border: "1px solid #d1d5db",
+            padding: "6px 12px",
+            background: COLORS.background,
+            color: COLORS.textLight,
+            border: `1px solid ${COLORS.border}`,
             borderRadius: 6,
             cursor: "pointer",
             fontSize: 12,
@@ -780,53 +835,36 @@ T5.11.MG2005\t2`;
           }}
           onClick={() => setShowApiKeyModal(true)}
         >
-          ⚙️
+          ⚙️ Seaded
         </button>
       </div>
 
+      {/* API võtme modal */}
       {showApiKeyModal && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(0,0,0,0.5)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: "#fff",
-            borderRadius: 8,
-            padding: 20,
-            maxWidth: 400,
-            width: "90%",
-            boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
-          }}>
-            <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>🔑 Sisesta OpenAI API võti</h3>
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={modalHeadingStyle}>🔑 Sisesta OpenAI API võti</h3>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="sk-..."
-              style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
+              style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, marginBottom: 16 }}
             />
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={() => {
                   localStorage.setItem('openai_api_key', apiKey);
                   setShowApiKeyModal(false);
                   setMsg("✅ API võti salvestatud.");
                 }}
-                style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+                style={{ ...btnPrimaryStyle, flex: 1 }}
               >
                 Salvesta
               </button>
               <button
                 onClick={() => setShowApiKeyModal(false)}
-                style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+                style={{ ...btnSecondaryStyle, flex: 1 }}
               >
                 Tühista
               </button>
@@ -838,7 +876,7 @@ T5.11.MG2005\t2`;
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>📁 Fail</label>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>📁 Fail</label>
             <input
               ref={fileInputRef}
               type="file"
@@ -848,7 +886,7 @@ T5.11.MG2005\t2`;
             />
           </div>
           <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>📷 Pildista</label>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>📷 Pildista</label>
             <input
               ref={cameraInputRef}
               type="file"
@@ -858,7 +896,7 @@ T5.11.MG2005\t2`;
               style={{ display: "none" }}
             />
             <button
-              style={{ width: "100%", padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
+              style={{ width: "100%", padding: "6px 12px", background: COLORS.background, border: `1px solid ${COLORS.border}`, borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
               onClick={() => cameraInputRef.current?.click()}
             >
               📷 Kaamera
@@ -871,30 +909,19 @@ T5.11.MG2005\t2`;
             <img
               src={imagePreview}
               alt="Preview"
-              style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 6, border: "1px solid #e5e7eb", cursor: "pointer" }}
+              style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 6, border: `1px solid ${COLORS.borderLight}`, cursor: "pointer" }}
               onClick={() => setShowImageModal(true)}
             />
           </div>
         )}
 
         {showImageModal && (
-          <div style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.8)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000
-          }} onClick={() => setShowImageModal(false)}>
+          <div style={modalOverlayStyle} onClick={() => setShowImageModal(false)}>
             <img src={imagePreview} alt="Large preview" style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: 8 }} />
             <a
               href={imagePreview}
               download="scan_image.jpg"
-              style={{ position: "absolute", bottom: 20, color: "#fff", background: "#aaa", padding: "8px 16px", borderRadius: 6 }}
+              style={{ position: "absolute", bottom: 20, color: COLORS.white, background: COLORS.textLight, padding: "8px 16px", borderRadius: 6, textDecoration: "none" }}
             >
               Laadi alla
             </a>
@@ -902,32 +929,101 @@ T5.11.MG2005\t2`;
         )}
 
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud <span title="Kirjuta komaga eraldatud veergude nimed või numbrid (nt 'Component, Pcs' või '1,2'). Kasutatakse OCR-is täpseks väljavõtteks.">ℹ️</span></label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>
+            Veerud <span title="Kirjuta komaga eraldatud veergude nimed või numbrid (nt 'Component, Pcs' või '1,2').">ℹ️</span>
+          </label>
           <input
             value={targetColumns}
             onChange={(e) => setTargetColumns(e.target.value)}
             placeholder="Component, Pcs, Profile, Length..."
-            style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
+            style={{ width: "100%", padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
           />
-          <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>
+          <div style={{ fontSize: 11, color: COLORS.textLight, marginTop: 2 }}>
             Sisesta koma eraldatult või numbritena: '1, 2, 3'
           </div>
         </div>
     
+        {/* UUS: Lisa OCR juhised nupp */}
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Lisa OCR juhised <span title="Lisa täiendavad juhised OCR-ile, nt 'Tunnusta ainult numbrid ja tähed, ignoreeri jooni'.">ℹ️</span></label>
-          <textarea
-            value={additionalPrompt}
-            onChange={(e) => setAdditionalPrompt(e.target.value)}
-            placeholder="nt: 'Loe täpselt T ja 5 erinevusega, numbrid on kogused.'"
-            style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 60 }}
-          />
+          <button
+            style={{ 
+              width: "100%", 
+              padding: "8px 12px", 
+              background: COLORS.background, 
+              border: `1px solid ${COLORS.border}`, 
+              borderRadius: 6, 
+              cursor: "pointer", 
+              fontSize: 13, 
+              fontWeight: 500,
+              textAlign: "left",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between"
+            }}
+            onClick={() => setShowOcrPromptModal(true)}
+          >
+            <span>📝 Lisa OCR juhised {additionalPrompt && `(${additionalPrompt.length} tähemärki)`}</span>
+            <span style={{ fontSize: 10, color: COLORS.textLight }}>▶</span>
+          </button>
         </div>
 
+        {/* OCR juhiste modal */}
+        {showOcrPromptModal && (
+          <div style={modalOverlayStyle}>
+            <div style={modalContentStyle}>
+              <h3 style={modalHeadingStyle}>📝 Lisa OCR juhised</h3>
+              <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 12 }}>
+                Lisa täiendavad juhised OCR-ile, nt "Loe täpselt T ja 5 erinevusega, numbrid on kogused."
+              </p>
+              <textarea
+                value={additionalPrompt}
+                onChange={(e) => setAdditionalPrompt(e.target.value)}
+                placeholder="Kirjuta siia täiendavad juhised OCR-ile..."
+                style={{ 
+                  width: "100%", 
+                  padding: "8px 12px", 
+                  border: `1px solid ${COLORS.border}`, 
+                  borderRadius: 6, 
+                  fontSize: 13, 
+                  fontFamily: "monospace", 
+                  height: 120,
+                  marginBottom: 16,
+                  resize: "vertical"
+                }}
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => setShowOcrPromptModal(false)}
+                  style={{ ...btnPrimaryStyle, flex: 1 }}
+                >
+                  Salvesta
+                </button>
+                <button
+                  onClick={() => {
+                    setAdditionalPrompt("");
+                    setShowOcrPromptModal(false);
+                  }}
+                  style={{ ...btnSecondaryStyle }}
+                >
+                  Tühjenda
+                </button>
+                <button
+                  onClick={() => setShowOcrPromptModal(false)}
+                  style={{ ...btnSecondaryStyle }}
+                >
+                  Tühista
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Või kleebi tekst <span title="Kleebi siia eelnevalt kopeeritud tekst saatelehelt või mujalt.">ℹ️</span></label>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>
+            Või kleebi tekst <span title="Kleebi siia eelnevalt kopeeritud tekst saatelehelt või mujalt.">ℹ️</span>
+          </label>
           <textarea
-            style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 100 }}
+            style={{ width: "100%", padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, fontFamily: "monospace", height: 100, resize: "vertical" }}
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             placeholder="Tekst..."
@@ -936,7 +1032,7 @@ T5.11.MG2005\t2`;
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
-            style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+            style={{ ...btnPrimaryStyle }}
             disabled={busy}
             onClick={runOcr}
           >
@@ -945,7 +1041,7 @@ T5.11.MG2005\t2`;
       
           {!hasInput && (
             <button
-              style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+              style={{ ...btnSecondaryStyle }}
               onClick={loadSampleData}
             >
               📋 Näidis
@@ -953,7 +1049,7 @@ T5.11.MG2005\t2`;
           )}
       
           <button
-            style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
+            style={{ ...btnSecondaryStyle }}
             onClick={() => {
               if (!rawText.trim()) {
                 setMsg("❌ Pole teksti.");
@@ -966,7 +1062,7 @@ T5.11.MG2005\t2`;
           </button>
       
           <button
-            style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+            style={{ ...btnSecondaryStyle }}
             onClick={() => {
               setRawText("");
               setRows([]);
@@ -985,30 +1081,24 @@ T5.11.MG2005\t2`;
 
         {!apiKey && (
           <div style={{
-            padding: "8px 12px",
+            padding: "12px",
             borderRadius: 6,
             fontSize: 13,
             background: "#ffebee",
             border: "1px solid #ef9a9a",
-            marginTop: 8
           }}>
-            ⚠️ API võti puudub! OCR ei tööta ilma võtmeta. Vajuta üleval ⚙️ nupule ja sisesta võti.<br/>
-            <strong>Juhend võtme saamiseks:</strong><br/>
-            1. Mine <a href="https://platform.openai.com/signup" target="_blank" rel="noopener noreferrer">platform.openai.com/signup</a> ja registreeru/looge konto (kui pole veel).<br/>
-            2. Logi sisse ja mine vasakul menüüs "API keys" sektsiooni.<br/>
-            3. Vajuta "Create new secret key", anna sellele nimi ja kopeeri võti (sk-... formaadis).<br/>
-            4. Kleebi see siia modaalaknasse ja salvesta.
+            ⚠️ <strong>API võti puudub!</strong> OCR ei tööta ilma võtmeta. Vajuta üleval "⚙️ Seaded" nupule ja sisesta võti.
           </div>
         )}
 
         {msg && (
           <div style={{
-            padding: "8px 12px",
+            padding: "12px",
             borderRadius: 6,
             fontSize: 13,
             ...(msg.includes("❌") ? { background: "#ffebee", border: "1px solid #ef9a9a" } :
                 msg.includes("✅") || msg.includes("✓") ? { background: "#e8f5e9", border: "1px solid #a5d6a7" } :
-                { background: "#f9fafb", border: "1px solid #e5e7eb" })
+                { background: COLORS.background, border: `1px solid ${COLORS.borderLight}` })
           }}>
             {msg}
           </div>
@@ -1017,58 +1107,99 @@ T5.11.MG2005\t2`;
 
       {/* Find & Replace Modal */}
       {showFindReplace && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(0,0,0,0.5)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: "#fff",
-            borderRadius: 8,
-            padding: 20,
-            maxWidth: 400,
-            width: "90%",
-            boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
-          }}>
-            <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>🔄 Otsi ja asenda</h3>
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={modalHeadingStyle}>🔄 Otsi ja asenda</h3>
         
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Otsi</label>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Otsi</label>
               <input
                 value={findText}
                 onChange={(e) => setFindText(e.target.value)}
                 placeholder="nt: ."
-                style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
+                style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
         
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Asenda</label>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Asenda</label>
               <input
                 value={replaceText}
                 onChange={(e) => setReplaceText(e.target.value)}
                 placeholder="nt: -"
-                style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
+                style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
         
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
-                style={{ flex: 1, padding: "8px", background: "#333", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+                style={{ ...btnPrimaryStyle, flex: 1 }}
               >
                 ✓ Asenda
               </button>
               <button
                 onClick={() => setShowFindReplace(false)}
-                style={{ flex: 1, padding: "8px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+                style={{ ...btnSecondaryStyle, flex: 1 }}
+              >
+                Tühista
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UUS: Otsi mudelist modal (nagu Find & Replace) */}
+      {showSearchScopeModal && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={modalHeadingStyle}>🔍 Otsi mudelist</h3>
+            <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 16 }}>
+              Vali otsingu ulatus ja vajuta "Otsi" nuppu.
+            </p>
+            
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeAll" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, marginBottom: 8, background: searchScope === "scopeAll" ? "#e3f2fd" : COLORS.white }}>
+                <input 
+                  type="radio" 
+                  checked={searchScope === "scopeAll"} 
+                  onChange={() => setSearchScope("scopeAll")}
+                  style={{ marginRight: 8 }}
+                />
+                <strong>Kõik saadaval</strong>
+                <div style={{ fontSize: 11, color: COLORS.textLight, marginLeft: 24, marginTop: 4 }}>
+                  Otsi kõigist mudelis olevatest objektidest
+                </div>
+              </label>
+              
+              <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeSelected" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, background: searchScope === "scopeSelected" ? "#e3f2fd" : COLORS.white }}>
+                <input 
+                  type="radio" 
+                  checked={searchScope === "scopeSelected"} 
+                  onChange={() => setSearchScope("scopeSelected")}
+                  style={{ marginRight: 8 }}
+                />
+                <strong>Valitud</strong>
+                <div style={{ fontSize: 11, color: COLORS.textLight, marginLeft: 24, marginTop: 4 }}>
+                  Otsi ainult 3D vaates valitud objektidest
+                </div>
+              </label>
+            </div>
+            
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => {
+                  setShowSearchScopeModal(false);
+                  searchInModel();
+                }}
+                style={{ ...btnPrimaryStyle, flex: 1 }}
+                disabled={searchingModel}
+              >
+                {searchingModel ? "🔍 Otsin..." : "🔍 Otsi"}
+              </button>
+              <button
+                onClick={() => setShowSearchScopeModal(false)}
+                style={{ ...btnSecondaryStyle, flex: 1 }}
               >
                 Tühista
               </button>
@@ -1079,36 +1210,38 @@ T5.11.MG2005\t2`;
 
       {/* Tabel */}
       {rows.length > 0 && (
-        <div style={{ border: "1px solid #edf0f4", borderRadius: 8, padding: 12, background: "#fafbfc" }}>
+        <div style={{ border: `1px solid ${COLORS.borderLight}`, borderRadius: 8, padding: 12, background: COLORS.backgroundLight }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mark veerg</div>
+              <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>Mark veerg</div>
               <select
                 value={markKey}
                 onChange={(e) => setMarkKey(e.target.value)}
-                style={{ padding: "4px 6px", border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
+                style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
               >
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
         
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Kogus veerg</div>
+              <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>Kogus veerg</div>
               <select
                 value={qtyKey}
                 onChange={(e) => setQtyKey(e.target.value)}
-                style={{ padding: "4px 6px", border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
+                style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
               >
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
         
             <div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mudeli property <span title="Vali atribuut mudelist, nt 'AssemblyMark' mark'i sobitamiseks.">ℹ️</span></div>
+              <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>
+                Mudeli property <span title="Vali atribuut mudelist, nt 'AssemblyMark' mark'i sobitamiseks.">ℹ️</span>
+              </div>
               <select
                 value={modelMarkProperty}
                 onChange={(e) => setModelMarkProperty(e.target.value)}
-                style={{ padding: "4px 6px", border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
+                style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
               >
                 <option value="AssemblyMark">Kooste märk (BLOCK)</option>
                 <option value="ASSEMBLY_POS">ASSEMBLY_POS</option>
@@ -1118,63 +1251,18 @@ T5.11.MG2005\t2`;
               </select>
             </div>
         
-            <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap", position: "relative" }}>
-              {/* PARANDUS: Popup "Otsi mudelist" nupule */}
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {/* Otsi mudelist modal nupp */}
               <button
-                style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
+                style={{ ...btnPrimaryStyle, fontSize: 12 }}
                 disabled={searchingModel}
-                onClick={() => setShowSearchScopePopup(!showSearchScopePopup)}
+                onClick={() => setShowSearchScopeModal(true)}
               >
                 {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
               </button>
-              
-              {showSearchScopePopup && (
-                <div style={{
-                  position: "absolute",
-                  top: "100%",
-                  right: 0,
-                  marginTop: 4,
-                  zIndex: 100,
-                  background: "#fff",
-                  border: "1px solid #cfd6df",
-                  borderRadius: 6,
-                  padding: 12,
-                  boxShadow: "0 6px 16px rgba(0,0,0,0.08)",
-                  minWidth: 200,
-                }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Otsi ulatus:</div>
-                  <label style={{ display: "block", cursor: "pointer", marginBottom: 6, fontSize: 12 }}>
-                    <input 
-                      type="radio" 
-                      checked={searchScope === "scopeAll"} 
-                      onChange={() => setSearchScope("scopeAll")}
-                      style={{ marginRight: 6 }}
-                    />
-                    Kõik saadaval
-                  </label>
-                  <label style={{ display: "block", cursor: "pointer", marginBottom: 12, fontSize: 12 }}>
-                    <input 
-                      type="radio" 
-                      checked={searchScope === "scopeSelected"} 
-                      onChange={() => setSearchScope("scopeSelected")}
-                      style={{ marginRight: 6 }}
-                    />
-                    Valitud
-                  </label>
-                  <button
-                    style={{ width: "100%", padding: "6px 12px", background: "#333", color: "#fff", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 500 }}
-                    onClick={() => {
-                      setShowSearchScopePopup(false);
-                      searchInModel();
-                    }}
-                  >
-                    Otsi
-                  </button>
-                </div>
-              )}
           
               <button
-                style={{ padding: "6px 12px", background: "#555", color: "#fff", border: "1px solid #555", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
+                style={{ ...btnSecondaryStyle, fontSize: 12, background: COLORS.secondary, color: COLORS.white, border: "none" }}
                 disabled={!modelObjects.length}
                 onClick={selectInModel}
               >
@@ -1182,42 +1270,42 @@ T5.11.MG2005\t2`;
               </button>
           
               <button
-                style={{ padding: "6px 12px", background: "#777", color: "#fff", border: "1px solid #777", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
+                style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
           
               <button
-                style={{ padding: "6px 12px", background: "#aaa", color: "#fff", border: "1px solid #aaa", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={exportToCSV}
               >
                 📥 CSV
               </button>
               
               <button
-                style={{ padding: "6px 12px", background: "#aaa", color: "#fff", border: "1px solid #aaa", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => {
                   setCopyColumns([...headers]);
                   setShowCopyModal(true);
                 }}
               >
-                📋 Kopeeri lõikelauale
+                📋 Kopeeri
               </button>
               
               <button
-                style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={initSaveView}
                 disabled={!modelObjects.length}
               >
-                Salvesta vaatesse
+                💾 Salvesta
               </button>
             </div>
           </div>
 
           {/* Column selector */}
-          <div style={{ marginBottom: 12, padding: 8, background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, opacity: 0.7 }}>Näidatavad veerud:</div>
+          <div style={{ marginBottom: 12, padding: 8, background: COLORS.background, borderRadius: 6, border: `1px solid ${COLORS.borderLight}` }}>
+            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, color: COLORS.textLight }}>Näidatavad veerud:</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {headers.map((h) => (
                 <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
@@ -1240,69 +1328,69 @@ T5.11.MG2005\t2`;
             flexWrap: "wrap",
             justifyContent: "space-between"
           }}>
-            <div style={{ padding: "4px 8px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+            <div style={{ padding: "6px 10px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
               <div style={{ fontWeight: 500, color: "#1e40af" }}>📋 Rid. kokku</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#1e40af" }}>{totalRows}</div>
             </div>
         
             {foundRows > 0 && (
-              <div style={{ padding: "4px 8px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+              <div style={{ padding: "6px 10px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#15803d" }}>✅ Leitud</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#15803d" }}>{foundRows}</div>
               </div>
             )}
         
             {notFoundRows > 0 && (
-              <div style={{ padding: "4px 8px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+              <div style={{ padding: "6px 10px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#c2410c" }}>❌ Ei leitud</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#c2410c" }}>{notFoundRows}</div>
               </div>
             )}
         
             {warningRows > 0 && (
-              <div style={{ padding: "4px 8px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+              <div style={{ padding: "6px 10px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#dc2626" }}>⚠️ Hoiat.</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#dc2626" }}>{warningRows}</div>
               </div>
             )}
         
             {qtyKey && totalSheetQty > 0 && (
-              <div style={{ padding: "4px 8px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+              <div style={{ padding: "6px 10px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#92400e" }}>📄 Saateleht</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e" }}>{totalSheetQty} tk</div>
               </div>
             )}
         
             {totalModelQty > 0 && (
-              <div style={{ padding: "4px 8px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+              <div style={{ padding: "6px 10px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#6b21a8" }}>🏗️ Mudel</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#6b21a8" }}>{totalModelQty} tk</div>
               </div>
             )}
         
             {qtyMismatchRows > 0 && (
-              <div style={{ padding: "4px 8px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
+              <div style={{ padding: "6px 10px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#ea580c" }}>⚠️ Erinev.</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#ea580c" }}>{qtyMismatchRows}</div>
               </div>
             )}
           </div>
 
-          <div style={{ overflow: "auto", maxHeight: 400, border: "1px solid #e5e7eb", borderRadius: 6 }}>
+          <div style={{ overflow: "auto", maxHeight: 400, border: `1px solid ${COLORS.borderLight}`, borderRadius: 6 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", borderBottom: "2px solid #e5e7eb", padding: "6px", background: "#f9fafb", position: "sticky", top: 0, zIndex: 10 }}>#</th>
-                  <th style={{ textAlign: "center", borderBottom: "2px solid #e5e7eb", padding: "6px", background: "#f9fafb", position: "sticky", top: 0, width: 40, zIndex: 10 }}>✓</th>
+                  <th style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10 }}>#</th>
+                  <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, width: 40, zIndex: 10 }}>✓</th>
                   {displayColumns.map((key) => (
-                    <th key={key} style={{ textAlign: "left", borderBottom: "2px solid #e5e7eb", padding: "6px", background: "#f9fafb", position: "sticky", top: 0, zIndex: 10 }}>
+                    <th key={key} style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10 }}>
                       {key}
                       {key === markKey && " 🔖"}
                       {key === qtyKey && " 🔢"}
                       {key === "_modelQuantity" && " (Kogus mudelis)"}
                     </th>
                   ))}
-                  <th style={{ textAlign: "center", borderBottom: "2px solid #e5e7eb", padding: "6px", background: "#f9fafb", position: "sticky", top: 0, width: 100, zIndex: 10 }}>-</th>
+                  <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, width: 100, zIndex: 10 }}>-</th>
                 </tr>
               </thead>
               <tbody>
@@ -1310,24 +1398,23 @@ T5.11.MG2005\t2`;
                   const hasWarning = !!r._warning;
                   const notFound = r._foundInModel === false;
                   const found = r._foundInModel === true;
-                  const qtyMismatch = r._warning?.includes("ei vasta");
-                  const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? "#fff" : "#fafafa");
+                  const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? COLORS.white : "#fafafa");
               
                   return (
                     <tr key={idx} style={{ background: rowBg }}>
-                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
-                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "center", fontSize: 14 }} title={r._warning}>
+                      <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
+                      <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", fontSize: 14 }} title={r._warning}>
                         {hasWarning ? "⚠️" : notFound ? "❌" : found ? "✅" : ""}
                       </td>
                       {displayColumns.map((key) => (
-                        <td key={key} style={{ padding: "4px 6px", borderBottom: "1px solid #f3f4f6" }}>
+                        <td key={key} style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}` }}>
                           <input
                             value={r[key] || ""}
                             onChange={(e) => changeCell(idx, key, e.target.value)}
                             style={{
                               width: "100%",
                               padding: "4px 6px",
-                              border: (r[key] === "???" ? "2px solid #f59e0b" : "1px solid #e5e7eb"),
+                              border: (r[key] === "???" ? "2px solid #f59e0b" : `1px solid ${COLORS.borderLight}`),
                               borderRadius: 4,
                               fontSize: 12,
                               outline: "none",
@@ -1338,17 +1425,17 @@ T5.11.MG2005\t2`;
                           />
                         </td>
                       ))}
-                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "center" }}>
+                      <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center" }}>
                         <button
                           onClick={() => removeRow(idx)}
-                          style={{ padding: "2px 6px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer", fontSize: 11 }}
+                          style={{ padding: "3px 8px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer", fontSize: 11 }}
                         >
                           ❌
                         </button>
                         {r._foundInModel && r.modelId && r._objectId && (
                           <button
                             onClick={() => zoomToRow(r.modelId, r._objectId)}
-                            style={{ padding: "2px 6px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginLeft: 4 }}
+                            style={{ padding: "3px 8px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginLeft: 4 }}
                           >
                             🔍
                           </button>
@@ -1363,12 +1450,12 @@ T5.11.MG2005\t2`;
 
           <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
             <button
-              style={{ padding: "6px 12px", background: "transparent", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+              style={{ ...btnSecondaryStyle }}
               onClick={addRow}
             >
               ➕ Lisa rida
             </button>
-            <div style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>
+            <div style={{ marginLeft: "auto", fontSize: 11, color: COLORS.textLight }}>
               Otsingusse: <strong>{previewMarks.length}</strong> kirjet
             </div>
           </div>
@@ -1378,8 +1465,8 @@ T5.11.MG2005\t2`;
               style={{
                 width: "100%",
                 padding: "12px",
-                background: (warningRows > 0 || notFoundRows > 0) ? "#d1d5db" : "#333",
-                color: "#fff",
+                background: (warningRows > 0 || notFoundRows > 0) ? COLORS.textLight : COLORS.primary,
+                color: COLORS.white,
                 border: "none",
                 borderRadius: 6,
                 cursor: (warningRows > 0 || notFoundRows > 0) ? "not-allowed" : "pointer",
@@ -1391,7 +1478,7 @@ T5.11.MG2005\t2`;
               ✅ Kinnita ja kasuta ({previewMarks.length})
             </button>
             {(warningRows > 0 || notFoundRows > 0) && (
-              <div style={{ marginTop: 6, fontSize: 12, color: "#dc2626", textAlign: "center" }}>
+              <div style={{ marginTop: 6, fontSize: 12, color: COLORS.error, textAlign: "center" }}>
                 ⚠️ Parandamist vajavad read - vajuta ikkagi kinnitamiseks
               </div>
             )}
@@ -1399,51 +1486,42 @@ T5.11.MG2005\t2`;
         </div>
       )}
 
+      {/* View save modal */}
       {showViewSave && (
-        <div style={{ marginTop: 8, padding: 6, border: "1px solid #ccc", borderRadius: 6, background: "#f0f0f0" }}>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Vaate nimi:</label>
-          <input type="text" value={viewName} onChange={e => setViewName(e.target.value)} style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }} />
-          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-            <button
-              onClick={saveView}
-              style={{ flex: 1, padding: "8px", background: "#333", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
-              disabled={!viewName.trim()}
-            >
-              Salvesta vaade
-            </button>
-            <button
-              onClick={cancelSaveView}
-              style={{ flex: 1, padding: "8px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
-            >
-              Tühista
-            </button>
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={modalHeadingStyle}>💾 Salvesta vaatesse</h3>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Vaate nimi:</label>
+            <input 
+              type="text" 
+              value={viewName} 
+              onChange={e => setViewName(e.target.value)} 
+              style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, marginBottom: 16 }} 
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={saveView}
+                style={{ ...btnPrimaryStyle, flex: 1 }}
+                disabled={!viewName.trim()}
+              >
+                Salvesta vaade
+              </button>
+              <button
+                onClick={cancelSaveView}
+                style={{ ...btnSecondaryStyle, flex: 1 }}
+              >
+                Tühista
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* PARANDUS: Copy modal nagu AssemblyExporter's */}
+      {/* Copy modal */}
       {showCopyModal && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(0,0,0,0.5)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: "#fff",
-            borderRadius: 8,
-            padding: 20,
-            maxWidth: 400,
-            width: "90%",
-            boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
-          }}>
-            <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>📋 Kopeeri lõikelauale</h3>
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={modalHeadingStyle}>📋 Kopeeri lõikelauale</h3>
             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer", marginBottom: 12 }}>
               <input
                 type="checkbox"
@@ -1453,7 +1531,7 @@ T5.11.MG2005\t2`;
               <span>Kaasa päised</span>
             </label>
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud</label>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Veerud</label>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxHeight: 200, overflowY: "auto", padding: 4 }}>
                 {headers.map((h) => (
                   <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
@@ -1470,14 +1548,14 @@ T5.11.MG2005\t2`;
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={copyToClipboard}
-                style={{ flex: 1, padding: "8px", background: "#333", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+                style={{ ...btnPrimaryStyle, flex: 1 }}
                 disabled={copyColumns.length === 0}
               >
                 Kopeeri
               </button>
               <button
                 onClick={() => setShowCopyModal(false)}
-                style={{ flex: 1, padding: "8px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+                style={{ ...btnSecondaryStyle, flex: 1 }}
               >
                 Tühista
               </button>
@@ -1488,7 +1566,3 @@ T5.11.MG2005\t2`;
     </div>
   );
 }
-
-
-
-
