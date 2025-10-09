@@ -2,13 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, mem
 import * as XLSX from "xlsx";
 import React from "react";
 import { createPortal } from "react-dom";
-
 type Language = "et" | "en";
 type Tab = "search" | "discover" | "export" | "settings" | "about" | "scan" | "log";
 type Row = Record<string, string>;
 type ExportFormat = "clipboard" | "excel" | "csv";
 type RowHeight = "small" | "medium" | "large";
-
 const translations = {
   et: {
     search: "OTSI",
@@ -291,18 +289,14 @@ const translations = {
     defaultColorChanged: "Default color changed",
   },
 };
-
 const LOCKED_ORDER = ["GUID", "GUID_IFC", "GUID_MS", "Project", "ModelId", "FileName", "Name", "Type"] as const;
-
 const FORCE_TEXT_KEYS = new Set([
   "Tekla_Assembly.AssemblyCast_unit_top_elevation",
   "Tekla_Assembly.AssemblyCast_unit_bottom_elevation",
 ]);
-
 const DEBOUNCE_MS = 300;
 const HIGHLIGHT_DURATION_MS = 2000;
 const MESSAGE_DURATION_MS = 3000;
-
 // Värvipalett - 30 unikaalset värvi (5×6 grid)
 const COLORS = [
   "#E53935", "#D81B60", "#8E24AA", "#5E35B1", "#3949AB", "#1E88E5",
@@ -311,9 +305,7 @@ const COLORS = [
   "#757575", "#546E7A", "#EF5350", "#EC407A", "#AB47BC", "#7E57C2",
   "#5C6BC0", "#42A5F5", "#29B6F6", "#26C6DA", "#26A69A", "#66BB6A"
 ];
-
 type DefaultPreset = "recommended" | "tekla" | "ifc";
-
 interface AppSettings {
   scriptUrl: string;
   secret: string;
@@ -326,7 +318,6 @@ interface AppSettings {
   ocrPrompt: string;
   rowHeight: RowHeight;
 }
-
 const DEFAULT_COLORS = {
   darkRed: { r: 140, g: 0, b: 0 },
   red: { r: 255, g: 0, b: 0 },
@@ -336,7 +327,6 @@ const DEFAULT_COLORS = {
   blue: { r: 0, g: 100, b: 255 },
   purple: { r: 160, g: 0, b: 200 },
 };
-
 /* ------------------------ LISATUD: lihtne useLogs hook --------------------- */
 /* Puuduv useLogs hook põhjustab tühja lehe (ReferenceError). Lisame lihtsa implementatsiooni. */
 function useLogs() {
@@ -359,7 +349,6 @@ function useLogs() {
   return { logs, logMessage: push, clearLogs, copyLogs };
 }
 /* -------------------------------------------------------------------------- */
-
 function useSettings() {
   const DEFAULTS: AppSettings = {
     scriptUrl: "",
@@ -373,7 +362,6 @@ function useSettings() {
     ocrPrompt: "",
     rowHeight: "medium",
   };
-
   const [settings, setSettings] = useState<AppSettings>(() => {
     const raw = window.localStorage?.getItem?.("assemblyExporterSettings");
     if (!raw) return DEFAULTS;
@@ -384,7 +372,6 @@ function useSettings() {
       return DEFAULTS;
     }
   });
-
   const update = useCallback((patch: Partial<AppSettings>) => {
     setSettings(prev => {
       const next = { ...prev, ...patch };
@@ -392,10 +379,8 @@ function useSettings() {
       return next;
     });
   }, []);
-
   return [settings, update] as const;
 }
-
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result ? {
@@ -404,18 +389,15 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     b: parseInt(result[3], 16)
   } : { r: 140, g: 0, b: 0 };
 }
-
 function rgbToHex(r: number, g: number, b: number): string {
   return "#" + [r, g, b].map(x => {
     const hex = x.toString(16);
     return hex.length === 1 ? "0" + hex : hex;
   }).join("");
 }
-
 function sanitizeKey(s: string) {
-  return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").trim();
+  return String(s).replace(/\s+/g, "_").replace(/[^\w.-]/g, "").replace(/\+/g, ".").trim(); // UUS: Asenda + punktiga JSON-i jaoks
 }
-
 function groupSortKey(group: string) {
   const g = group.toLowerCase();
   if (g === "data") return 0;
@@ -423,9 +405,7 @@ function groupSortKey(group: string) {
   if (g.startsWith("tekla_assembly")) return 2;
   return 10;
 }
-
 type Grouped = Record<string, string[]>;
-
 function groupKeys(keys: string[]): Grouped {
   const g: Grouped = {};
   for (const k of keys) {
@@ -437,18 +417,15 @@ function groupKeys(keys: string[]): Grouped {
   for (const arr of Object.values(g)) arr.sort((a, b) => a.localeCompare(b));
   return g;
 }
-
 function normalizeGuid(s: string): string {
   return s.replace(/^urn:(uuid:)?/i, "").trim();
 }
-
 function classifyGuid(val: string): "IFC" | "MS" | "UNKNOWN" {
   const s = normalizeGuid(val.trim());
   if (/^[0-9A-Za-z_$]{22}$/.test(s)) return "IFC";
   if (/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(s) || /^[0-9A-Fa-f]{32}$/.test(s)) return "MS";
   return "UNKNOWN";
 }
-
 /** ---- Fallback apid: Presentation Layers & Reference Object ---- */
 async function getPresentationLayerString(api: any, modelId: string, runtimeId: number): Promise<string> {
   try {
@@ -460,7 +437,6 @@ async function getPresentationLayerString(api: any, modelId: string, runtimeId: 
   } catch {}
   return "";
 }
-
 async function getReferenceObjectInfo(
   api: any,
   modelId: string,
@@ -483,9 +459,7 @@ async function getReferenceObjectInfo(
   } catch {}
   return out;
 }
-
 /** ---------------------------------------------------------------- */
-
 async function flattenProps(
   obj: any,
   modelId: string,
@@ -504,10 +478,8 @@ async function flattenProps(
     Name: "",
     Type: "Unknown",
   };
-
   const propMap = new Map<string, string>();
   const keyCounts = new Map<string, number>();
-
   const push = (group: string, name: string, val: unknown) => {
     const g = sanitizeKey(group);
     const n = sanitizeKey(name);
@@ -523,7 +495,6 @@ async function flattenProps(
     propMap.set(key, s);
     out[key] = s;
   };
-
   // Property setid (sh peidetud)
   if (Array.isArray(obj?.properties)) {
     obj.properties.forEach((propSet: any) => {
@@ -540,7 +511,6 @@ async function flattenProps(
   } else if (typeof obj?.properties === "object" && obj.properties !== null) {
     Object.entries(obj.properties).forEach(([key, val]) => push("Properties", key, val));
   }
-
   // Standard väljad
   if (obj?.id) out.ObjectId = String(obj.id);
   if (obj?.name) out.Name = String(obj.name);
@@ -548,7 +518,18 @@ async function flattenProps(
   if (obj?.product?.name) out.ProductName = String(obj.product.name);
   if (obj?.product?.description) out.ProductDescription = String(obj.product.description);
   if (obj?.product?.type) out.ProductType = String(obj.product.type);
-
+  // UUS: Fallback Product väljadele property-set'idest, kui otse puudub
+  if (!out.ProductName || !out.ProductDescription || !out.ProductType) {
+    const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
+    for (const set of props) {
+      for (const p of set?.properties ?? []) {
+        if (/product[_\s]?name/i.test(p?.name) && !out.ProductName) out.ProductName = String(p?.value || p?.displayValue || "");
+        if (/product[_\s]?description/i.test(p?.name) && !out.ProductDescription) out.ProductDescription = String(p?.value || p?.displayValue || "");
+        if (/product[_\s]?object[_\s]?type/i.test(p?.name) && !out.ProductType) out.ProductType = String(p?.value || p?.displayValue || "");
+      }
+    }
+    logMessage(`flattenProps: Lisasin Product fallback'id: Name=${out.ProductName}, Desc=${out.ProductDescription}, Type=${out.ProductType}`);
+  }
   // GUIDid propidest
   let guidIfc = "";
   let guidMs = "";
@@ -558,7 +539,12 @@ async function flattenProps(
     if (cls === "IFC" && !guidIfc) guidIfc = v;
     if (cls === "MS" && !guidMs) guidMs = v;
   }
-
+  // UUS: Spetsiifiline käsitlemine JSON-i "ReferenceObject+GUID (MS)" jaoks
+  if (guidMs) {
+    const jsonKey = "ReferenceObject.GUID_MS"; // Sanitized from "ReferenceObject+GUID (MS)"
+    out[jsonKey] = guidMs;
+    logMessage(`flattenProps: Leidsin ReferenceObject+GUID (MS): ${guidMs}`);
+  }
   // Lisa metadata.globalId GUID_MS jaoks
   try {
     logMessage(`flattenProps: Proovin lugeda metadata modelId=${modelId}, objId=${obj?.id}`);
@@ -576,7 +562,6 @@ async function flattenProps(
   } catch (e) {
     logMessage("flattenProps: getObjectMetadata viga: " + e.message);
   }
-
   // IFC GUID fallback (runtime->external)
   if (!guidIfc && obj.id) {
     try {
@@ -588,7 +573,6 @@ async function flattenProps(
       logMessage(`flattenProps: convertToObjectIds viga objId=${obj.id}: ${e.message}`);
     }
   }
-
   // Presentation Layers fallback
   if (![...propMap.keys()].some(k => k.toLowerCase().startsWith("presentation_layers."))) {
     const rid = Number(obj?.id);
@@ -602,7 +586,6 @@ async function flattenProps(
       }
     }
   }
-
   // Reference Object fallback
   const hasRefBlock = [...propMap.keys()].some(k => k.toLowerCase().startsWith("referenceobject."));
   if (!hasRefBlock) {
@@ -617,13 +600,11 @@ async function flattenProps(
       logMessage(`flattenProps: Reference Object info: ${JSON.stringify(ref)}`);
     }
   }
-
   out.GUID_IFC = guidIfc;
   out.GUID_MS = guidMs;
   out.GUID = guidIfc || guidMs || "";
   return out;
 }
-
 async function getProjectName(api: any): Promise<string> {
   try {
     const proj = typeof api?.project?.getProject === "function" ? await api.project.getProject() : api?.project || {};
@@ -632,14 +613,12 @@ async function getProjectName(api: any): Promise<string> {
     return "";
   }
 }
-
 async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
   const viewer: any = api?.viewer;
   const mos = await viewer?.getObjects?.({ selected: true });
   if (!Array.isArray(mos) || !mos.length) return [];
   return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
 }
-
 async function buildModelNameMap(api: any, modelIds: string[]) {
   const map = new Map<string, string>();
   try {
@@ -658,7 +637,11 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   }
   return map;
 }
-
+// UUS: Funktsioon JSON-i parsimiseks ja veergude lisamiseks
+function parseJsonColumns(jsonData) {
+  const columns = jsonData.columns.map(col => sanitizeKey(col.field)); // Sanitize + -> .
+  return columns;
+}
 // ColorPicker komponent - 30 värvi 5×6 grid
 // Muudetud: renderdatakse portaali (document.body) ja positsioneeritakse fixed positsioonile,
 // et vältida külgriba/overflow järel tekkivat peitmist.
@@ -666,16 +649,13 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement | null>(null);
   const [popupStyle, setPopupStyle] = useState<CSSProperties | null>(null);
-
   // compute popup size roughly (grid 6 columns, each 20px + gaps)
   const POPUP_WIDTH = 6 * 20 + (6 - 1) * 4 + 12; // approx padding
   const POPUP_HEIGHT = Math.ceil(COLORS.length / 6) * 20 + (Math.ceil(COLORS.length / 6) - 1) * 4 + 12;
-
   useLayoutEffect(() => {
     if (!isOpen) return;
     const el = triggerRef.current;
     if (!el) return;
-
     const updatePos = () => {
       const rect = el.getBoundingClientRect();
       const scrollX = window.scrollX || window.pageXOffset;
@@ -683,19 +663,16 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
       // default below the trigger
       let left = Math.round(rect.left + scrollX);
       let top = Math.round(rect.top + rect.height + scrollY + 6);
-
       // ensure popup stays inside viewport horizontally
       const margin = 8;
       const maxRight = window.innerWidth - margin;
       if (left + POPUP_WIDTH > maxRight) left = Math.max(margin, maxRight - POPUP_WIDTH);
-
       // if not enough space below, try placing above
       const maxBottom = window.innerHeight - margin;
       const spaceBelow = window.innerHeight - (rect.top + rect.height);
       if (spaceBelow < POPUP_HEIGHT && rect.top > POPUP_HEIGHT + 12) {
         top = Math.round(rect.top + scrollY - POPUP_HEIGHT - 6);
       }
-
       setPopupStyle({
         position: "fixed",
         top: top,
@@ -704,7 +681,6 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
         pointerEvents: "auto",
       });
     };
-
     updatePos();
     window.addEventListener("resize", updatePos);
     window.addEventListener("scroll", updatePos, true);
@@ -713,9 +689,7 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
       window.removeEventListener("scroll", updatePos, true);
     };
   }, [isOpen]);
-
   const currentColor = value || COLORS[0];
-
   return (
     <>
       <div
@@ -799,7 +773,6 @@ const ColorPicker = memo(({ value, onChange, t }: { value: string; onChange: (c:
     </>
   );
 });
-
 // MiniToggle komponent - kompaktsem
 const MiniToggle = memo(({ checked, onChange, color = "blue" }: { checked: boolean; onChange: (v: boolean) => void; color?: string }) => {
   const colors = {
@@ -840,7 +813,6 @@ const MiniToggle = memo(({ checked, onChange, color = "blue" }: { checked: boole
     </button>
   );
 });
-
 // LargeToggle komponent - kompaktsem
 const LargeToggle = memo(({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => {
   return (
@@ -885,7 +857,6 @@ const LargeToggle = memo(({ checked, onChange }: { checked: boolean; onChange: (
     </button>
   );
 });
-
 // ResultRow komponent
 const ResultRow = memo(({ result, onRemove, onZoom, onToggleMark, onColorChange, isMarked, t, rowHeight }: any) => {
   const displayValue = result.actualValue || result.originalValue;
@@ -951,9 +922,18 @@ const ResultRow = memo(({ result, onRemove, onZoom, onToggleMark, onColorChange,
     </div>
   );
 });
-
 type Props = { api: any };
-
+// JSON andmed, mille sa andsid – lisan siia koodi sisse, et oleks terviklik
+const jsonData = {
+  "name": "Default",
+  "columns": [
+    {"label": "ReferenceObject+GUID (MS)", "field": "ReferenceObject+GUID (MS)"},
+    {"label": "guid", "field": "guid"},
+    {"label": "Product+Product Description", "field": "Product+Product Description"},
+    {"label": "Product+Product Name", "field": "Product+Product Name"},
+    {"label": "Product+Product Object Type", "field": "Product+Product Object Type"}
+  ]
+};
 export default function AssemblyExporter({ api }: Props) {
   const [settings, updateSettings] = useSettings();
   const t = translations[settings.language];
@@ -991,35 +971,29 @@ export default function AssemblyExporter({ api }: Props) {
   const [defaultColor, setDefaultColor] = useState(rgbToHex(settings.colorizeColor.r, settings.colorizeColor.g, settings.colorizeColor.b));
   const [rowHeight, setRowHeight] = useState<RowHeight>(settings.rowHeight);
   const abortControllerRef = useRef<AbortController | null>(null);
-
   useEffect(() => {
     const tmr = setTimeout(() => setDebouncedFilter(filter), DEBOUNCE_MS);
     return () => clearTimeout(tmr);
   }, [filter]);
-
   useEffect(() => {
     if (discoverMsg) {
       const t = setTimeout(() => setDiscoverMsg(""), MESSAGE_DURATION_MS);
       return () => clearTimeout(t);
     }
   }, [discoverMsg]);
-
   useEffect(() => {
     if (exportMsg) {
       const t = setTimeout(() => setExportMsg(""), MESSAGE_DURATION_MS);
       return () => clearTimeout(t);
     }
   }, [exportMsg]);
-
   useEffect(() => {
     if (settingsMsg) {
       const t = setTimeout(() => setSettingsMsg(""), MESSAGE_DURATION_MS);
       return () => clearTimeout(t);
     }
   }, [settingsMsg]);
-
   const allKeys = useMemo(() => Array.from(new Set(rows.flatMap(r => Object.keys(r)))).sort(), [rows]);
-
   const searchFieldOptions = useMemo(() => {
     const base = [
       { value: "AssemblyMark", label: "Kooste märk (BLOCK)" },
@@ -1035,43 +1009,35 @@ export default function AssemblyExporter({ api }: Props) {
     const f = searchFieldFilter.toLowerCase();
     return all.filter(opt => opt.label.toLowerCase().includes(f) || opt.value.toLowerCase().includes(f));
   }, [allKeys, searchFieldFilter]);
-
   const groupedUnsorted = useMemo(() => groupKeys(allKeys), [allKeys]);
   const groupedSortedEntries = useMemo(
     () => (Object.entries(groupedUnsorted) as [string, string[]][])
       .sort((a, b) => groupSortKey(a[0]) - groupSortKey(b[0]) || a[0].localeCompare(b[0])),
     [groupedUnsorted]
   );
-
   const filteredKeysSet = useMemo(() => {
     if (!debouncedFilter) return new Set(allKeys);
     const f = debouncedFilter.toLowerCase();
     return new Set(allKeys.filter(k => k.toLowerCase().includes(f)));
   }, [allKeys, debouncedFilter]);
-
   const exportableColumns = useMemo(() => columnOrder.filter(k => allKeys.includes(k)), [columnOrder, allKeys]);
-
   const totalFoundCount = useMemo(
     () => searchResults.reduce((sum, r) => sum + (r.status === "found" ? r.ids?.length || 0 : 0), 0),
     [searchResults]
   );
-
   const markedCount = markedResults.size;
-
   useEffect(() => {
     if (!rows.length || selected.size) return;
     if (settings.defaultPreset === "tekla") presetTekla();
     else if (settings.defaultPreset === "ifc") presetIFC();
     else presetRecommended();
   }, [rows, settings.defaultPreset]);
-
   useEffect(() => {
     const currentSet = new Set(columnOrder);
     const missingKeys = allKeys.filter(k => !currentSet.has(k));
     if (missingKeys.length > 0) setColumnOrder(prev => [...prev, ...missingKeys]);
     else if (!columnOrder.length && allKeys.length) setColumnOrder([...LOCKED_ORDER, ...allKeys.filter(k => !LOCKED_ORDER.includes(k as any))]);
   }, [allKeys]);
-
   useEffect(() => {
     if (!api?.viewer) return;
     let selectionTimeout: any;
@@ -1093,17 +1059,13 @@ export default function AssemblyExporter({ api }: Props) {
       } catch {}
     };
   }, [api, busy, logMessage]);
-
   useEffect(() => {
     if (tab === "export" && !busy) discover();
   }, [tab]);
-
   useEffect(() => {
     if (tab === "discover" && !busy) discover();
   }, [tab]);
-
   const matches = useCallback((k: string) => filteredKeysSet.has(k), [filteredKeysSet]);
-
   const toggle = useCallback(
     (k: string) => setSelected(s => {
       const n = new Set(s);
@@ -1112,7 +1074,6 @@ export default function AssemblyExporter({ api }: Props) {
     }),
     []
   );
-
   const toggleGroup = useCallback(
     (keys: string[], on: boolean) => setSelected(s => {
       const n = new Set(s);
@@ -1121,23 +1082,18 @@ export default function AssemblyExporter({ api }: Props) {
     }),
     []
   );
-
   const selectAll = useCallback((on: boolean) => setSelected(() => (on ? new Set(allKeys) : new Set())), [allKeys]);
-
   function presetRecommended() {
     const wanted = new Set([...LOCKED_ORDER, "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
-
   function presetTekla() {
     setSelected(new Set(allKeys.filter(k => k.startsWith("Tekla_Assembly.") || k === "ReferenceObject.File_Name")));
   }
-
   function presetIFC() {
     const wanted = new Set(["GUID_IFC", "GUID_MS", "ReferenceObject.Common_Type", "ReferenceObject.File_Name"]);
     setSelected(new Set(allKeys.filter(k => wanted.has(k))));
   }
-
   async function discover() {
     if (!api?.viewer) {
       setDiscoverMsg(t.apiError);
@@ -1194,6 +1150,10 @@ export default function AssemblyExporter({ api }: Props) {
           .replace("{keys}", String(Array.from(new Set(out.flatMap(r => Object.keys(r)))).length))
       );
       logMessage(`Found ${out.length} objects with ${Array.from(new Set(out.flatMap(r => Object.keys(r)))).length} keys`);
+      // UUS: Parsi JSON ja lisa veerud columnOrder-i
+      const jsonColumns = parseJsonColumns(jsonData);
+      setColumnOrder(prev => [...new Set([...prev, ...jsonColumns])]);
+      logMessage(`Lisatud JSON veerud: ${jsonColumns.join(", ")}`);
     } catch (e: any) {
       logMessage(`Discover error: ${e.message}`);
       setDiscoverMsg(t.error.replace("{error}", e?.message || t.unknownError));
@@ -1201,7 +1161,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
   const cancelSearch = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -1211,7 +1170,6 @@ export default function AssemblyExporter({ api }: Props) {
       logMessage("Search cancelled");
     }
   }, [t, logMessage]);
-
   async function searchAndSelect(clearPrevious: boolean = false) {
     logMessage(`Search started, clearPrevious=${clearPrevious}`);
     if (clearPrevious) {
@@ -1300,7 +1258,6 @@ export default function AssemblyExporter({ api }: Props) {
               const val = String(meta.globalId).trim();
               if (classifyGuid(val) === "MS") matchValue = val;
             }
-
             // 2) Kui siiani tühi, proovi property-sette
             if (!matchValue) {
               const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
@@ -1317,7 +1274,6 @@ export default function AssemblyExporter({ api }: Props) {
                 }
               }
             }
-
             // 3) IFC fallback – runtime → external (IFC GlobalId)
             if (!matchValue && searchField === "GUID_IFC") {
               try {
@@ -1492,7 +1448,6 @@ export default function AssemblyExporter({ api }: Props) {
       abortControllerRef.current = null;
     }
   }
-
   const toggleResultMark = useCallback((id: number) => {
     setMarkedResults(prev => {
       const next = new Set(prev);
@@ -1501,16 +1456,13 @@ export default function AssemblyExporter({ api }: Props) {
       return next;
     });
   }, []);
-
   const markAllResults = useCallback(() => {
     const foundIds = searchResults.filter(r => r.status === "found").map(r => r.id);
     setMarkedResults(new Set(foundIds));
   }, [searchResults]);
-
   const clearAllMarks = useCallback(() => {
     setMarkedResults(new Set());
   }, []);
-
   const selectMarkedResults = useCallback(async () => {
     try {
       const markedItems = searchResults.filter(r => markedResults.has(r.id) && r.status === "found");
@@ -1525,17 +1477,14 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(t.selectAllError);
     }
   }, [searchResults, markedResults, api, t, logMessage]);
-
   const removeMarkedResults = useCallback(() => {
     setSearchResults(prev => prev.filter(r => !markedResults.has(r.id)));
     setMarkedResults(new Set());
     logMessage("Removed marked results");
   }, [markedResults, logMessage]);
-
   const changeResultColor = useCallback((id: number, color: string) => {
     setSearchResults(prev => prev.map(r => r.id === id ? { ...r, color } : r));
   }, []);
-
   const colorAllResults = useCallback(async () => {
     try {
       setBusy(true);
@@ -1555,7 +1504,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }, [searchResults, api, defaultColor, t, settings.language, logMessage]);
-
   const greyOutAllModels = useCallback(async () => {
     try {
       await api?.viewer?.setObjectState?.(
@@ -1567,7 +1515,6 @@ export default function AssemblyExporter({ api }: Props) {
       logMessage("Grey out failed: " + e.message);
     }
   }, [api, logMessage]);
-
   const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
     try {
       const viewer = api?.viewer;
@@ -1587,7 +1534,6 @@ export default function AssemblyExporter({ api }: Props) {
       logMessage("Zoom error: " + e.message);
     }
   }, [api, greyOutAll, searchResults, defaultColor, logMessage]);
-
   const initSaveView = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -1599,7 +1545,6 @@ export default function AssemblyExporter({ api }: Props) {
     setViewName(defaultName);
     setShowViewSave(true);
   }, []);
-
   const saveView = useCallback(async () => {
     if (!lastSelection.length || !viewName.trim()) return;
     try {
@@ -1613,12 +1558,10 @@ export default function AssemblyExporter({ api }: Props) {
       setSearchMsg(t.viewSaveError.replace("{error}", e?.message || t.unknownError));
     }
   }, [lastSelection, viewName, api, t, logMessage]);
-
   const cancelSaveView = useCallback(() => {
     setShowViewSave(false);
     setViewName("");
   }, []);
-
   const initSaveOrganizer = useCallback(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
@@ -1630,7 +1573,6 @@ export default function AssemblyExporter({ api }: Props) {
     setOrganizerName(defaultName);
     setShowOrganizerSave(true);
   }, []);
-
   const saveToOrganizer = useCallback(async () => {
     if (!lastSelection.length || !organizerName.trim()) return;
     try {
@@ -1666,12 +1608,10 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }, [lastSelection, organizerName, api, t, logMessage]);
-
   const cancelSaveOrganizer = useCallback(() => {
     setShowOrganizerSave(false);
     setOrganizerName("");
   }, []);
-
   const removeResult = useCallback((id: number) => {
     setSearchResults(prev => prev.filter(r => r.id !== id));
     setMarkedResults(prev => {
@@ -1680,7 +1620,6 @@ export default function AssemblyExporter({ api }: Props) {
       return next;
     });
   }, []);
-
   const moveColumn = useCallback(
     (from: number, to: number) => {
       const newOrder = [...columnOrder];
@@ -1692,24 +1631,20 @@ export default function AssemblyExporter({ api }: Props) {
     },
     [columnOrder]
   );
-
   const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/html", e.currentTarget.innerHTML);
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "0.4";
   }, []);
-
   const handleDragEnd = useCallback((e: DragEvent<HTMLDivElement>) => {
     if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = "1";
     setDraggedIndex(null);
   }, []);
-
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }, []);
-
   const handleDrop = useCallback(
     (e: DragEvent<HTMLDivElement>, dropIndex: number) => {
       e.preventDefault();
@@ -1723,7 +1658,6 @@ export default function AssemblyExporter({ api }: Props) {
     },
     [draggedIndex, columnOrder]
   );
-
   async function exportData() {
     logMessage("Export started");
     await discover();
@@ -1776,7 +1710,6 @@ export default function AssemblyExporter({ api }: Props) {
       logMessage(`Export error: ${e.message}`);
     }
   }
-
   async function sendToGoogleSheet() {
     const { scriptUrl, secret, autoColorize } = settings;
     if (!scriptUrl || !secret) {
@@ -1821,7 +1754,6 @@ export default function AssemblyExporter({ api }: Props) {
       setBusy(false);
     }
   }
-
   async function colorLastSelection() {
     const viewer = api?.viewer;
     let blocks = lastSelection;
@@ -1840,7 +1772,6 @@ export default function AssemblyExporter({ api }: Props) {
       await viewer?.setObjectState?.(selector, { color: { r, g, b, a: 255 } });
     }
   }
-
   async function resetState() {
     try {
       await api?.viewer?.setObjectState?.(undefined, { color: "reset", visible: "reset" });
@@ -1849,7 +1780,6 @@ export default function AssemblyExporter({ api }: Props) {
       setDiscoverMsg(t.resetFailed.replace("{error}", e?.message || e));
     }
   }
-
   const c = styles;
   const scopeButtonStyle = (isActive: boolean): CSSProperties => ({
     padding: "4px 8px",
@@ -2479,7 +2409,6 @@ export default function AssemblyExporter({ api }: Props) {
     </div>
   );
 }
-
 /* ------------------------------- STYLES ---------------------------------- */
 const styles: Record<string, CSSProperties> = {
   shell: {
