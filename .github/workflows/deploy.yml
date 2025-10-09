@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'src/**'
+      - 'public/**'
       - 'index.html'
       - 'package.json'
       - 'vite.config.ts'
@@ -13,24 +14,27 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: read
   pages: write
   id-token: write
 
-# Hoia aktiivsena ainult VIIMANE Pages-deploy
+# Hoia aktiivsena ainult VIIMANE sama workflow/haru run
 concurrency:
-  group: pages
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Lock-failiga cache; ilma lockita puhas setup
-      - name: Setup Node (cached if lock exists)
+      - name: Setup Node (cache, kui lock olemas)
         uses: actions/setup-node@v4
         with:
           node-version: 20
