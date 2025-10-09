@@ -163,34 +163,21 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
       throw new Error("❌ Sisesta OpenAI API võti!");
     }
     const columns = targetColumns.trim();
+    const columnList = columns ? columns.split(',').map(c => c.trim()).concat('Notes') : [];
     const columnInstruction = columns
-      ? `Väljavõtte AINULT need veerud täpselt selles järjekorras: ${columns}. Kui veerunimed ei ole pildil nähtavad, kasuta veeru positsioone (1. veerg vasakult = ${columns.split(',')[0]?.trim() || '1'}, 2. veerg = ${columns.split(',')[1]?.trim() || '2'}, jne).`
-      : "Väljavõtte kõik nähtavad veerud.";
+      ? `Väljavõtte AINULT need veerud täpselt selles järjekorras: ${columnList.join(', ')}. Kui veerunimed ei ole pildil nähtavad, kasuta veeru positsioone (1. veerg vasakult = ${columnList[0] || '1'}, jne).`
+      : "Väljavõtte kõik nähtavad veerud, lisa Notes veerg lõppu.";
     const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises. Ole väga täpne tähtede ja numbrite eristamisel (nt "T" ja "5" on erinevad, "TS" ei ole "T5"). Numbrid on kogused, loe neid täpselt, ära muuda neid.
-Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade OCR-lugemises. Loe täpselt paberi pealt, ignoreeri värvilisi numbreid (nt roosad ringid) – need pole originaalis. Ignoreeri allapoole jäävaid allkirju, templeid, kuupäevi ja pastakaga lisatud märkusi (kui need pole tabeli osad). Dokument on kergelt viltu, kuid veerud on selgelt eraldatud.
-
-Veerud on täpselt need ja selles järjekorras: Nõ, Component, Rev, Pcs, Profile, Length mm, Weight kg/pcs, Total weight kg, Phase VM.
-- Nõ: rea number (1 kuni 81, kasvavalt).
-- Component: kood nagu T5.13.SB2036 (täht + numbrid, punktidega, iga rida eraldi lahter, mitte joru).
-- Rev: sageli tühi või number.
-- Pcs: kogus (tavaliselt 1-3).
-- Profile: tüüp nagu HEA140 või RHS070x070x05.
-- Length mm: pikkus millimeetrites (nt 6547).
-- Weight kg/pcs: kaal tk kohta (nt 171.0, komaga).
-- Total weight kg: kogukaal (nt 171.00, komaga).
-- Phase VM: faas nagu Z21-4.
-
-Ole väga täpne: erista "T" ja "5", "S" ja "5", "O" ja "0". Numbrid on täpsed, ära muuda neid (nt ära ümarda). Hoia originaalformaati: komad kaaludes, punktid koodides. Iga rida peab olema eraldi, mitte pikk joru Component veerus.
 ${columnInstruction}
-
-Tagasta andmed TSV (tab-separated values) formaadis, kus esimene rida on päised.
-Kasuta veergude eraldamiseks AINULT TAB-märki (\t). Ära kasuta tühikuid ega muid eraldajaid.
+Lisa alati veerg "Notes" lõppu, kuhu pane olulist infot: kui midagi on pastakaga lisatud, kahtlane või arusaamatu (nt "Pastakaga kriipsutatud", "Kahtlane number: võimalik 1 või 7", "Lisamärge: X").
 Hoia TÄPNE ALGINE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
-Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???".
+Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???" ja lisa Notes'i selgitus.
 Ära jäta ühtegi rida vahele.
 Ära lisa lisaridu.
 ${additionalPrompt || ""}
 ${settings?.ocrPrompt || ""}
+Tagasta andmed TSV (tab-separated values) formaadis, kus esimene rida on päised.
+Kasuta veergude eraldamiseks AINULT TAB-märki (\t). Read eralda \n-ga, iga rida oma real.
 Ära lisa mingit teksti ega selgitust, ära kasuta Markdowni formaati ega koodiblokke - ainult puhas TSV tabel!`;
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -260,12 +247,11 @@ Loenda read (välja arvatud päis). Kui on ekstra ridu või puuduvad read, anna 
   async function getOcrFeedback(text: string): Promise<string> {
     if (!apiKey) return "";
     const prompt = `Analüüsi seda OCR tulemust (TSV formaat): ${text}
-Hinda eesti keeles lühidalt ja struktureeritult:
-1. Dokumendi loetavus: (hea/keskmine/halb, selgitus nt pilt kvaliteet, font, skaneerimine, viltus asend).
-2. Probleemsed read/lahtrid: (loetle, nt "Rida 5: kahtlane number '???'", või "Component veerg: pikk joru – võimalik veergude segunemine").
-3. Kahtlased märkused: (nt pastakaga lisatud tekst, käsitsi kirjutatu, arusaamatud sümbolid – loetle kui tuvastad, nt "All allkiri pastakaga: ignoreeritud").
-4. Soovitused: (nt "Uuesti skaneeri parema valgustusega", "Lisa prompti täpsem veergude kirjeldus", "Kontrolli kahtlasi lahtreid käsitsi").
-Tagasta AINULT nummerdatud loeteluna, ilma lisatekstita.`;
+Hinda:
+1. Kas dokument oli hästi loetav? (nt pilt kvaliteet, font, skaneerimine)
+2. Kas said kõigist ridadest ilusti aru? Kui mitte, millised probleemid?
+3. Kas soovitad uuesti scanida lisajuhistega (nt parem valgustus, täpsem prompt)?
+Anna lühike kokkuvõte eesti keeles.`;
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -310,7 +296,7 @@ Tagasta AINULT nummerdatud loeteluna, ilma lisatekstita.`;
       setRawText(text);
       const feedback = await getOcrFeedback(text);
       setOcrFeedback(feedback);
-      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside:\n${feedback}`);
+      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside: ${feedback}`);
     } catch (e: any) {
       setMsg("❌ Viga: " + (e?.message || String(e)));
     } finally {
@@ -1398,7 +1384,7 @@ T5.11.MG2005\t2`;
                         >
                           ❌
                         </button>
-                        {r._foundInModel && (
+                        {r._foundInModel && r.modelId && r._objectId && (
                           <button
                             onClick={() => zoomToRow(r)}
                             style={{ padding: "3px 8px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginLeft: 4 }}
