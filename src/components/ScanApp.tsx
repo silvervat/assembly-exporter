@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 
-type Row = Record<string, string> & { 
-  _confidence?: number; 
+type Row = Record<string, string> & {
+  _confidence?: number;
   _warning?: string;
   _foundInModel?: boolean | null;
   _modelQuantity?: number;
@@ -38,10 +38,11 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [replaceText, setReplaceText] = useState("");
   const [totalScannedRows, setTotalScannedRows] = useState(0);
   const [modelObjects, setModelObjects] = useState<any[]>([]);
-  
+  const [apiKey, setApiKey] = useState(localStorage.getItem('openai_api_key') || '');
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
-
   const t = translations || {};
   const c = parentStyles || {};
 
@@ -62,7 +63,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     if (!fileList || !fileList.length) return;
     const file = fileList[0];
     setFiles([file]);
-    
+
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -72,67 +73,64 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     }
   }
 
-  async function runClaudeOcr(imageBase64: string): Promise<string> {
+  async function runGptOcr(imageBase64: string): Promise<string> {
+    if (!apiKey) {
+      throw new Error("❌ Sisesta OpenAI API võti!");
+    }
+
     const columns = targetColumns.trim();
-    const columnInstruction = columns 
-      ? `Väljavõtte AINULT need veerud täpselt selles järjekorras: ${columns}. Kui veerunimed ei ole pildil nähtavad, kasuta veeru positsioone (1. veerg vasakult = ${columns.split(',')[0]?.trim() || '1'}, 2. veerg = ${columns.split(',')[1]?.trim() || '2'}, jne).`
-      : "Väljavõtte kõik nähtavad veerud.";
+    const columnInstruction = columns
+      ? `Extract ONLY these columns in this exact order: ${columns}. If column names are not visible in the image, use column positions (1st column from left = ${columns.split(',')[0]?.trim() || '1'}, 2nd = ${columns.split(',')[1]?.trim() || '2'}, etc).`
+      : "Extract all visible columns.";
 
-    const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises.
-
+    const prompt = `You are an expert in reading logistics transport sheets and production lists.
 ${columnInstruction}
-
-Tagasta andmed TSV (tab-separated values) formaadis, kus esimene rida on päised.
-Hoia TÄPNE ALGNE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
-Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???".
-Ära jäta ühtegi rida vahele.
-Ära lisa lisaridu.
-
+Return the data in TSV (tab-separated values) format, with the first row as headers.
+Keep the EXACT ORIGINAL ORDER of rows as they appear in the image (top to bottom).
+If you can't clearly read a cell, put "???" there.
+Do not skip any rows.
+Do not add extra rows.
 ${settings?.ocrPrompt || ""}
-
-Ära lisa mingit teksti ega selgitust - ainult TSV tabel!`;
+Do not add any text or explanations - only the TSV table!`;
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4000,
+          model: "gpt-4o",
           messages: [
             {
               role: "user",
               content: [
                 {
-                  type: "image",
-                  source: {
-                    type: "base64",
-                    media_type: files[0]?.type || "image/jpeg",
-                    data: imageBase64,
-                  }
-                },
-                {
                   type: "text",
                   text: prompt
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${files[0]?.type || "image/jpeg"};base64,${imageBase64}`
+                  }
                 }
               ]
             }
-          ]
+          ],
+          max_tokens: 4000,
         })
       });
 
       if (!response.ok) {
         throw new Error(`API viga: ${response.status}`);
       }
-
       const data = await response.json();
-      const text = data.content[0]?.text || "";
-      
+      const text = data.choices[0]?.message?.content || "";
       return text;
     } catch (error: any) {
-      throw new Error(`Claude API viga: ${error.message}`);
+      throw new Error(`OpenAI API viga: ${error.message}`);
     }
   }
 
@@ -140,7 +138,6 @@ ${settings?.ocrPrompt || ""}
     try {
       setMsg("");
       setBusy(true);
-
       if (!files.length) {
         if (!rawText.trim()) {
           setMsg("❌ Pole faile ega teksti.");
@@ -149,16 +146,13 @@ ${settings?.ocrPrompt || ""}
         }
         return;
       }
-
       if (!targetColumns.trim()) {
         setMsg("❌ Määra esmalt veerud!");
         return;
       }
-
       setMsg("🔍 OCR töötab...");
       const base64 = await fileToBase64(files[0]);
-      const text = await runClaudeOcr(base64);
-      
+      const text = await runGptOcr(base64);
       setRawText(text);
       setMsg("✅ OCR valmis! Vajuta 'Parsi tabelisse'.");
     } catch (e: any) {
@@ -171,18 +165,15 @@ ${settings?.ocrPrompt || ""}
   function parseTextToTable(text: string) {
     const lines = text
       .split(/\r?\n/)
-      .map((s) => s.replace(/\t+/g, "  ").trim())
+      .map((s) => s.replace(/\t+/g, " ").trim())
       .filter(Boolean);
-
     setTotalScannedRows(lines.length - 1); // -1 for header
-
     if (lines.length === 0) {
       setHeaders([]);
       setRows([]);
       setMsg("❌ Tühjus.");
       return;
     }
-
     let headerIdx = 0;
     let bestScore = -1;
     for (let i = 0; i < Math.min(lines.length, 20); i++) {
@@ -194,39 +185,35 @@ ${settings?.ocrPrompt || ""}
         headerIdx = i;
       }
     }
-
     const rawHeaders = lines[headerIdx]
       .split(/\s{2,}|\t/)
       .map((s) => cleanHeader(s))
       .filter(Boolean);
-
     const normalizedHeaders = rawHeaders.length > 0
       ? rawHeaders
       : lines[0].split(/\s{2,}|\t/).map((_, i) => "Col" + (i + 1));
-
     const outRows: Row[] = [];
     let warnings = 0;
-    
+
     for (let i = 0; i < lines.length; i++) {
       if (i === headerIdx) continue;
       const cols = lines[i].split(/\s{2,}|\t/);
-      
+
       if (cols.length < 2) {
         warnings++;
         continue;
       }
-
       const r: Row = {};
       let hasData = false;
       let hasWarning = false;
-      
+
       for (let c = 0; c < Math.min(cols.length, normalizedHeaders.length); c++) {
         const val = cols[c].trim();
         r[normalizedHeaders[c]] = val;
         if (val) hasData = true;
         if (val === "???") hasWarning = true;
       }
-      
+
       if (hasWarning) {
         r._warning = "⚠️ OCR ei suutnud lugeda";
         r._confidence = 0.5;
@@ -239,31 +226,28 @@ ${settings?.ocrPrompt || ""}
       } else {
         r._confidence = 0.95;
       }
-      
+
       outRows.push(r);
     }
-
     setHeaders(normalizedHeaders);
     setRows(outRows);
-
     const lower = normalizedHeaders.map((h) => h.toLowerCase());
     const markIdx = lower.findIndex((h) => /\b(mark|component|item|part|komponent)\b/.test(h));
     const qtyIdx = lower.findIndex((h) => /\b(qty|pcs|kogus|tk|amount)\b/.test(h));
-
     setMarkKey(normalizedHeaders[markIdx >= 0 ? markIdx : 0] || "");
     setQtyKey(normalizedHeaders[qtyIdx >= 0 ? qtyIdx : normalizedHeaders.length - 1] || "");
-    
+
     // Auto-select all columns initially
     setSelectedColumns([...normalizedHeaders]);
-    
+
     const warnMsg = warnings > 0 ? ` ⚠️ ${warnings} rida jäeti vahele.` : "";
     const ocrWarnings = outRows.filter(r => r._warning?.includes("ei suutnud")).length;
     const ocrWarnMsg = ocrWarnings > 0 ? ` ⚠️ ${ocrWarnings} lahtrit ???` : "";
-    
-    const rowCountMsg = totalScannedRows > 0 
+
+    const rowCountMsg = totalScannedRows > 0
       ? ` 📊 Skaneerisin ${totalScannedRows} rida, parsisin ${outRows.length}.`
       : "";
-    
+
     setMsg(`✓ Tabel valmis: ${outRows.length} rida.${warnMsg}${ocrWarnMsg}${rowCountMsg}`);
   }
 
@@ -301,8 +285,8 @@ ${settings?.ocrPrompt || ""}
   }
 
   function toggleColumn(col: string) {
-    setSelectedColumns(prev => 
-      prev.includes(col) 
+    setSelectedColumns(prev =>
+      prev.includes(col)
         ? prev.filter(c => c !== col)
         : [...prev, col]
     );
@@ -313,7 +297,6 @@ ${settings?.ocrPrompt || ""}
       setMsg("❌ Sisesta otsitav tekst!");
       return;
     }
-
     let replacedCount = 0;
     setRows((prev) => {
       return prev.map(r => {
@@ -329,7 +312,6 @@ ${settings?.ocrPrompt || ""}
         return newRow;
       });
     });
-
     setMsg(`✓ Asendatud ${replacedCount} kohta.`);
     setShowFindReplace(false);
   }
@@ -339,32 +321,28 @@ ${settings?.ocrPrompt || ""}
       setMsg("❌ Parsi esmalt tabel!");
       return;
     }
-
     try {
       setSearchingModel(true);
       setMsg("🔍 Otsin mudelist...");
-
       const viewer = api?.viewer;
       const marks = rows.map(r => String(r[markKey] || "").trim()).filter(Boolean);
       const uniqueMarks = [...new Set(marks)];
-      
+
       const mos = await viewer?.getObjects();
       if (!Array.isArray(mos)) {
         setMsg("❌ API viga");
         setSearchingModel(false);
         return;
       }
-
       const foundMarks = new Map<string, number>(); // mark -> count in model
       const foundObjects: any[] = [];
-
       for (const mo of mos) {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
-        
+
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
-          
+
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
@@ -384,35 +362,30 @@ ${settings?.ocrPrompt || ""}
           console.warn(`Model ${modelId} error:`, e);
         }
       }
-
       setModelObjects(foundObjects);
-
       const updatedRows = rows.map(r => {
         const mark = String(r[markKey] || "").trim();
         const modelCount = foundMarks.get(mark) || 0;
         const found = modelCount > 0;
-        
+
         const sheetQty = qtyKey ? parseInt(String(r[qtyKey] || "0")) || 0 : 0;
-        
+
         let warning = r._warning || "";
         if (found && qtyKey && modelCount !== sheetQty) {
           warning = `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
         }
-        
-        return { 
-          ...r, 
+
+        return {
+          ...r,
           _foundInModel: found,
           _modelQuantity: modelCount,
           _warning: warning || undefined
         };
       });
-
       setRows(updatedRows);
-
       const foundCount = updatedRows.filter(r => r._foundInModel === true).length;
       const notFoundCount = updatedRows.filter(r => r._foundInModel === false).length;
       const qtyMismatch = updatedRows.filter(r => r._warning?.includes("ei vasta")).length;
-
       let resultMsg = `✓ ${foundCount} ✅ leitud, ${notFoundCount} ❌ ei leitud.`;
       if (qtyMismatch > 0) {
         resultMsg += ` ⚠️ ${qtyMismatch} koguste erinevus!`;
@@ -430,10 +403,9 @@ ${settings?.ocrPrompt || ""}
       setMsg("❌ Tee esmalt otsing mudelist!");
       return;
     }
-
     try {
       const viewer = api?.viewer;
-      
+
       // Group by modelId
       const byModel = new Map<string, number[]>();
       for (const obj of modelObjects) {
@@ -441,12 +413,10 @@ ${settings?.ocrPrompt || ""}
         ids.push(obj.objectId);
         byModel.set(obj.modelId, ids);
       }
-
       // Select in viewer
       for (const [modelId, ids] of byModel.entries()) {
         await viewer?.selectObjects(modelId, ids, true);
       }
-
       setMsg(`✓ Selectitud ${modelObjects.length} objekti mudelist.`);
     } catch (e: any) {
       setMsg("❌ Selectimine ebaõnnestus: " + (e?.message || String(e)));
@@ -455,15 +425,15 @@ ${settings?.ocrPrompt || ""}
 
   function exportToCSV() {
     if (!rows.length) return;
-    
+
     const csvHeaders = selectedColumns.join(",");
-    const csvRows = rows.map(r => 
+    const csvRows = rows.map(r =>
       selectedColumns.map(col => {
         const val = String(r[col] || "");
         return val.includes(",") ? `"${val}"` : val;
       }).join(",")
     );
-    
+
     const csv = [csvHeaders, ...csvRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -472,7 +442,7 @@ ${settings?.ocrPrompt || ""}
     a.download = `scan_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    
+
     setMsg("✓ Eksporditud CSV-sse.");
   }
 
@@ -481,11 +451,9 @@ ${settings?.ocrPrompt || ""}
   const notFoundRows = rows.filter(r => r._foundInModel === false).length;
   const foundRows = rows.filter(r => r._foundInModel === true).length;
   const qtyMismatchRows = rows.filter(r => r._warning?.includes("ei vasta")).length;
-
   const displayColumns = useMemo(() => {
     return selectedColumns.length > 0 ? selectedColumns : headers;
   }, [selectedColumns, headers]);
-
   const previewMarks = useMemo(() => {
     const marks: string[] = [];
     if (!markKey || !qtyKey) return marks;
@@ -498,7 +466,6 @@ ${settings?.ocrPrompt || ""}
     }
     return marks;
   }, [rows, markKey, qtyKey]);
-
   const totalSheetQty = useMemo(() => {
     if (!qtyKey) return 0;
     return rows.reduce((sum, r) => {
@@ -506,7 +473,6 @@ ${settings?.ocrPrompt || ""}
       return sum + qty;
     }, 0);
   }, [rows, qtyKey]);
-
   const totalModelQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + (r._modelQuantity || 0), 0);
   }, [rows]);
@@ -528,7 +494,7 @@ ${settings?.ocrPrompt || ""}
       const confirmed = window.confirm(`⚠️ ${notFoundRows} ei leitud mudelist! Jätka ikkagi?`);
       if (!confirmed) return;
     }
-    
+
     if (onConfirm) {
       onConfirm(previewMarks, rows, markKey, qtyKey);
     }
@@ -549,6 +515,66 @@ T5.11.MG2005\t2`;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+      {/* API võtme nupp */}
+      <button
+        style={{ padding: "6px 12px", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+        onClick={() => setShowApiKeyModal(true)}
+      >
+        ⚙️ API võti
+      </button>
+
+      {/* API võtme modaal */}
+      {showApiKeyModal && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: "#fff",
+            borderRadius: 8,
+            padding: 20,
+            maxWidth: 400,
+            width: "90%",
+            boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
+          }}>
+            <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>🔑 Sisesta OpenAI API võti</h3>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-..."
+              style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
+            />
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button
+                onClick={() => {
+                  localStorage.setItem('openai_api_key', apiKey);
+                  setShowApiKeyModal(false);
+                  setMsg("✅ API võti salvestatud.");
+                }}
+                style={{ flex: 1, padding: "8px", background: "#10b981", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+              >
+                Salvesta
+              </button>
+              <button
+                onClick={() => setShowApiKeyModal(false)}
+                style={{ flex: 1, padding: "8px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+              >
+                Tühista
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sisend */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -562,7 +588,7 @@ T5.11.MG2005\t2`;
               style={{ fontSize: 12, width: "100%" }}
             />
           </div>
-          
+
           <div>
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>📷 Pildista</label>
             <input
@@ -573,7 +599,7 @@ T5.11.MG2005\t2`;
               onChange={(e) => handleFileSelect(e.target.files)}
               style={{ display: "none" }}
             />
-            <button 
+            <button
               style={{ width: "100%", padding: "6px 12px", background: "#d1fae5", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
               onClick={() => cameraInputRef.current?.click()}
             >
@@ -581,17 +607,15 @@ T5.11.MG2005\t2`;
             </button>
           </div>
         </div>
-
         {imagePreview && (
           <div>
-            <img 
-              src={imagePreview} 
-              alt="Preview" 
-              style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 6, border: "1px solid #e5e7eb" }} 
+            <img
+              src={imagePreview}
+              alt="Preview"
+              style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 6, border: "1px solid #e5e7eb" }}
             />
           </div>
         )}
-
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Veerud</label>
           <input
@@ -604,7 +628,7 @@ T5.11.MG2005\t2`;
             Sisesta koma eraldatult või numbritena: '1, 2, 3'
           </div>
         </div>
-        
+
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Või kleebi tekst</label>
           <textarea
@@ -614,23 +638,22 @@ T5.11.MG2005\t2`;
             placeholder="Tekst..."
           />
         </div>
-
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button 
-            style={{ padding: "6px 12px", background: "#10b981", color: "#fff", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }} 
-            disabled={busy} 
+          <button
+            style={{ padding: "6px 12px", background: "#10b981", color: "#fff", border: "1px solid #10b981", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+            disabled={busy}
             onClick={runOcr}
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
           </button>
-          
-          <button 
+
+          <button
             style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             onClick={loadSampleData}
           >
             📋 Näidis
           </button>
-          
+
           <button
             style={{ padding: "6px 12px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
             onClick={() => {
@@ -643,7 +666,7 @@ T5.11.MG2005\t2`;
           >
             ⚡ Parsi
           </button>
-          
+
           <button
             style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             onClick={() => {
@@ -661,21 +684,19 @@ T5.11.MG2005\t2`;
             🗑️ Tühjenda
           </button>
         </div>
-
         {msg && (
-          <div style={{ 
-            padding: "8px 12px", 
-            borderRadius: 6, 
+          <div style={{
+            padding: "8px 12px",
+            borderRadius: 6,
             fontSize: 13,
-            ...(msg.includes("❌") ? { background: "#ffebee", border: "1px solid #ef9a9a" } : 
-                msg.includes("✅") || msg.includes("✓") ? { background: "#e8f5e9", border: "1px solid #a5d6a7" } : 
+            ...(msg.includes("❌") ? { background: "#ffebee", border: "1px solid #ef9a9a" } :
+                msg.includes("✅") || msg.includes("✓") ? { background: "#e8f5e9", border: "1px solid #a5d6a7" } :
                 { background: "#f9fafb", border: "1px solid #e5e7eb" })
           }}>
             {msg}
           </div>
         )}
       </div>
-
       {/* Find & Replace Modal */}
       {showFindReplace && (
         <div style={{
@@ -699,7 +720,7 @@ T5.11.MG2005\t2`;
             boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
           }}>
             <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>🔄 Otsi ja asenda</h3>
-            
+
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Otsi</label>
               <input
@@ -709,7 +730,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
               />
             </div>
-            
+
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Asenda</label>
               <input
@@ -719,7 +740,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
               />
             </div>
-            
+
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
@@ -737,58 +758,57 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
       {/* Tabel */}
       {rows.length > 0 && (
         <div style={{ border: "1px solid #edf0f4", borderRadius: 8, padding: 12, background: "#fafbfc" }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             <div>
               <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mark veerg</div>
-              <select 
-                value={markKey} 
-                onChange={(e) => setMarkKey(e.target.value)} 
+              <select
+                value={markKey}
+                onChange={(e) => setMarkKey(e.target.value)}
                 style={{ padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 4, fontSize: 12 }}
               >
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-            
+
             <div>
               <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Kogus veerg</div>
-              <select 
-                value={qtyKey} 
-                onChange={(e) => setQtyKey(e.target.value)} 
+              <select
+                value={qtyKey}
+                onChange={(e) => setQtyKey(e.target.value)}
                 style={{ padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 4, fontSize: 12 }}
               >
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-            
+
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button 
+              <button
                 style={{ padding: "6px 12px", background: "#7c3aed", color: "#fff", border: "1px solid #7c3aed", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={searchingModel}
                 onClick={searchInModel}
               >
                 {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
               </button>
-              
-              <button 
+
+              <button
                 style={{ padding: "6px 12px", background: "#f59e0b", color: "#fff", border: "1px solid #f59e0b", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={!modelObjects.length}
                 onClick={selectInModel}
               >
                 🎯 Selecti mudelist
               </button>
-              
-              <button 
+
+              <button
                 style={{ padding: "6px 12px", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
-              
-              <button 
+
+              <button
                 style={{ padding: "6px 12px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={exportToCSV}
               >
@@ -796,16 +816,15 @@ T5.11.MG2005\t2`;
               </button>
             </div>
           </div>
-
           {/* Column selector */}
           <div style={{ marginBottom: 12, padding: 8, background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
             <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, opacity: 0.7 }}>Näidatavad veerud:</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {headers.map((h) => (
                 <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
-                  <input 
-                    type="checkbox" 
-                    checked={selectedColumns.includes(h)} 
+                  <input
+                    type="checkbox"
+                    checked={selectedColumns.includes(h)}
                     onChange={() => toggleColumn(h)}
                   />
                   <span>{h}</span>
@@ -813,54 +832,53 @@ T5.11.MG2005\t2`;
               ))}
             </div>
           </div>
-
           {/* Statistics */}
-          <div style={{ 
-            display: "grid", 
-            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", 
-            gap: 8, 
-            marginBottom: 12 
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+            gap: 8,
+            marginBottom: 12
           }}>
             <div style={{ padding: 8, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, fontSize: 12 }}>
               <div style={{ fontWeight: 600, color: "#1e40af" }}>📊 Ridu kokku</div>
               <div style={{ fontSize: 18, fontWeight: 700, color: "#1e40af" }}>{totalRows}</div>
             </div>
-            
+
             {foundRows > 0 && (
               <div style={{ padding: 8, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#15803d" }}>✅ Leitud</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#15803d" }}>{foundRows}</div>
               </div>
             )}
-            
+
             {notFoundRows > 0 && (
               <div style={{ padding: 8, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#c2410c" }}>❌ Ei leitud</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#c2410c" }}>{notFoundRows}</div>
               </div>
             )}
-            
+
             {warningRows > 0 && (
               <div style={{ padding: 8, background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#dc2626" }}>⚠️ Hoiatused</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#dc2626" }}>{warningRows}</div>
               </div>
             )}
-            
+
             {qtyKey && totalSheetQty > 0 && (
               <div style={{ padding: 8, background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#92400e" }}>📋 Saateleht</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#92400e" }}>{totalSheetQty} tk</div>
               </div>
             )}
-            
+
             {totalModelQty > 0 && (
               <div style={{ padding: 8, background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#6b21a8" }}>🏗️ Mudel</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#6b21a8" }}>{totalModelQty} tk</div>
               </div>
             )}
-            
+
             {qtyMismatchRows > 0 && (
               <div style={{ padding: 8, background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, color: "#ea580c" }}>⚠️ Erinevused</div>
@@ -868,7 +886,6 @@ T5.11.MG2005\t2`;
               </div>
             )}
           </div>
-
           <div style={{ overflow: "auto", maxHeight: 400, border: "1px solid #e5e7eb", borderRadius: 6 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
@@ -892,7 +909,7 @@ T5.11.MG2005\t2`;
                   const found = r._foundInModel === true;
                   const qtyMismatch = r._warning?.includes("ei vasta");
                   const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? "#fff" : "#fafafa");
-                  
+
                   return (
                     <tr key={idx} style={{ background: rowBg }}>
                       <td style={{ padding: "4px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
@@ -932,9 +949,8 @@ T5.11.MG2005\t2`;
               </tbody>
             </table>
           </div>
-
           <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
-            <button 
+            <button
               style={{ padding: "6px 12px", background: "transparent", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
               onClick={addRow}
             >
@@ -944,20 +960,19 @@ T5.11.MG2005\t2`;
               Otsingusse: <strong>{previewMarks.length}</strong> kirjet
             </div>
           </div>
-
           <div style={{ marginTop: 12 }}>
-            <button 
-              style={{ 
-                width: "100%", 
-                padding: "12px", 
-                background: (warningRows > 0 || notFoundRows > 0) ? "#d1d5db" : "#10b981", 
-                color: "#fff", 
-                border: "none", 
-                borderRadius: 6, 
-                cursor: (warningRows > 0 || notFoundRows > 0) ? "not-allowed" : "pointer", 
-                fontSize: 14, 
-                fontWeight: 600 
-              }} 
+            <button
+              style={{
+                width: "100%",
+                padding: "12px",
+                background: (warningRows > 0 || notFoundRows > 0) ? "#d1d5db" : "#10b981",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                cursor: (warningRows > 0 || notFoundRows > 0) ? "not-allowed" : "pointer",
+                fontSize: 14,
+                fontWeight: 600
+              }}
               onClick={onConfirmClick}
             >
               ✅ Kinnita ja kasuta ({previewMarks.length})
