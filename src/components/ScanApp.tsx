@@ -70,6 +70,14 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   // UUS: Modaalaknad
   const [showSearchScopeModal, setShowSearchScopeModal] = useState(false);
   const [showOcrPromptModal, setShowOcrPromptModal] = useState(false);
+  const [showAddColumnModal, setShowAddColumnModal] = useState(false);
+  const [newColumnName, setNewColumnName] = useState("");
+  const [showReorderColumnsModal, setShowReorderColumnsModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportType, setExportType] = useState<"csv" | "excel">("csv");
+  const [exportIncludeHeaders, setExportIncludeHeaders] = useState(true);
+  const [exportColumns, setExportColumns] = useState<string[]>([]);
+  const [additionalExportFields, setAdditionalExportFields] = useState<string[]>([]);
   const [searchScope, setSearchScope] = useState("scopeAll");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -410,6 +418,35 @@ Anna lühike kokkuvõte eesti keeles.`;
   function removeRow(rIdx: number) {
     setRows((prev) => prev.filter((_, i) => i !== rIdx));
   }
+  function moveRowUp(rIdx: number) {
+    if (rIdx === 0) return;
+    setRows((prev) => {
+      const next = [...prev];
+      [next[rIdx - 1], next[rIdx]] = [next[rIdx], next[rIdx - 1]];
+      return next;
+    });
+  }
+  function moveRowDown(rIdx: number) {
+    if (rIdx === rows.length - 1) return;
+    setRows((prev) => {
+      const next = [...prev];
+      [next[rIdx], next[rIdx + 1]] = [next[rIdx + 1], next[rIdx]];
+      return next;
+    });
+  }
+  function addColumn() {
+    if (!newColumnName.trim()) return;
+    setHeaders((prev) => [...prev, newColumnName]);
+    setRows((prev) => prev.map(r => ({ ...r, [newColumnName]: "" })));
+    setSelectedColumns((prev) => [...prev, newColumnName]);
+    setNewColumnName("");
+    setShowAddColumnModal(false);
+  }
+  function reorderColumns(newOrder: string[]) {
+    setHeaders(newOrder);
+    setSelectedColumns(newOrder.filter(c => selectedColumns.includes(c)));
+    setShowReorderColumnsModal(false);
+  }
   function toggleColumn(col: string) {
     setSelectedColumns(prev =>
       prev.includes(col)
@@ -450,7 +487,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("❌ Parsi esmalt tabel!");
       return;
     }
-  
+ 
     try {
       setSearchingModel(true);
       setMsg("🔍 Otsin mudelist...");
@@ -463,7 +500,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       } else {
         mos = await viewer?.getObjects?.();
       }
-    
+   
       if (!Array.isArray(mos)) {
         setMsg("❌ API viga");
         return;
@@ -473,17 +510,17 @@ Anna lühike kokkuvõte eesti keeles.`;
       const modelPromises = mos.map(async (mo) => {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
-  
+ 
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
-     
+    
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
                 let shouldCheck = false;
                 const propName = String(p?.name || "");
-              
+             
                 if (modelMarkProperty === "AssemblyMark") {
                   shouldCheck = /assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(propName);
                 } else if (modelMarkProperty === "ASSEMBLY_POS") {
@@ -518,14 +555,14 @@ Anna lühike kokkuvõte eesti keeles.`;
         const mark = String(r[markKey] || "").trim();
         const modelCount = foundMarks.get(mark) || 0;
         const found = modelCount > 0;
-  
+ 
         const sheetQty = qtyKey ? parseInt(String(r[qtyKey] || "0")) || 0 : 0;
-  
+ 
         let warning = r._warning || "";
         if (found && qtyKey && modelCount !== sheetQty) {
           warning = `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
         }
-  
+ 
         const object = foundObjects.find(obj => obj.mark.toLowerCase() === mark.toLowerCase());
         return {
           ...r,
@@ -536,17 +573,17 @@ Anna lühike kokkuvõte eesti keeles.`;
           _objectId: object?.objectId
         };
       });
-    
+   
       setRows(updatedRows);
-    
+   
       if (foundObjects.length > 0) {
         setSelectedColumns(prev => [...new Set([...prev, "_modelQuantity"])]);
       }
-    
+   
       const foundCount = updatedRows.filter(r => r._foundInModel === true).length;
       const notFoundCount = updatedRows.filter(r => r._foundInModel === false).length;
       const qtyMismatch = updatedRows.filter(r => r._warning?.includes("ei vasta")).length;
-    
+   
       let resultMsg = `✓ ${foundCount} ✅ leitud, ${notFoundCount} ❌ ei leitud.`;
       if (qtyMismatch > 0) {
         resultMsg += ` ⚠️ ${qtyMismatch} koguste erinevus!`;
@@ -585,17 +622,14 @@ Anna lühike kokkuvõte eesti keeles.`;
   async function zoomToRow(row: Row) {
     const mark = String(row[markKey] || "").trim().toLowerCase();
     if (!mark) return;
-
     // Leia KÕIK sobivad objektid sama mark'iga modelObjects'st
     const matchingObjects = modelObjects.filter(obj => obj.mark.toLowerCase() === mark);
     if (matchingObjects.length === 0) {
       setMsg("❌ Pole sobivaid objekte selle mark'i jaoks.");
       return;
     }
-
     try {
       const viewer = api?.viewer;
-
       // Kogume kõik modelObjectIds (kõik sama mark'iga objektid)
       const byModel = new Map<string, number[]>();
       for (const obj of matchingObjects) {
@@ -604,42 +638,50 @@ Anna lühike kokkuvõte eesti keeles.`;
         byModel.set(obj.modelId, ids);
       }
       const modelObjectIds = Array.from(byModel.entries()).map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds }));
-
       // Märgista (selekteeri) kõik
       await viewer?.setSelection({ modelObjectIds }, 'set');
-
       // Zoomi kõigile korraga
       await viewer?.setCamera?.({ modelObjectIds }, { animationTime: 500 });
-
       setMsg(`✓ Märgistatud ja zoomitud ${matchingObjects.length} detailile mark'iga "${mark}".`);
     } catch (e: any) {
       setMsg("❌ Zoom/märgistus ebaõnnestus: " + (e?.message || String(e)));
     }
   }
-  function exportToCSV() {
+  function getExportData(row: Row, col: string) {
+    // Siin saab lisada loogika täiendavate väljade jaoks, nt GUID, PROJECT NAME
+    if (col === "GUID") return row._objectId ? String(row._objectId) : "";
+    if (col === "PROJECT NAME") return "ProjectX"; // Näidis, asenda tegelikuga kui vaja
+    return String(row[col] || "");
+  }
+  function exportData() {
     if (!rows.length) return;
-    const csvHeaders = selectedColumns.join(",");
+    const allColumns = [...exportColumns, ...additionalExportFields];
+    const csvHeaders = exportIncludeHeaders ? allColumns.join(",") : '';
     const csvRows = rows.map(r =>
-      selectedColumns.map(col => {
-        const val = String(r[col] || "");
+      allColumns.map(col => {
+        const val = getExportData(r, col);
         return val.includes(",") ? `"${val}"` : val;
       }).join(",")
     );
-    const csv = [csvHeaders, ...csvRows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    const csv = [csvHeaders, ...csvRows].filter(Boolean).join("\n");
+    const extension = exportType === "excel" ? "xls" : "csv";
+    const mime = exportType === "excel" ? "application/vnd.ms-excel" : "text/csv";
+    const blob = new Blob([csv], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `scan_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `scan_${new Date().toISOString().slice(0, 10)}.${extension}`;
     a.click();
     URL.revokeObjectURL(url);
-    setMsg("✓ Eksporditud CSV-sse.");
+    setMsg(`✓ Eksporditud ${exportType.toUpperCase()}-sse.`);
+    setShowExportModal(false);
   }
   function copyToClipboard() {
     if (!rows.length) return;
-    const csvHeaders = copyIncludeHeaders ? copyColumns.join("\t") + '\n' : '';
+    const allColumns = [...copyColumns, ...additionalExportFields];
+    const csvHeaders = copyIncludeHeaders ? allColumns.join("\t") + '\n' : '';
     const csvRows = rows.map(r =>
-      copyColumns.map(col => String(r[col] || "")).join("\t")
+      allColumns.map(col => getExportData(r, col)).join("\t")
     ).join("\n");
     const text = csvHeaders + csvRows;
     navigator.clipboard.writeText(text);
@@ -785,6 +827,19 @@ T5.11.MG2005\t2`;
     cursor: "pointer",
     fontSize: 13
   };
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>, rIdx: number, colIdx: number) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const nextRow = rIdx + 1;
+      if (nextRow < rows.length) {
+        const inputId = `input-${nextRow}-${colIdx}`;
+        const nextInput = document.getElementById(inputId) as HTMLInputElement;
+        if (nextInput) nextInput.focus();
+      }
+    }
+  }
+  const isLoading = busy || searchingModel;
+  const loadingMessage = busy ? "Palun oota... Scannime infot" : "Palun oota... Otsime detaile";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: COLORS.text }}>
       {/* Pealkiri + seaded nupp */}
@@ -905,7 +960,7 @@ T5.11.MG2005\t2`;
             Sisesta koma eraldatult või numbritena: '1, 2, 3'
           </div>
         </div>
-  
+ 
         {/* UUS: Lisa OCR juhised nupp */}
         <div>
           <button
@@ -998,7 +1053,7 @@ T5.11.MG2005\t2`;
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
           </button>
-    
+   
           {!hasInput && (
             <button
               style={{ ...btnSecondaryStyle }}
@@ -1007,7 +1062,7 @@ T5.11.MG2005\t2`;
               📋 Näidis
             </button>
           )}
-    
+   
           <button
             style={{ ...btnSecondaryStyle }}
             onClick={() => {
@@ -1020,7 +1075,7 @@ T5.11.MG2005\t2`;
           >
             ⚡ Parsi
           </button>
-    
+   
           <button
             style={{ ...btnSecondaryStyle }}
             onClick={() => {
@@ -1067,7 +1122,7 @@ T5.11.MG2005\t2`;
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
             <h3 style={modalHeadingStyle}>🔄 Otsi ja asenda</h3>
-      
+     
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Otsi</label>
               <input
@@ -1077,7 +1132,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
-      
+     
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Asenda</label>
               <input
@@ -1087,7 +1142,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
-      
+     
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
@@ -1113,7 +1168,7 @@ T5.11.MG2005\t2`;
             <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 16 }}>
               Vali otsingu ulatus ja vajuta "Otsi" nuppu.
             </p>
-          
+         
             <div style={{ marginBottom: 20 }}>
               <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeAll" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, marginBottom: 8, background: searchScope === "scopeAll" ? "#e3f2fd" : COLORS.white }}>
                 <input
@@ -1127,7 +1182,7 @@ T5.11.MG2005\t2`;
                   Otsi kõigist mudelis olevatest objektidest
                 </div>
               </label>
-            
+           
               <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeSelected" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, background: searchScope === "scopeSelected" ? "#e3f2fd" : COLORS.white }}>
                 <input
                   type="radio"
@@ -1141,7 +1196,7 @@ T5.11.MG2005\t2`;
                 </div>
               </label>
             </div>
-          
+         
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={() => {
@@ -1163,6 +1218,123 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
+      {/* Lisa veerg modal */}
+      {showAddColumnModal && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={modalHeadingStyle}>➕ Lisa veerg</h3>
+            <input
+              value={newColumnName}
+              onChange={(e) => setNewColumnName(e.target.value)}
+              placeholder="Veeru nimi"
+              style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, marginBottom: 16 }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={addColumn}
+                style={{ ...btnPrimaryStyle, flex: 1 }}
+              >
+                Lisa
+              </button>
+              <button
+                onClick={() => setShowAddColumnModal(false)}
+                style={{ ...btnSecondaryStyle, flex: 1 }}
+              >
+                Tühista
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Järjesta veerud modal */}
+      {showReorderColumnsModal && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={modalHeadingStyle}>🔄 Järjesta veerud</h3>
+            <ul style={{ listStyle: "none", padding: 0 }}>
+              {headers.map((h, idx) => (
+                <li key={h} style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ flex: 1 }}>{h}</span>
+                  <button onClick={() => {
+                    if (idx === 0) return;
+                    const newHeaders = [...headers];
+                    [newHeaders[idx - 1], newHeaders[idx]] = [newHeaders[idx], newHeaders[idx - 1]];
+                    reorderColumns(newHeaders);
+                  }}>↑</button>
+                  <button onClick={() => {
+                    if (idx === headers.length - 1) return;
+                    const newHeaders = [...headers];
+                    [newHeaders[idx], newHeaders[idx + 1]] = [newHeaders[idx + 1], newHeaders[idx]];
+                    reorderColumns(newHeaders);
+                  }}>↓</button>
+                </li>
+              ))}
+            </ul>
+            <button
+              onClick={() => setShowReorderColumnsModal(false)}
+              style={{ ...btnPrimaryStyle, width: "100%" }}
+            >
+              Valmis
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Export modal */}
+      {showExportModal && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <h3 style={modalHeadingStyle}>📥 Ekspordi</h3>
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer", marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={exportIncludeHeaders}
+                onChange={(e) => setExportIncludeHeaders(e.target.checked)}
+              />
+              <span>Kaasa päised</span>
+            </label>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Veerud</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxHeight: 200, overflowY: "auto", padding: 4 }}>
+                {headers.map((h) => (
+                  <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={exportColumns.includes(h)}
+                      onChange={() => setExportColumns(prev => prev.includes(h) ? prev.filter(c => c !== h) : [...prev, h])}
+                    />
+                    <span>{h}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Täiendavad andmed</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {["GUID", "PROJECT NAME"].map(field => (
+                  <label key={field} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={additionalExportFields.includes(field)}
+                      onChange={() => setAdditionalExportFields(prev => prev.includes(field) ? prev.filter(f => f !== field) : [...prev, field])}
+                    />
+                    <span>{field}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <button onClick={() => { setExportType("csv"); exportData(); }} style={{ ...btnPrimaryStyle, flex: 1 }}>CSV</button>
+              <button onClick={() => { setExportType("excel"); exportData(); }} style={{ ...btnPrimaryStyle, flex: 1 }}>EXCEL</button>
+            </div>
+            <button
+              onClick={() => setShowExportModal(false)}
+              style={{ ...btnSecondaryStyle, width: "100%" }}
+            >
+              Tühista
+            </button>
+          </div>
+        </div>
+      )}
       {/* Tabel */}
       {rows.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.borderLight}`, borderRadius: 8, padding: 12, background: COLORS.backgroundLight }}>
@@ -1177,7 +1349,7 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-      
+     
             <div>
               <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>Kogus veerg</div>
               <select
@@ -1188,7 +1360,7 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-      
+     
             <div>
               <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>
                 Mudeli property <span title="Vali atribuut mudelist, nt 'AssemblyMark' mark'i sobitamiseks.">ℹ️</span>
@@ -1205,7 +1377,7 @@ T5.11.MG2005\t2`;
                 <option value="ID">ID</option>
               </select>
             </div>
-      
+     
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
               {/* Otsi mudelist modal nupp */}
               <button
@@ -1215,7 +1387,7 @@ T5.11.MG2005\t2`;
               >
                 {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
               </button>
-        
+       
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12, background: COLORS.secondary, color: COLORS.white, border: "none" }}
                 disabled={!modelObjects.length}
@@ -1223,37 +1395,54 @@ T5.11.MG2005\t2`;
               >
                 🎯 Selecti mudelist
               </button>
-        
+       
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
-        
+       
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
-                onClick={exportToCSV}
+                onClick={() => {
+                  setExportColumns([...headers]);
+                  setAdditionalExportFields([]);
+                  setShowExportModal(true);
+                }}
               >
-                📥 CSV
+                📥 Eksport
               </button>
-            
+           
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => {
                   setCopyColumns([...headers]);
+                  setAdditionalExportFields([]);
                   setShowCopyModal(true);
                 }}
               >
                 📋 Kopeeri
               </button>
-            
+           
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={initSaveView}
                 disabled={!modelObjects.length}
               >
                 💾 Salvesta
+              </button>
+              <button
+                style={{ ...btnSecondaryStyle, fontSize: 12 }}
+                onClick={() => setShowAddColumnModal(true)}
+              >
+                ➕ Lisa veerg
+              </button>
+              <button
+                style={{ ...btnSecondaryStyle, fontSize: 12 }}
+                onClick={() => setShowReorderColumnsModal(true)}
+              >
+                🔄 Järjesta veerud
               </button>
             </div>
           </div>
@@ -1285,42 +1474,42 @@ T5.11.MG2005\t2`;
               <div style={{ fontWeight: 500, color: "#1e40af" }}>📋 Rid. kokku</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#1e40af" }}>{totalRows}</div>
             </div>
-      
+     
             {foundRows > 0 && (
               <div style={{ padding: "6px 10px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#15803d" }}>✅ Leitud</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#15803d" }}>{foundRows}</div>
               </div>
             )}
-      
+     
             {notFoundRows > 0 && (
               <div style={{ padding: "6px 10px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#c2410c" }}>❌ Ei leitud</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#c2410c" }}>{notFoundRows}</div>
               </div>
             )}
-      
+     
             {warningRows > 0 && (
               <div style={{ padding: "6px 10px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#dc2626" }}>⚠️ Hoiat.</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#dc2626" }}>{warningRows}</div>
               </div>
             )}
-      
+     
             {qtyKey && totalSheetQty > 0 && (
               <div style={{ padding: "6px 10px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#92400e" }}>📄 Saateleht</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e" }}>{totalSheetQty} tk</div>
               </div>
             )}
-      
+     
             {totalModelQty > 0 && (
               <div style={{ padding: "6px 10px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#6b21a8" }}>🏗️ Mudel</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#6b21a8" }}>{totalModelQty} tk</div>
               </div>
             )}
-      
+     
             {qtyMismatchRows > 0 && (
               <div style={{ padding: "6px 10px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#ea580c" }}>⚠️ Erinev.</div>
@@ -1328,18 +1517,17 @@ T5.11.MG2005\t2`;
               </div>
             )}
           </div>
-          <div style={{ overflow: "auto", maxHeight: 400, border: `1px solid ${COLORS.borderLight}`, borderRadius: 6 }}>
+          <div style={{ overflow: "auto", border: `1px solid ${COLORS.borderLight}`, borderRadius: 6 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10 }}>#</th>
-                  <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, width: 40, zIndex: 10 }}>✓</th>
+                  <th style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10, width: "30px" }}>#</th>
+                  <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, width: "40px", zIndex: 10 }}>✓</th>
                   {displayColumns.map((key) => (
-                    <th key={key} style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10 }}>
-                      {key}
+                    <th key={key} style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10, ...(key === "_modelQuantity" ? { width: "60px" } : {}) }}>
+                      {key === "_modelQuantity" ? "KOGUS mudelis" : key}
                       {key === markKey && " 🔖"}
                       {key === qtyKey && " 🔢"}
-                      {key === "_modelQuantity" && " (Kogus mudelis)"}
                     </th>
                   ))}
                   <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, width: 100, zIndex: 10 }}>-</th>
@@ -1351,18 +1539,20 @@ T5.11.MG2005\t2`;
                   const notFound = r._foundInModel === false;
                   const found = r._foundInModel === true;
                   const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? COLORS.white : "#fafafa");
-            
+           
                   return (
                     <tr key={idx} style={{ background: rowBg }}>
                       <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
                       <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", fontSize: 14 }} title={r._warning}>
                         {hasWarning ? "⚠️" : notFound ? "❌" : found ? "✅" : ""}
                       </td>
-                      {displayColumns.map((key) => (
+                      {displayColumns.map((key, colIdx) => (
                         <td key={key} style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}` }}>
                           <input
+                            id={`input-${idx}-${colIdx}`}
                             value={r[key] || ""}
                             onChange={(e) => changeCell(idx, key, e.target.value)}
+                            onKeyDown={(e) => handleKeyDown(e, idx, colIdx)}
                             style={{
                               width: "100%",
                               padding: "4px 6px",
@@ -1378,6 +1568,18 @@ T5.11.MG2005\t2`;
                         </td>
                       ))}
                       <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center" }}>
+                        <button
+                          onClick={() => moveRowUp(idx)}
+                          style={{ padding: "3px 8px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginRight: 4 }}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          onClick={() => moveRowDown(idx)}
+                          style={{ padding: "3px 8px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginRight: 4 }}
+                        >
+                          ↓
+                        </button>
                         <button
                           onClick={() => removeRow(idx)}
                           style={{ padding: "3px 8px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer", fontSize: 11 }}
@@ -1493,6 +1695,21 @@ T5.11.MG2005\t2`;
                 ))}
               </div>
             </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Täiendavad andmed</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {["GUID", "PROJECT NAME"].map(field => (
+                  <label key={field} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={additionalExportFields.includes(field)}
+                      onChange={() => setAdditionalExportFields(prev => prev.includes(field) ? prev.filter(f => f !== field) : [...prev, field])}
+                    />
+                    <span>{field}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={copyToClipboard}
@@ -1508,6 +1725,13 @@ T5.11.MG2005\t2`;
                 Tühista
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {isLoading && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1001 }}>
+          <div style={{ background: COLORS.white, padding: 20, borderRadius: 10, fontSize: 16, fontWeight: 600, color: COLORS.text }}>
+            {loadingMessage}
           </div>
         </div>
       )}
