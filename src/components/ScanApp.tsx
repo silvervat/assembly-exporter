@@ -54,6 +54,8 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [copyColumns, setCopyColumns] = useState<string[]>([]);
   const [modelMarkProperty, setModelMarkProperty] = useState("tekla_assembly.assemblycast_unit_mark"); // Väiketähtedega regex'i jaoks
   const [rowCountWarning, setRowCountWarning] = useState("");
+  const [showSearchScopePopup, setShowSearchScopePopup] = useState(false); // Uus: popup ulatuse valikuks
+  const [searchScope, setSearchScope] = useState("scopeAll"); // Uus: ulatus, vaikimisi "Kõik saadaval"
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -184,14 +186,11 @@ ${settings?.ocrPrompt || ""}
     }
   }
 
-  async function getOcrFeedback(text: string): Promise<string> {
+  async function verifyRowCount(text: string): Promise<string> {
     if (!apiKey) return "";
-    const prompt = `Analüüsi seda OCR tulemust (TSV formaat): ${text}
-Hinda:
-1. Kas dokument oli hästi loetav? (nt pilt kvaliteet, font, skaneerimine)
-2. Kas said kõigist ridadest ilusti aru? Kui mitte, millised probleemid?
-3. Kas soovitad uuesti scanida lisajuhistega (nt parem valgustus, täpsem prompt)?
-Anna lühike kokkuvõte eesti keeles.`;
+    const prompt = `Analüüsi seda TSV teksti: ${text}
+Loenda read (välja arvatud päis). Kui on ekstra ridu või puuduvad read, anna hoiatus. Tagasta: "OK, ridu: X" või "Hoiatus: ekstra Y rida".`;
+
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -210,6 +209,43 @@ Anna lühike kokkuvõte eesti keeles.`;
           max_tokens: 300,
         })
       });
+
+      if (!response.ok) return "Kontroll ebaõnnestus.";
+      const data = await response.json();
+      return data.choices[0]?.message?.content || "";
+    } catch {
+      return "Kontroll ebaõnnestus.";
+    }
+  }
+
+  async function getOcrFeedback(text: string): Promise<string> {
+    if (!apiKey) return "";
+    const prompt = `Analüüsi seda OCR tulemust (TSV formaat): ${text}
+Hinda:
+1. Kas dokument oli hästi loetav? (nt pilt kvaliteet, font, skaneerimine)
+2. Kas said kõigist ridadest ilusti aru? Kui mitte, millised probleemid?
+3. Kas soovitad uuesti scanida lisajuhistega (nt parem valgustus, täpsem prompt)?
+Anna lühike kokkuvõte eesti keeles.`;
+
+    try {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          max_tokens: 300,
+        })
+      });
+
       if (!response.ok) return "";
       const data = await response.json();
       return data.choices[0]?.message?.content || "";
@@ -237,10 +273,12 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("🔍 OCR töötab...");
       const base64 = await fileToBase64(files[0]);
       const text = await runGptOcr(base64);
+      const rowCheck = await verifyRowCount(text);
+      setRowCountWarning(rowCheck);
       setRawText(text);
       const feedback = await getOcrFeedback(text);
       setOcrFeedback(feedback);
-      setMsg(`✅ OCR valmis! Vajuta 'Parsi tabelisse'.\n\nTagasiside: ${feedback}`);
+      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside: ${feedback}`);
     } catch (e: any) {
       setMsg("❌ Viga: " + (e?.message || String(e)));
     } finally {
@@ -404,8 +442,13 @@ Anna lühike kokkuvõte eesti keeles.`;
       const viewer = api?.viewer;
       const marks = rows.map(r => String(r[markKey] || "").trim()).filter(Boolean);
       const uniqueMarks = [...new Set(marks)];
-   
-      const mos = await viewer?.getObjects();
+  
+      let mos;
+      if (searchScope === "scopeSelected") {
+        mos = await viewer?.getSelectedObjects();  // Valitud objektid
+      } else {
+        mos = await viewer?.getObjects();  // Kõik saadaval
+      }
       if (!Array.isArray(mos)) {
         setMsg("❌ API viga");
         setSearchingModel(false);
@@ -416,18 +459,17 @@ Anna lühike kokkuvõte eesti keeles.`;
       for (const mo of mos) {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
-     
+    
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
-          console.log('API response for model', modelId, fullProperties);  // Logi API tagastus kontrolliks
        
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                if (/tekla_assembly\.assemblycast_unit_mark/i.test(String(p?.name))) {  // Regex case-insensitive, nagu originaalis
+                if (/tekla_assembly\.assemblycast_unit_mark/i.test(String(p?.name))) {
                   const val = String(p?.value || p?.displayValue || "").trim();
-                  if (uniqueMarks.some(m => val.toLowerCase() === m.toLowerCase())) {  // Case-insensitive täpne match
+                  if (uniqueMarks.some(m => val.toLowerCase() === m.toLowerCase())) {
                     const count = foundMarks.get(val) || 0;
                     foundMarks.set(val, count + 1);
                     foundObjects.push({ modelId, objectId: obj.id, mark: val });
@@ -440,20 +482,19 @@ Anna lühike kokkuvõte eesti keeles.`;
           console.warn(`Model ${modelId} error:`, e);
         }
       }
-      console.log('Found marks:', foundMarks);  // Logi leitud mark'id
       setModelObjects(foundObjects);
       const updatedRows = rows.map(r => {
         const mark = String(r[markKey] || "").trim();
         const modelCount = foundMarks.get(mark) || 0;
         const found = modelCount > 0;
-     
+    
         const sheetQty = qtyKey ? parseInt(String(r[qtyKey] || "0")) || 0 : 0;
-     
+    
         let warning = r._warning || "";
         if (found && qtyKey && modelCount !== sheetQty) {
           warning = `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
         }
-     
+    
         const object = foundObjects.find(obj => obj.mark.toLowerCase() === mark.toLowerCase());
         return {
           ...r,
@@ -490,7 +531,7 @@ Anna lühike kokkuvõte eesti keeles.`;
     }
     try {
       const viewer = api?.viewer;
-   
+  
       const byModel = new Map<string, number[]>();
       for (const obj of modelObjects) {
         const ids = byModel.get(obj.modelId) || [];
@@ -519,7 +560,6 @@ Anna lühike kokkuvõte eesti keeles.`;
 
   function exportToCSV() {
     if (!rows.length) return;
- 
     const csvHeaders = selectedColumns.join(",");
     const csvRows = rows.map(r =>
       selectedColumns.map(col => {
@@ -527,7 +567,6 @@ Anna lühike kokkuvõte eesti keeles.`;
         return val.includes(",") ? `"${val}"` : val;
       }).join(",")
     );
- 
     const csv = [csvHeaders, ...csvRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -536,7 +575,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     a.download = `scan_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
- 
     setMsg("✓ Eksporditud CSV-sse.");
   }
 
@@ -600,7 +638,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       const confirmed = window.confirm(`⚠️ ${notFoundRows} ei leitud mudelist! Jätka ikkagi?`);
       if (!confirmed) return;
     }
- 
     if (onConfirm) {
       onConfirm(previewMarks, rows, markKey, qtyKey);
     }
@@ -651,6 +688,38 @@ T5.11.MG2005\t2`;
   };
 
   const hasInput = files.length > 0 || rawText.trim().length > 0;
+
+  // Uus: Popup ulatuse valikuks
+  const renderSearchScopePopup = () => (
+    <div style={{
+      position: "absolute",
+      zIndex: 100,
+      background: "#fff",
+      border: "1px solid #cfd6df",
+      borderRadius: 6,
+      padding: 8,
+      boxShadow: "0 6px 16px rgba(0,0,0,0.04)",
+    }}>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Otsi ulatus:</div>
+      <label style={{ display: "block", cursor: "pointer" }}>
+        <input type="radio" checked={searchScope === "scopeAll"} onChange={() => setSearchScope("scopeAll")} />
+        Kõik saadaval
+      </label>
+      <label style={{ display: "block", cursor: "pointer" }}>
+        <input type="radio" checked={searchScope === "scopeSelected"} onChange={() => setSearchScope("scopeSelected")} />
+        Valitud
+      </label>
+      <button
+        style={{ marginTop: 8, padding: "4px 8px", background: "#333", color: "#fff", borderRadius: 4 }}
+        onClick={() => {
+          setShowSearchScopePopup(false);
+          searchInModel();
+        }}
+      >
+        Otsi
+      </button>
+    </div>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
@@ -798,7 +867,7 @@ T5.11.MG2005\t2`;
             Sisesta koma eraldatult või numbritena: '1, 2, 3'
           </div>
         </div>
-     
+    
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Lisa OCR juhised <span title="Lisa täiendavad juhised OCR-ile, nt 'Tunnusta ainult numbrid ja tähed, ignoreeri jooni'.">ℹ️</span></label>
           <textarea
@@ -825,7 +894,7 @@ T5.11.MG2005\t2`;
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
           </button>
-       
+      
           {!hasInput && (
             <button
               style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
@@ -834,7 +903,7 @@ T5.11.MG2005\t2`;
               📋 Näidis
             </button>
           )}
-       
+      
           <button
             style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
             onClick={() => {
@@ -847,7 +916,7 @@ T5.11.MG2005\t2`;
           >
             ⚡ Parsi
           </button>
-       
+      
           <button
             style={{ padding: "6px 12px", background: "#eee", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
             onClick={() => {
@@ -918,7 +987,7 @@ T5.11.MG2005\t2`;
             boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
           }}>
             <h3 style={{ margin: "0 0 16px 0", fontSize: 18, fontWeight: 600 }}>🔄 Otsi ja asenda</h3>
-         
+        
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Otsi</label>
               <input
@@ -928,7 +997,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
               />
             </div>
-         
+        
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Asenda</label>
               <input
@@ -938,7 +1007,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
               />
             </div>
-         
+        
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
@@ -970,7 +1039,7 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-         
+        
             <div>
               <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Kogus veerg</div>
               <select
@@ -981,7 +1050,7 @@ T5.11.MG2005\t2`;
                 {headers.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-         
+        
             <div>
               <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Mudeli property <span title="Vali atribuut mudelist, nt 'Tekla_Assembly.AssemblyCast_unit_Mark' mark'i sobitamiseks.">ℹ️</span></div>
               <select
@@ -996,16 +1065,17 @@ T5.11.MG2005\t2`;
                 <option value="ID">ID</option>
               </select>
             </div>
-         
+        
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button
                 style={{ padding: "6px 12px", background: "#333", color: "#fff", border: "1px solid #333", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={searchingModel}
-                onClick={searchInModel}
+                onClick={() => setShowSearchScopePopup(true)} // Uus: avab popup'i
               >
                 {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
               </button>
-           
+              {showSearchScopePopup && renderSearchScopePopup()}
+          
               <button
                 style={{ padding: "6px 12px", background: "#555", color: "#fff", border: "1px solid #555", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 disabled={!modelObjects.length}
@@ -1013,14 +1083,14 @@ T5.11.MG2005\t2`;
               >
                 🎯 Selecti mudelist
               </button>
-           
+          
               <button
                 style={{ padding: "6px 12px", background: "#777", color: "#fff", border: "1px solid #777", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
-           
+          
               <button
                 style={{ padding: "6px 12px", background: "#aaa", color: "#fff", border: "1px solid #aaa", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                 onClick={exportToCSV}
@@ -1070,42 +1140,42 @@ T5.11.MG2005\t2`;
               <div style={{ fontWeight: 500, color: "#1e40af" }}>📋 Rid. kokku</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#1e40af" }}>{totalRows}</div>
             </div>
-         
+        
             {foundRows > 0 && (
               <div style={{ padding: "4px 8px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#15803d" }}>✅ Leitud</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#15803d" }}>{foundRows}</div>
               </div>
             )}
-         
+        
             {notFoundRows > 0 && (
               <div style={{ padding: "4px 8px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#c2410c" }}>❌ Ei leitud</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#c2410c" }}>{notFoundRows}</div>
               </div>
             )}
-         
+        
             {warningRows > 0 && (
               <div style={{ padding: "4px 8px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#dc2626" }}>⚠️ Hoiat.</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#dc2626" }}>{warningRows}</div>
               </div>
             )}
-         
+        
             {qtyKey && totalSheetQty > 0 && (
               <div style={{ padding: "4px 8px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#92400e" }}>📄 Saateleht</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e" }}>{totalSheetQty} tk</div>
               </div>
             )}
-         
+        
             {totalModelQty > 0 && (
               <div style={{ padding: "4px 8px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#6b21a8" }}>🏗️ Mudel</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#6b21a8" }}>{totalModelQty} tk</div>
               </div>
             )}
-         
+        
             {qtyMismatchRows > 0 && (
               <div style={{ padding: "4px 8px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
                 <div style={{ fontWeight: 500, color: "#ea580c" }}>⚠️ Erinev.</div>
@@ -1137,7 +1207,7 @@ T5.11.MG2005\t2`;
                   const found = r._foundInModel === true;
                   const qtyMismatch = r._warning?.includes("ei vasta");
                   const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? "#fff" : "#fafafa");
-               
+              
                   return (
                     <tr key={idx} style={{ background: rowBg }}>
                       <td style={{ padding: "4px 6px", borderBottom: "1px solid #f3f4f6", textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
