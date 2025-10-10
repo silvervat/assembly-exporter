@@ -169,6 +169,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [imagePreview, setImagePreview] = useState<string>("");
   const [searchingModel, setSearchingModel] = useState(false);
   const [targetColumns, setTargetColumns] = useState("Component, Pcs");
+  const [tempColumn, setTempColumn] = useState("");
   const [showFindReplace, setShowFindReplace] = useState(false);
   const [findText, setFindText] = useState("");
   const [replaceText, setReplaceText] = useState("");
@@ -686,7 +687,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("⛔ Parsi esmalt tabel!");
       return;
     }
-
     try {
       setSearchingModel(true);
       setMsg("🔍 Otsin mudelist...");
@@ -699,7 +699,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       } else {
         mos = await viewer?.getObjects?.();
       }
-
       if (!Array.isArray(mos)) {
         setMsg("⛔ API viga");
         return;
@@ -709,10 +708,8 @@ Anna lühike kokkuvõte eesti keeles.`;
       const modelPromises = mos.map(async (mo) => {
         const modelId = String(mo.modelId);
         const objectRuntimeIds = (mo.objects || []).map((o: any) => Number(o?.id)).filter((n: number) => Number.isFinite(n));
-
         try {
           const fullProperties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
-
           for (const obj of fullProperties) {
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
@@ -741,14 +738,11 @@ Anna lühike kokkuvõte eesti keeles.`;
         const mark = String(r[markKey] || "").trim();
         const modelCount = foundMarks.get(mark) || 0;
         const found = modelCount > 0;
-
         const sheetQty = qtyKey ? parseInt(String(r[qtyKey] || "0")) || 0 : 0;
-
         let warning = r._warning || "";
         if (found && qtyKey && modelCount !== sheetQty) {
           warning = `⚠️ Kogus ei vasta: mudel ${modelCount}, saateleht ${sheetQty}`;
         }
-
         const object = foundObjects.find(obj => obj.mark.toLowerCase() === mark.toLowerCase());
         return {
           ...r,
@@ -759,17 +753,13 @@ Anna lühike kokkuvõte eesti keeles.`;
           _objectId: object?.objectId
         };
       });
-
       setRows(updatedRows);
-
       if (foundObjects.length > 0) {
         setSelectedColumns(prev => [...new Set([...prev, "_modelQuantity"])]);
       }
-
       const foundCount = updatedRows.filter(r => r._foundInModel === true).length;
       const notFoundCount = updatedRows.filter(r => r._foundInModel === false).length;
       const qtyMismatch = updatedRows.filter(r => r._warning?.includes("ei vasta")).length;
-
       let resultMsg = `✓ ${foundCount} ✅ leitud, ${notFoundCount} ⛔ ei leitud.`;
       if (qtyMismatch > 0) {
         resultMsg += ` ⚠️ ${qtyMismatch} koguste erinevus!`;
@@ -1059,7 +1049,6 @@ T5.11.MG2005\t2`;
           ⚙️ Seaded
         </button>
       </div>
-
       {/* API võtme modal UUENDATUD */}
       {showApiKeyModal && (
         <div style={modalOverlayStyle}>
@@ -1067,11 +1056,11 @@ T5.11.MG2005\t2`;
             <h3 style={modalHeadingStyle}>🔑 OpenAI API võti</h3>
             
             {!apiKey && (
-              <div style={{ 
-                padding: "12px", 
-                background: "#e7f3ff", 
-                border: "1px solid #1E88E5", 
-                borderRadius: 6, 
+              <div style={{
+                padding: "12px",
+                background: "#e7f3ff",
+                border: "1px solid #1E88E5",
+                borderRadius: 6,
                 marginBottom: 16,
                 fontSize: 13,
                 lineHeight: 1.5
@@ -1117,7 +1106,6 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <input
           ref={fileInputRef}
@@ -1139,11 +1127,11 @@ T5.11.MG2005\t2`;
           onDrop={handleFileDrop}
           onDragOver={(e) => e.preventDefault()}
           onClick={() => fileInputRef.current?.click()}
-          style={{ 
-            border: `2px dashed ${COLORS.border}`, 
-            borderRadius: 8, 
-            padding: 20, 
-            textAlign: "center", 
+          style={{
+            border: `2px dashed ${COLORS.border}`,
+            borderRadius: 8,
+            padding: 20,
+            textAlign: "center",
             marginBottom: 8,
             cursor: "pointer",
             background: COLORS.background,
@@ -1163,7 +1151,7 @@ T5.11.MG2005\t2`;
           </div>
           <div style={{ fontSize: 11, color: COLORS.textLight }}>
             Või kleebi (Ctrl+V) • Või{" "}
-            <span 
+            <span
               className="camera-link"
               style={{ color: COLORS.secondary, textDecoration: "underline", cursor: "pointer" }}
               onClick={(e) => {
@@ -1184,7 +1172,6 @@ T5.11.MG2005\t2`;
             }
           }
         `}</style>
-
         {imagePreview && (
           <div>
             <img
@@ -1195,7 +1182,6 @@ T5.11.MG2005\t2`;
             />
           </div>
         )}
-
         {showImageModal && (
           <div style={modalOverlayStyle} onClick={() => setShowImageModal(false)}>
             <img src={imagePreview} alt="Large preview" style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: 8 }} />
@@ -1208,17 +1194,16 @@ T5.11.MG2005\t2`;
             </a>
           </div>
         )}
-
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6, color: COLORS.textLight }}>
             Veerud <span title="Kirjuta komaga eraldatud veergude nimed või numbrid">ℹ️</span>
           </label>
-          <div style={{ 
-            display: "flex", 
-            flexWrap: "wrap", 
-            gap: 6, 
-            padding: "8px", 
-            border: `1px solid ${COLORS.border}`, 
+          <div style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            padding: "8px",
+            border: `1px solid ${COLORS.border}`,
             borderRadius: 6,
             background: COLORS.white,
             minHeight: 40
@@ -1236,7 +1221,7 @@ T5.11.MG2005\t2`;
                 gap: 4
               }}>
                 {col.trim()}
-                <span 
+                <span
                   style={{ cursor: "pointer", marginLeft: 2, opacity: 0.8 }}
                   onClick={() => {
                     const cols = targetColumns.split(',').map(c => c.trim()).filter(Boolean);
@@ -1249,27 +1234,27 @@ T5.11.MG2005\t2`;
               </div>
             ))}
             <input
-              value=""
-              onChange={(e) => {}}
+              value={tempColumn}
+              onChange={(e) => setTempColumn(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                  const current = targetColumns ? targetColumns + ', ' + e.currentTarget.value : e.currentTarget.value;
+                if (e.key === 'Enter' && tempColumn.trim()) {
+                  const current = targetColumns ? targetColumns + ', ' + tempColumn : tempColumn;
                   setTargetColumns(current);
-                  e.currentTarget.value = '';
+                  setTempColumn('');
                 }
               }}
-              onBlur={(e) => {
-                if (e.currentTarget.value.trim()) {
-                  const current = targetColumns ? targetColumns + ', ' + e.currentTarget.value : e.currentTarget.value;
+              onBlur={() => {
+                if (tempColumn.trim()) {
+                  const current = targetColumns ? targetColumns + ', ' + tempColumn : tempColumn;
                   setTargetColumns(current);
-                  e.currentTarget.value = '';
+                  setTempColumn('');
                 }
               }}
               placeholder={targetColumns ? "Lisa..." : "Component, Pcs..."}
-              style={{ 
-                flex: 1, 
-                border: "none", 
-                outline: "none", 
+              style={{
+                flex: 1,
+                border: "none",
+                outline: "none",
                 fontSize: 13,
                 minWidth: 100,
                 background: "transparent"
@@ -1280,7 +1265,6 @@ T5.11.MG2005\t2`;
             Sisesta veergude nimed või vajuta Enter iga veeru järel
           </div>
         </div>
-
         <div>
           <button
             style={{
@@ -1303,7 +1287,6 @@ T5.11.MG2005\t2`;
             <span style={{ fontSize: 10, color: COLORS.textLight }}>▶</span>
           </button>
         </div>
-
         {showOcrPromptModal && (
           <div style={modalOverlayStyle}>
             <div style={modalContentStyle}>
@@ -1353,7 +1336,6 @@ T5.11.MG2005\t2`;
             </div>
           </div>
         )}
-
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>
             Või kleebi tekst <span title="Kleebi siia eelnevalt kopeeritud tekst saatelehelt või mujalt.">ℹ️</span>
@@ -1365,7 +1347,6 @@ T5.11.MG2005\t2`;
             placeholder="Tekst..."
           />
         </div>
-
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
             style={{ ...btnPrimaryStyle }}
@@ -1374,7 +1355,6 @@ T5.11.MG2005\t2`;
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
           </button>
-
           {!hasInput && (
             <button
               style={{ ...btnSecondaryStyle }}
@@ -1383,7 +1363,6 @@ T5.11.MG2005\t2`;
               📋 Näidis
             </button>
           )}
-
           <button
             style={{ ...btnSecondaryStyle }}
             onClick={() => {
@@ -1396,7 +1375,6 @@ T5.11.MG2005\t2`;
           >
             ⚡ Parsi
           </button>
-
           <button
             style={{ ...btnSecondaryStyle }}
             onClick={() => {
@@ -1414,7 +1392,6 @@ T5.11.MG2005\t2`;
             🗑️ Tühjenda
           </button>
         </div>
-
         {!apiKey && (
           <div style={{
             padding: "12px",
@@ -1426,7 +1403,6 @@ T5.11.MG2005\t2`;
             ⚠️ <strong>API võti puudub!</strong> OCR ei tööta ilma võtmeta. Vajuta üleval "⚙️ Seaded" nupule ja sisesta võti.
           </div>
         )}
-
         {msg && (
           <div style={{
             padding: "12px",
@@ -1440,12 +1416,10 @@ T5.11.MG2005\t2`;
           </div>
         )}
       </div>
-
       {showFindReplace && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
             <h3 style={modalHeadingStyle}>🔄 Otsi ja asenda</h3>
-
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Otsi</label>
               <input
@@ -1455,7 +1429,6 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
-
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Asenda</label>
               <input
@@ -1465,7 +1438,6 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
-
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
@@ -1483,7 +1455,6 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
       {showSearchScopeModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
@@ -1491,7 +1462,6 @@ T5.11.MG2005\t2`;
             <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 16 }}>
               Vali otsingu ulatus ja vajuta "Otsi" nuppu. Otsime automaatselt Kooste märgi (BLOCK) alusel.
             </p>
-
             <div style={{ marginBottom: 20 }}>
               <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeAll" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, marginBottom: 8, background: searchScope === "scopeAll" ? "#e3f2fd" : COLORS.white }}>
                 <input
@@ -1505,7 +1475,6 @@ T5.11.MG2005\t2`;
                   Otsi kõigist mudelis olevatest objektidest
                 </div>
               </label>
-
               <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeSelected" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, background: searchScope === "scopeSelected" ? "#e3f2fd" : COLORS.white }}>
                 <input
                   type="radio"
@@ -1519,7 +1488,6 @@ T5.11.MG2005\t2`;
                 </div>
               </label>
             </div>
-
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={() => {
@@ -1541,13 +1509,11 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
       {/* UUENDATUD Veerud modal - sisaldab nüüd ka Mark ja Qty valikuid */}
       {showColumnsModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
             <h3 style={modalHeadingStyle}>📊 Veergude haldamine</h3>
-
             {/* Mark ja Qty veergude valik */}
             <div style={{ marginBottom: 20, padding: 12, background: "#e7f3ff", borderRadius: 6, border: `1px solid ${COLORS.secondary}` }}>
               <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600, color: COLORS.secondary }}>🔖 Põhiveerud</h4>
@@ -1562,7 +1528,6 @@ T5.11.MG2005\t2`;
                   {headers.map((h) => <option key={h} value={h}>{h}</option>)}
                 </select>
               </div>
-
               <div>
                 <label style={{ display: "block", fontSize: 11, color: COLORS.textLight, marginBottom: 4 }}>Kogus veerg 🔢</label>
                 <select
@@ -1574,7 +1539,6 @@ T5.11.MG2005\t2`;
                 </select>
               </div>
             </div>
-
             {/* Lisa uus veerg */}
             <div style={{ marginBottom: 20, padding: 12, background: COLORS.background, borderRadius: 6 }}>
               <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600 }}>➕ Lisa veerg</h4>
@@ -1599,7 +1563,6 @@ T5.11.MG2005\t2`;
                 </button>
               </div>
             </div>
-
             {/* Kuva/Peida veerud */}
             <div style={{ marginBottom: 20, padding: 12, background: COLORS.background, borderRadius: 6 }}>
               <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600 }}>👁️ Nähtavus</h4>
@@ -1618,16 +1581,15 @@ T5.11.MG2005\t2`;
                 ))}
               </div>
             </div>
-
             {/* Kustuta ja järjesta veerud */}
             <div style={{ marginBottom: 20, padding: 12, background: COLORS.background, borderRadius: 6 }}>
               <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600 }}>🔄 Järjesta ja kustuta</h4>
               <div style={{ maxHeight: 200, overflowY: "auto" }}>
                 {headers.map((h, idx) => (
-                  <div key={h} style={{ 
-                    display: "flex", 
-                    alignItems: "center", 
-                    padding: "6px 8px", 
+                  <div key={h} style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "6px 8px",
                     marginBottom: 4,
                     background: COLORS.white,
                     borderRadius: 4,
@@ -1674,7 +1636,6 @@ T5.11.MG2005\t2`;
                 ))}
               </div>
             </div>
-
             <button
               onClick={() => setShowColumnsModal(false)}
               style={{ ...btnPrimaryStyle, width: "100%" }}
@@ -1684,8 +1645,7 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
-      {/* UUENDATUD Export modal - integratsioon AssemblyExporter stiiliga */}
+      {/* UUENDATUD Export modal - integratsioon AssemblyExporter stiil stiiliga */}
       {showExportModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
@@ -1741,7 +1701,6 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
       {/* Copy modal UUENDATUD - sama nagu export */}
       {showCopyModal && (
         <div style={modalOverlayStyle}>
@@ -1803,7 +1762,6 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
       {showViewSave && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
@@ -1833,7 +1791,6 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-
       {/* Tabel */}
       {rows.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.borderLight}`, borderRadius: 8, padding: 12, background: COLORS.backgroundLight }}>
@@ -1846,7 +1803,6 @@ T5.11.MG2005\t2`;
               >
                 {searchingModel ? "🔍..." : "🔍 Otsi"}
               </button>
-
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12, background: COLORS.secondary, color: COLORS.white, border: "none" }}
                 disabled={!modelObjects.length}
@@ -1854,14 +1810,12 @@ T5.11.MG2005\t2`;
               >
                 🎯 Selecti
               </button>
-
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
-
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => {
@@ -1872,7 +1826,6 @@ T5.11.MG2005\t2`;
               >
                 📥 Eksport
               </button>
-
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => {
@@ -1883,7 +1836,6 @@ T5.11.MG2005\t2`;
               >
                 📋 Kopeeri
               </button>
-
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={initSaveView}
@@ -1900,7 +1852,6 @@ T5.11.MG2005\t2`;
               </button>
             </div>
           </div>
-
           {/* Kompaktsem statistika */}
           <div style={{
             display: "grid",
@@ -1912,42 +1863,36 @@ T5.11.MG2005\t2`;
               <div style={{ fontWeight: 600, color: "#1e40af", fontSize: 12 }}>{totalRows}</div>
               <div style={{ color: "#1e40af" }}>Kokku</div>
             </div>
-
             {foundRows > 0 && (
               <div style={{ padding: "4px 8px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
                 <div style={{ fontWeight: 600, color: "#15803d", fontSize: 12 }}>{foundRows}</div>
                 <div style={{ color: "#15803d" }}>Leitud</div>
               </div>
             )}
-
             {notFoundRows > 0 && (
               <div style={{ padding: "4px 8px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
                 <div style={{ fontWeight: 600, color: "#c2410c", fontSize: 12 }}>{notFoundRows}</div>
                 <div style={{ color: "#c2410c" }}>Puudu</div>
               </div>
             )}
-
             {warningRows > 0 && (
               <div style={{ padding: "4px 8px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
                 <div style={{ fontWeight: 600, color: "#dc2626", fontSize: 12 }}>{warningRows}</div>
                 <div style={{ color: "#dc2626" }}>Hoiat.</div>
               </div>
             )}
-
             {qtyKey && totalSheetQty > 0 && (
               <div style={{ padding: "4px 8px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
                 <div style={{ fontWeight: 600, color: "#92400e", fontSize: 12 }}>{totalSheetQty}</div>
                 <div style={{ color: "#92400e" }}>Leht</div>
               </div>
             )}
-
             {totalModelQty > 0 && (
               <div style={{ padding: "4px 8px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
                 <div style={{ fontWeight: 600, color: "#6b21a8", fontSize: 12 }}>{totalModelQty}</div>
                 <div style={{ color: "#6b21a8" }}>Mudel</div>
               </div>
             )}
-
             {qtyMismatchRows > 0 && (
               <div style={{ padding: "4px 8px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
                 <div style={{ fontWeight: 600, color: "#ea580c", fontSize: 12 }}>{qtyMismatchRows}</div>
@@ -1955,7 +1900,6 @@ T5.11.MG2005\t2`;
               </div>
             )}
           </div>
-
           <div style={{ overflow: "auto", border: `1px solid ${COLORS.borderLight}`, borderRadius: 6 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
@@ -1963,21 +1907,20 @@ T5.11.MG2005\t2`;
                   <th style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px 4px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10, width: "25px", fontSize: 10 }}>#</th>
                   <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px 4px", background: COLORS.background, position: "sticky", top: 0, width: "30px", zIndex: 10, fontSize: 10 }}>✓</th>
                   {displayColumns.map((key) => (
-                    <th key={key} style={{ 
-                      textAlign: "left", 
-                      borderBottom: `2px solid ${COLORS.borderLight}`, 
-                      padding: "6px", 
-                      background: COLORS.background, 
-                      position: "sticky", 
-                      top: 0, 
-                      zIndex: 10, 
+                    <th key={key} style={{
+                      textAlign: "left",
+                      borderBottom: `2px solid ${COLORS.borderLight}`,
+                      padding: "6px",
+                      background: COLORS.background,
+                      position: "sticky",
+                      top: 0,
+                      zIndex: 10,
                       fontSize: 11,
-                      ...(key === markKey || key === qtyKey ? { minWidth: "60px", width: "auto" } : {}),
-                      ...(key === "_modelQuantity" ? { width: "60px" } : {}) 
+                      ...(key === markKey ? { minWidth: "60px", width: "auto" } : {}),
+                      ...(key === qtyKey ? { minWidth: "40px", width: "min-content", whiteSpace: "nowrap" } : {}),
+                      ...(key === "_modelQuantity" ? { width: "60px" } : {})
                     }}>
                       {key === "_modelQuantity" ? "M.kogus" : key}
-                      {key === markKey && " 📖"}
-                      {key === qtyKey && " 🔢"}
                     </th>
                   ))}
                   <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px 4px", background: COLORS.background, position: "sticky", top: 0, width: 90, zIndex: 10, fontSize: 10 }}>-</th>
@@ -1991,9 +1934,9 @@ T5.11.MG2005\t2`;
                   const rowBg = hasWarning ? "#fef2f2" : notFound ? "#fff7ed" : found ? "#f0fdf4" : (idx % 2 === 0 ? COLORS.white : "#fafafa");
                   const highlight = idx === movedRowIdx ? { background: "#d1fae5", transition: "background 1s ease-out" } : {};
                   return (
-                    <tr 
-                      key={idx} 
-                      draggable 
+                    <tr
+                      key={idx}
+                      draggable
                       onDragStart={(e) => handleDragStart(e, idx)}
                       onDragOver={(e) => handleDragOver(e, idx)}
                       onDrop={(e) => handleDrop(e, idx)}
