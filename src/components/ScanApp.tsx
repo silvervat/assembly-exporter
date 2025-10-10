@@ -25,7 +25,6 @@ type Props = {
 const LOCAL_STORAGE_KEY = "scanAppState";
 const DEBOUNCE_SAVE_MS = 500;
 
-// Moderniseeritud värviskeem (Trimble-inspired, aga kaasaegsem)
 const COLORS = {
   primary: "#0a3a67",
   primaryHover: "#083254",
@@ -50,7 +49,6 @@ const COLORS = {
   white: "#FFFFFF",
 };
 
-// Tooltip Component
 const Tooltip: React.FC<{ children: React.ReactNode; text: string }> = ({ children, text }) => {
   const [show, setShow] = useState(false);
   return (
@@ -96,14 +94,14 @@ const Tooltip: React.FC<{ children: React.ReactNode; text: string }> = ({ childr
   );
 };
 
-// Icon Button Component
 const IconButton: React.FC<{
   onClick?: () => void;
   disabled?: boolean;
   tooltip: string;
   icon: string;
   variant?: "primary" | "secondary" | "success" | "danger" | "warning" | "info";
-}> = ({ onClick, disabled, tooltip, icon, variant = "secondary" }) => {
+  size?: "small" | "medium";
+}> = ({ onClick, disabled, tooltip, icon, variant = "secondary", size = "medium" }) => {
   const variants = {
     primary: { bg: COLORS.primary, hover: COLORS.primaryHover, text: COLORS.white },
     secondary: { bg: COLORS.surface, hover: COLORS.border, text: COLORS.text },
@@ -113,25 +111,29 @@ const IconButton: React.FC<{
     info: { bg: COLORS.infoLight, hover: "#BFDBFE", text: COLORS.info },
   };
   const style = variants[variant];
+  const padding = size === "small" ? "4px 6px" : "8px 10px";
+  const fontSize = size === "small" ? 13 : 16;
+  
   return (
     <Tooltip text={tooltip}>
       <button
         onClick={onClick}
         disabled={disabled}
         style={{
-          padding: "8px 10px",
+          padding,
           background: disabled ? COLORS.surface : style.bg,
           color: disabled ? COLORS.textMuted : style.text,
           border: "none",
-          borderRadius: 8,
+          borderRadius: 6,
           cursor: disabled ? "not-allowed" : "pointer",
-          fontSize: 16,
+          fontSize,
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
           transition: "all 0.2s",
           boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
           opacity: disabled ? 0.5 : 1,
+          minWidth: size === "small" ? 28 : 34,
         }}
         onMouseEnter={(e) => {
           if (!disabled) {
@@ -182,13 +184,11 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [copyIncludeHeaders, setCopyIncludeHeaders] = useState(true);
   const [copyColumns, setCopyColumns] = useState<string[]>([]);
-  const [modelMarkProperty, setModelMarkProperty] = useState("AssemblyMark");
   const [rowCountWarning, setRowCountWarning] = useState("");
   const [showSearchScopeModal, setShowSearchScopeModal] = useState(false);
   const [showOcrPromptModal, setShowOcrPromptModal] = useState(false);
-  const [showAddColumnModal, setShowAddColumnModal] = useState(false);
+  const [showColumnsModal, setShowColumnsModal] = useState(false);
   const [newColumnName, setNewColumnName] = useState("");
-  const [showReorderColumnsModal, setShowReorderColumnsModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportType, setExportType] = useState<"csv" | "excel">("csv");
   const [exportIncludeHeaders, setExportIncludeHeaders] = useState(true);
@@ -205,7 +205,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const t = translations || {};
   const c = parentStyles || {};
 
-  // Load state from localStorage
   useEffect(() => {
     const savedState = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (savedState) {
@@ -227,7 +226,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     }
   }, []);
 
-  // Save state to localStorage with debounce
   useEffect(() => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -266,7 +264,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     }
   }, [additionalPrompt]);
 
-  // Paste event for files
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
@@ -323,7 +320,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
 
   async function runGptOcr(imageBase64: string): Promise<string> {
     if (!apiKey) {
-      throw new Error("❌ Sisesta OpenAI API võti!");
+      throw new Error("⛔ Sisesta OpenAI API võti!");
     }
     const columns = targetColumns.trim();
     const columnList = columns ? columns.split(',').map(c => c.trim()).concat('Notes') : [];
@@ -333,7 +330,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises. Ole väga täpne tähtede ja numbrite eristamisel (nt "T" ja "5" on erinevad, "TS" ei ole "T5"). Numbrid on kogused, loe neid täpselt, ära muuda neid.
 ${columnInstruction}
 Lisa alati veerg "Notes" lõppu, kuhu pane olulist infot: kui midagi on pastakaga lisatud, kahtlane või arusaamatu (nt "Pastakaga kriipsutatud", "Kahtlane number: võimalik 1 või 7", "Lisamärge: X").
-Hoia TÄPNE ALGINE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
+Hoia TÄPNE ALGNE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
 Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???" ja lisa Notes'i selgitus.
 Ära jäta ühtegi rida vahele.
 Ära lisa lisaridu.
@@ -444,14 +441,14 @@ Anna lühike kokkuvõte eesti keeles.`;
       setBusy(true);
       if (!files.length) {
         if (!rawText.trim()) {
-          setMsg("❌ Pole faile ega teksti.");
+          setMsg("⛔ Pole faile ega teksti.");
         } else {
           setMsg("✓ Tekst on kleebitud. Vajuta 'Parsi tabelisse'.");
         }
         return;
       }
       if (!targetColumns.trim()) {
-        setMsg("❌ Määra esmalt veerud!");
+        setMsg("⛔ Määra esmalt veerud!");
         return;
       }
       setMsg("🔍 OCR töötab...");
@@ -464,7 +461,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       setOcrFeedback(feedback);
       setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside: ${feedback}`);
     } catch (e: any) {
-      setMsg("❌ Viga: " + (e?.message || String(e)));
+      setMsg("⛔ Viga: " + (e?.message || String(e)));
     } finally {
       setBusy(false);
     }
@@ -479,7 +476,7 @@ Anna lühike kokkuvõte eesti keeles.`;
     if (lines.length === 0) {
       setHeaders([]);
       setRows([]);
-      setMsg("❌ Tühjus.");
+      setMsg("⛔ Tühjus.");
       return;
     }
     let headerIdx = 0;
@@ -626,10 +623,13 @@ Anna lühike kokkuvõte eesti keeles.`;
     setRows((prev) => prev.map(r => ({ ...r, [newColumnName]: "" })));
     setSelectedColumns((prev) => [...prev, newColumnName]);
     setNewColumnName("");
-    setShowAddColumnModal(false);
   }
 
   function removeColumn(col: string) {
+    if (col === markKey || col === qtyKey) {
+      setMsg("⛔ Mark ja Kogus veergu ei saa kustutada!");
+      return;
+    }
     setHeaders(prev => prev.filter(h => h !== col));
     setSelectedColumns(prev => prev.filter(h => h !== col));
     setRows(prev => prev.map(r => {
@@ -637,14 +637,11 @@ Anna lühike kokkuvõte eesti keeles.`;
       delete newR[col];
       return newR;
     }));
-    if (markKey === col) setMarkKey("");
-    if (qtyKey === col) setQtyKey("");
   }
 
   function reorderColumns(newOrder: string[]) {
     setHeaders(newOrder);
     setSelectedColumns(newOrder.filter(c => selectedColumns.includes(c)));
-    setShowReorderColumnsModal(false);
   }
 
   function toggleColumn(col: string) {
@@ -657,7 +654,7 @@ Anna lühike kokkuvõte eesti keeles.`;
 
   function findAndReplace() {
     if (!findText.trim()) {
-      setMsg("❌ Sisesta otsitav tekst!");
+      setMsg("⛔ Sisesta otsitav tekst!");
       return;
     }
     let replacedCount = 0;
@@ -686,7 +683,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       return;
     }
     if (!markKey || !rows.length) {
-      setMsg("❌ Parsi esmalt tabel!");
+      setMsg("⛔ Parsi esmalt tabel!");
       return;
     }
 
@@ -704,7 +701,7 @@ Anna lühike kokkuvõte eesti keeles.`;
       }
 
       if (!Array.isArray(mos)) {
-        setMsg("❌ API viga");
+        setMsg("⛔ API viga");
         return;
       }
       const foundMarks = new Map<string, number>();
@@ -720,22 +717,9 @@ Anna lühike kokkuvõte eesti keeles.`;
             const props: any[] = Array.isArray(obj?.properties) ? obj.properties : [];
             for (const set of props) {
               for (const p of set?.properties ?? []) {
-                let shouldCheck = false;
                 const propName = String(p?.name || "");
-
-                if (modelMarkProperty === "AssemblyMark") {
-                  shouldCheck = /assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(propName);
-                } else if (modelMarkProperty === "ASSEMBLY_POS") {
-                  shouldCheck = /assembly[_\s]?pos/i.test(propName);
-                } else if (modelMarkProperty === "NAME") {
-                  shouldCheck = /^name$/i.test(propName);
-                } else if (modelMarkProperty === "PART_POS") {
-                  shouldCheck = /part[_\s]?pos/i.test(propName);
-                } else if (modelMarkProperty === "ID") {
-                  shouldCheck = /^id$/i.test(propName);
-                } else {
-                  shouldCheck = propName.toLowerCase().includes(modelMarkProperty.toLowerCase());
-                }
+                const shouldCheck = /assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(propName);
+                
                 if (shouldCheck) {
                   const val = String(p?.value || p?.displayValue || "").trim();
                   if (uniqueMarks.some(m => val.toLowerCase() === m.toLowerCase())) {
@@ -786,14 +770,14 @@ Anna lühike kokkuvõte eesti keeles.`;
       const notFoundCount = updatedRows.filter(r => r._foundInModel === false).length;
       const qtyMismatch = updatedRows.filter(r => r._warning?.includes("ei vasta")).length;
 
-      let resultMsg = `✓ ${foundCount} ✅ leitud, ${notFoundCount} ❌ ei leitud.`;
+      let resultMsg = `✓ ${foundCount} ✅ leitud, ${notFoundCount} ⛔ ei leitud.`;
       if (qtyMismatch > 0) {
         resultMsg += ` ⚠️ ${qtyMismatch} koguste erinevus!`;
       }
       setMsg(resultMsg);
     } catch (e: any) {
       console.error("Search error:", e);
-      setMsg("❌ Viga: " + (e?.message || String(e)));
+      setMsg("⛔ Viga: " + (e?.message || String(e)));
     } finally {
       setSearchingModel(false);
     }
@@ -801,7 +785,7 @@ Anna lühike kokkuvõte eesti keeles.`;
 
   async function selectInModel() {
     if (!modelObjects.length) {
-      setMsg("❌ Tee esmalt otsing mudelist!");
+      setMsg("⛔ Tee esmalt otsing mudelist!");
       return;
     }
     try {
@@ -819,22 +803,20 @@ Anna lühike kokkuvõte eesti keeles.`;
       await viewer?.setSelection({ modelObjectIds }, 'set');
       setMsg(`✓ Selectitud ${modelObjects.length} objekti mudelist.`);
     } catch (e: any) {
-      setMsg("❌ Selectimine ebaõnnestus: " + (e?.message || String(e)));
+      setMsg("⛔ Selectimine ebaõnnestus: " + (e?.message || String(e)));
     }
   }
 
   async function zoomToRow(row: Row) {
     const mark = String(row[markKey] || "").trim().toLowerCase();
     if (!mark) return;
-    // Leia KÕIK sobivad objektid sama mark'iga modelObjects'st
     const matchingObjects = modelObjects.filter(obj => obj.mark.toLowerCase() === mark);
     if (matchingObjects.length === 0) {
-      setMsg("❌ Pole sobivaid objekte selle mark'i jaoks.");
+      setMsg("⛔ Pole sobivaid objekte selle mark'i jaoks.");
       return;
     }
     try {
       const viewer = api?.viewer;
-      // Kogume kõik modelObjectIds (kõik sama mark'iga objektid)
       const byModel = new Map<string, number[]>();
       for (const obj of matchingObjects) {
         const ids = byModel.get(obj.modelId) || [];
@@ -842,20 +824,17 @@ Anna lühike kokkuvõte eesti keeles.`;
         byModel.set(obj.modelId, ids);
       }
       const modelObjectIds = Array.from(byModel.entries()).map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds }));
-      // Märgista (selekteeri) kõik
       await viewer?.setSelection({ modelObjectIds }, 'set');
-      // Zoomi kõigile korraga
       await viewer?.setCamera?.({ modelObjectIds }, { animationTime: 500 });
       setMsg(`✓ Märgistatud ja zoomitud ${matchingObjects.length} detailile mark'iga "${mark}".`);
     } catch (e: any) {
-      setMsg("❌ Zoom/märgistus ebaõnnestus: " + (e?.message || String(e)));
+      setMsg("⛔ Zoom/märgistus ebaõnnestus: " + (e?.message || String(e)));
     }
   }
 
   function getExportData(row: Row, col: string) {
-    // Siin saab lisada loogika täiendavate väljade jaoks, nt GUID, PROJECT NAME
     if (col === "GUID") return row._objectId ? String(row._objectId) : "";
-    if (col === "PROJECT NAME") return "ProjectX"; // Näidis, asenda tegelikuga kui vaja
+    if (col === "PROJECT NAME") return "ProjectX";
     return String(row[col] || "");
   }
 
@@ -930,11 +909,11 @@ Anna lühike kokkuvõte eesti keeles.`;
 
   function onConfirmClick() {
     if (!rows.length) {
-      setMsg("❌ Tabel on tühi.");
+      setMsg("⛔ Tabel on tühi.");
       return;
     }
     if (!markKey || !qtyKey) {
-      setMsg("❌ Vali Mark ja Kogus veerud.");
+      setMsg("⛔ Vali Mark ja Kogus veerud.");
       return;
     }
     if (warningRows > 0) {
@@ -985,7 +964,7 @@ T5.11.MG2005\t2`;
       setMsg(`✓ Vaade salvestatud: ${viewName}`);
       setShowViewSave(false);
     } catch (e: any) {
-      setMsg("❌ Viga vaate salvestamisel: " + (e?.message || "tundmatu viga"));
+      setMsg("⛔ Viga vaate salvestamisel: " + (e?.message || "tundmatu viga"));
     }
   };
 
@@ -995,7 +974,7 @@ T5.11.MG2005\t2`;
   };
 
   const hasInput = files.length > 0 || rawText.trim().length > 0;
-  // Ühtne modal stiil
+  
   const modalOverlayStyle: React.CSSProperties = {
     position: "fixed",
     top: 0,
@@ -1014,6 +993,8 @@ T5.11.MG2005\t2`;
     padding: 24,
     maxWidth: 500,
     width: "90%",
+    maxHeight: "90vh",
+    overflow: "auto",
     boxShadow: "0 10px 40px rgba(0,0,0,0.3)"
   };
   const modalHeadingStyle: React.CSSProperties = {
@@ -1060,9 +1041,8 @@ T5.11.MG2005\t2`;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: COLORS.text }}>
-      {/* Pealkiri + seaded nupp */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ margin: 0, fontSize: 8, fontWeight: 40, color: COLORS.text }}>magic</h3>
+        <h3 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: COLORS.text }}>magic</h3>
         <button
           style={{
             padding: "6px 12px",
@@ -1079,11 +1059,36 @@ T5.11.MG2005\t2`;
           ⚙️ Seaded
         </button>
       </div>
-      {/* API võtme modal */}
+
+      {/* API võtme modal UUENDATUD */}
       {showApiKeyModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
-            <h3 style={modalHeadingStyle}>🔑 Sisesta OpenAI API võti</h3>
+            <h3 style={modalHeadingStyle}>🔑 OpenAI API võti</h3>
+            
+            {!apiKey && (
+              <div style={{ 
+                padding: "12px", 
+                background: "#e7f3ff", 
+                border: "1px solid #1E88E5", 
+                borderRadius: 6, 
+                marginBottom: 16,
+                fontSize: 13,
+                lineHeight: 1.5
+              }}>
+                <p style={{ margin: "0 0 8px 0", fontWeight: 600 }}>📘 Kuidas saada API võtit?</p>
+                <ol style={{ margin: 0, paddingLeft: 20 }}>
+                  <li>Mine <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style={{ color: COLORS.secondary, textDecoration: "underline" }}>OpenAI API Keys lehele</a></li>
+                  <li>Logi sisse või loo konto</li>
+                  <li>Vajuta "Create new secret key"</li>
+                  <li>Kopeeri võti ja kleebi siia alla</li>
+                </ol>
+                <p style={{ margin: "8px 0 0 0", fontSize: 11, opacity: 0.8 }}>
+                  💡 Võti salvestatakse turvaliselt sinu brauseris (localStorage)
+                </p>
+              </div>
+            )}
+            
             <input
               type="password"
               value={apiKey}
@@ -1112,44 +1117,74 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>📁 Fail</label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={(e) => handleFileSelect(e.target.files)}
-              style={{ fontSize: 12, width: "100%" }}
-            />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>📷 Pildista</label>
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={(e) => handleFileSelect(e.target.files)}
-              style={{ display: "none" }}
-            />
-            <button
-              style={{ width: "100%", padding: "6px 12px", background: COLORS.background, border: `1px solid ${COLORS.border}`, borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
-              onClick={() => cameraInputRef.current?.click()}
-            >
-              📷 Kaamera
-            </button>
-          </div>
-        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => handleFileSelect(e.target.files)}
+          style={{ display: "none" }}
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={(e) => handleFileSelect(e.target.files)}
+          style={{ display: "none" }}
+        />
         <div
           ref={dropRef}
           onDrop={handleFileDrop}
           onDragOver={(e) => e.preventDefault()}
-          style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 6, padding: 16, textAlign: "center", marginBottom: 8 }}
+          onClick={() => fileInputRef.current?.click()}
+          style={{ 
+            border: `2px dashed ${COLORS.border}`, 
+            borderRadius: 8, 
+            padding: 20, 
+            textAlign: "center", 
+            marginBottom: 8,
+            cursor: "pointer",
+            background: COLORS.background,
+            transition: "all 0.2s"
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = COLORS.secondary;
+            e.currentTarget.style.background = COLORS.backgroundLight;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = COLORS.border;
+            e.currentTarget.style.background = COLORS.background;
+          }}
         >
-          Lohista pilt siia siia või kleebi (Ctrl+V)
+          <div style={{ fontSize: 14, fontWeight: 500, color: COLORS.text, marginBottom: 4 }}>
+            📁 Lohista pilt siia või kliki valimiseks
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.textLight }}>
+            Või kleebi (Ctrl+V) • Või{" "}
+            <span 
+              className="camera-link"
+              style={{ color: COLORS.secondary, textDecoration: "underline", cursor: "pointer" }}
+              onClick={(e) => {
+                e.stopPropagation();
+                cameraInputRef.current?.click();
+              }}
+            >
+              võta foto
+            </span>
+          </div>
         </div>
+        
+        {/* CSS for mobile camera visibility */}
+        <style>{`
+          @media (min-width: 768px) {
+            .camera-link {
+              display: none !important;
+            }
+          }
+        `}</style>
+
         {imagePreview && (
           <div>
             <img
@@ -1160,6 +1195,7 @@ T5.11.MG2005\t2`;
             />
           </div>
         )}
+
         {showImageModal && (
           <div style={modalOverlayStyle} onClick={() => setShowImageModal(false)}>
             <img src={imagePreview} alt="Large preview" style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: 8 }} />
@@ -1172,22 +1208,79 @@ T5.11.MG2005\t2`;
             </a>
           </div>
         )}
+
         <div>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>
-            Veerud <span title="Kirjuta komaga eraldatud veergude nimed või numbrid (nt 'Component, Pcs' või '1,2').">ℹ️</span>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6, color: COLORS.textLight }}>
+            Veerud <span title="Kirjuta komaga eraldatud veergude nimed või numbrid">ℹ️</span>
           </label>
-          <input
-            value={targetColumns}
-            onChange={(e) => setTargetColumns(e.target.value)}
-            placeholder="Component, Pcs, Profile, Length..."
-            style={{ width: "100%", padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
-          />
-          <div style={{ fontSize: 11, color: COLORS.textLight, marginTop: 2 }}>
-            Sisesta koma eraldatult või numbritena: '1, 2, 3'
+          <div style={{ 
+            display: "flex", 
+            flexWrap: "wrap", 
+            gap: 6, 
+            padding: "8px", 
+            border: `1px solid ${COLORS.border}`, 
+            borderRadius: 6,
+            background: COLORS.white,
+            minHeight: 40
+          }}>
+            {targetColumns.split(',').filter(v => v.trim()).map((col, idx) => (
+              <div key={idx} style={{
+                padding: "4px 10px",
+                background: COLORS.secondary,
+                color: COLORS.white,
+                borderRadius: 16,
+                fontSize: 12,
+                fontWeight: 500,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4
+              }}>
+                {col.trim()}
+                <span 
+                  style={{ cursor: "pointer", marginLeft: 2, opacity: 0.8 }}
+                  onClick={() => {
+                    const cols = targetColumns.split(',').map(c => c.trim()).filter(Boolean);
+                    cols.splice(idx, 1);
+                    setTargetColumns(cols.join(', '));
+                  }}
+                >
+                  ✕
+                </span>
+              </div>
+            ))}
+            <input
+              value=""
+              onChange={(e) => {}}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                  const current = targetColumns ? targetColumns + ', ' + e.currentTarget.value : e.currentTarget.value;
+                  setTargetColumns(current);
+                  e.currentTarget.value = '';
+                }
+              }}
+              onBlur={(e) => {
+                if (e.currentTarget.value.trim()) {
+                  const current = targetColumns ? targetColumns + ', ' + e.currentTarget.value : e.currentTarget.value;
+                  setTargetColumns(current);
+                  e.currentTarget.value = '';
+                }
+              }}
+              placeholder={targetColumns ? "Lisa..." : "Component, Pcs..."}
+              style={{ 
+                flex: 1, 
+                border: "none", 
+                outline: "none", 
+                fontSize: 13,
+                minWidth: 100,
+                background: "transparent"
+              }}
+            />
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.textLight, marginTop: 4 }}>
+            Sisesta veergude nimed või vajuta Enter iga veeru järel
           </div>
         </div>
 
-        {/* UUS: Lisa OCR juhised nupp */}
         <div>
           <button
             style={{
@@ -1210,7 +1303,7 @@ T5.11.MG2005\t2`;
             <span style={{ fontSize: 10, color: COLORS.textLight }}>▶</span>
           </button>
         </div>
-        {/* OCR juhiste modal */}
+
         {showOcrPromptModal && (
           <div style={modalOverlayStyle}>
             <div style={modalContentStyle}>
@@ -1260,6 +1353,7 @@ T5.11.MG2005\t2`;
             </div>
           </div>
         )}
+
         <div>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>
             Või kleebi tekst <span title="Kleebi siia eelnevalt kopeeritud tekst saatelehelt või mujalt.">ℹ️</span>
@@ -1271,6 +1365,7 @@ T5.11.MG2005\t2`;
             placeholder="Tekst..."
           />
         </div>
+
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
             style={{ ...btnPrimaryStyle }}
@@ -1279,7 +1374,7 @@ T5.11.MG2005\t2`;
           >
             {busy ? "⏳ OCR..." : "🔍 OCR"}
           </button>
-  
+
           {!hasInput && (
             <button
               style={{ ...btnSecondaryStyle }}
@@ -1288,12 +1383,12 @@ T5.11.MG2005\t2`;
               📋 Näidis
             </button>
           )}
-  
+
           <button
             style={{ ...btnSecondaryStyle }}
             onClick={() => {
               if (!rawText.trim()) {
-                setMsg("❌ Pole teksti.");
+                setMsg("⛔ Pole teksti.");
                 return;
               }
               parseTextToTable(rawText);
@@ -1301,7 +1396,7 @@ T5.11.MG2005\t2`;
           >
             ⚡ Parsi
           </button>
-  
+
           <button
             style={{ ...btnSecondaryStyle }}
             onClick={() => {
@@ -1319,6 +1414,7 @@ T5.11.MG2005\t2`;
             🗑️ Tühjenda
           </button>
         </div>
+
         {!apiKey && (
           <div style={{
             padding: "12px",
@@ -1330,12 +1426,13 @@ T5.11.MG2005\t2`;
             ⚠️ <strong>API võti puudub!</strong> OCR ei tööta ilma võtmeta. Vajuta üleval "⚙️ Seaded" nupule ja sisesta võti.
           </div>
         )}
+
         {msg && (
           <div style={{
             padding: "12px",
             borderRadius: 6,
             fontSize: 13,
-            ...(msg.includes("❌") ? { background: "#ffebee", border: "1px solid #ef9a9a" } :
+            ...(msg.includes("⛔") ? { background: "#ffebee", border: "1px solid #ef9a9a" } :
                 msg.includes("✅") || msg.includes("✓") ? { background: "#e8f5e9", border: "1px solid #a5d6a7" } :
                 { background: COLORS.background, border: `1px solid ${COLORS.borderLight}` })
           }}>
@@ -1343,12 +1440,12 @@ T5.11.MG2005\t2`;
           </div>
         )}
       </div>
-      {/* Find & Replace Modal */}
+
       {showFindReplace && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
             <h3 style={modalHeadingStyle}>🔄 Otsi ja asenda</h3>
-    
+
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Otsi</label>
               <input
@@ -1358,7 +1455,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
-    
+
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Asenda</label>
               <input
@@ -1368,7 +1465,7 @@ T5.11.MG2005\t2`;
                 style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}
               />
             </div>
-    
+
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={findAndReplace}
@@ -1386,15 +1483,15 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-      {/* UUS: Otsi mudelist modal (nagu Find & Replace) */}
+
       {showSearchScopeModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
             <h3 style={modalHeadingStyle}>🔍 Otsi mudelist</h3>
             <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 16 }}>
-              Vali otsingu ulatus ja vajuta "Otsi" nuppu.
+              Vali otsingu ulatus ja vajuta "Otsi" nuppu. Otsime automaatselt Kooste märgi (BLOCK) alusel.
             </p>
-        
+
             <div style={{ marginBottom: 20 }}>
               <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeAll" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, marginBottom: 8, background: searchScope === "scopeAll" ? "#e3f2fd" : COLORS.white }}>
                 <input
@@ -1408,7 +1505,7 @@ T5.11.MG2005\t2`;
                   Otsi kõigist mudelis olevatest objektidest
                 </div>
               </label>
-          
+
               <label style={{ display: "block", cursor: "pointer", padding: 12, border: `2px solid ${searchScope === "scopeSelected" ? COLORS.secondary : COLORS.borderLight}`, borderRadius: 6, background: searchScope === "scopeSelected" ? "#e3f2fd" : COLORS.white }}>
                 <input
                   type="radio"
@@ -1422,7 +1519,7 @@ T5.11.MG2005\t2`;
                 </div>
               </label>
             </div>
-        
+
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={() => {
@@ -1444,60 +1541,142 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-      {/* Lisa veerg modal */}
-      {showAddColumnModal && (
+
+      {/* UUENDATUD Veerud modal - sisaldab nüüd ka Mark ja Qty valikuid */}
+      {showColumnsModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
-            <h3 style={modalHeadingStyle}>➕ Lisa veerg</h3>
-            <input
-              value={newColumnName}
-              onChange={(e) => setNewColumnName(e.target.value)}
-              placeholder="Veeru nimi"
-              style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, marginBottom: 16 }}
-            />
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={addColumn}
-                style={{ ...btnPrimaryStyle, flex: 1 }}
-              >
-                Lisa
-              </button>
-              <button
-                onClick={() => setShowAddColumnModal(false)}
-                style={{ ...btnSecondaryStyle, flex: 1 }}
-              >
-                Tühista
-              </button>
+            <h3 style={modalHeadingStyle}>📊 Veergude haldamine</h3>
+
+            {/* Mark ja Qty veergude valik */}
+            <div style={{ marginBottom: 20, padding: 12, background: "#e7f3ff", borderRadius: 6, border: `1px solid ${COLORS.secondary}` }}>
+              <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600, color: COLORS.secondary }}>🔖 Põhiveerud</h4>
+              
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: "block", fontSize: 11, color: COLORS.textLight, marginBottom: 4 }}>Mark veerg 📖</label>
+                <select
+                  value={markKey}
+                  onChange={(e) => setMarkKey(e.target.value)}
+                  style={{ width: "100%", padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
+                >
+                  {headers.map((h) => <option key={h} value={h}>{h}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: COLORS.textLight, marginBottom: 4 }}>Kogus veerg 🔢</label>
+                <select
+                  value={qtyKey}
+                  onChange={(e) => setQtyKey(e.target.value)}
+                  style={{ width: "100%", padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
+                >
+                  {headers.map((h) => <option key={h} value={h}>{h}</option>)}
+                </select>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
-      {/* Järjesta veerud modal */}
-      {showReorderColumnsModal && (
-        <div style={modalOverlayStyle}>
-          <div style={modalContentStyle}>
-            <h3 style={modalHeadingStyle}>🔄 Järjesta veerud</h3>
-            <ul style={{ listStyle: "none", padding: 0 }}>
-              {headers.map((h, idx) => (
-                <li key={h} style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ flex: 1 }}>{h}</span>
-                  <button onClick={() => {
-                    if (idx === 0) return;
-                    const newHeaders = [...headers];
-                    [newHeaders[idx - 1], newHeaders[idx]] = [newHeaders[idx], newHeaders[idx - 1]];
-                    reorderColumns(newHeaders);
-                  }}>↑</button>
-                  <button onClick={() => {
-                    if (idx === headers.length - 1) return;
-                    const newHeaders = [...headers];
-                    [newHeaders[idx], newHeaders[idx + 1]] = [newHeaders[idx + 1], newHeaders[idx]];
-                    reorderColumns(newHeaders);
-                  }}>↓</button>
-                </li>
-              ))}
-            </ul>
+
+            {/* Lisa uus veerg */}
+            <div style={{ marginBottom: 20, padding: 12, background: COLORS.background, borderRadius: 6 }}>
+              <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600 }}>➕ Lisa veerg</h4>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  value={newColumnName}
+                  onChange={(e) => setNewColumnName(e.target.value)}
+                  placeholder="Veeru nimi"
+                  style={{ flex: 1, padding: "6px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 13 }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newColumnName.trim()) {
+                      addColumn();
+                    }
+                  }}
+                />
+                <button
+                  onClick={addColumn}
+                  disabled={!newColumnName.trim()}
+                  style={{ ...btnPrimaryStyle, padding: "6px 12px" }}
+                >
+                  Lisa
+                </button>
+              </div>
+            </div>
+
+            {/* Kuva/Peida veerud */}
+            <div style={{ marginBottom: 20, padding: 12, background: COLORS.background, borderRadius: 6 }}>
+              <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600 }}>👁️ Nähtavus</h4>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxHeight: 150, overflowY: "auto" }}>
+                {headers.map((h) => (
+                  <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedColumns.includes(h)}
+                      onChange={() => toggleColumn(h)}
+                    />
+                    <span>{h}</span>
+                    {h === markKey && " 📖"}
+                    {h === qtyKey && " 🔢"}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Kustuta ja järjesta veerud */}
+            <div style={{ marginBottom: 20, padding: 12, background: COLORS.background, borderRadius: 6 }}>
+              <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600 }}>🔄 Järjesta ja kustuta</h4>
+              <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                {headers.map((h, idx) => (
+                  <div key={h} style={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    padding: "6px 8px", 
+                    marginBottom: 4,
+                    background: COLORS.white,
+                    borderRadius: 4,
+                    border: `1px solid ${COLORS.borderLight}`
+                  }}>
+                    <span style={{ flex: 1, fontSize: 13 }}>
+                      {h}
+                      {h === markKey && " 📖"}
+                      {h === qtyKey && " 🔢"}
+                    </span>
+                    <IconButton
+                      icon="↑"
+                      onClick={() => {
+                        if (idx === 0) return;
+                        const newHeaders = [...headers];
+                        [newHeaders[idx - 1], newHeaders[idx]] = [newHeaders[idx], newHeaders[idx - 1]];
+                        reorderColumns(newHeaders);
+                      }}
+                      disabled={idx === 0}
+                      tooltip="Liiguta üles"
+                      size="small"
+                    />
+                    <IconButton
+                      icon="↓"
+                      onClick={() => {
+                        if (idx === headers.length - 1) return;
+                        const newHeaders = [...headers];
+                        [newHeaders[idx], newHeaders[idx + 1]] = [newHeaders[idx + 1], newHeaders[idx]];
+                        reorderColumns(newHeaders);
+                      }}
+                      disabled={idx === headers.length - 1}
+                      tooltip="Liiguta alla"
+                      size="small"
+                    />
+                    <IconButton
+                      icon="🗑"
+                      onClick={() => removeColumn(h)}
+                      disabled={h === markKey || h === qtyKey}
+                      tooltip={h === markKey || h === qtyKey ? "Mark ja Kogus veerge ei saa kustutada" : "Kustuta veerg"}
+                      variant="danger"
+                      size="small"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <button
-              onClick={() => setShowReorderColumnsModal(false)}
+              onClick={() => setShowColumnsModal(false)}
               style={{ ...btnPrimaryStyle, width: "100%" }}
             >
               Valmis
@@ -1505,7 +1684,8 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-      {/* Export modal */}
+
+      {/* UUENDATUD Export modal - integratsioon AssemblyExporter stiiliga */}
       {showExportModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
@@ -1536,7 +1716,7 @@ T5.11.MG2005\t2`;
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Täiendavad andmed</label>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {["GUID", "PROJECT NAME"].map(field => (
+                {["GUID", "PROJECT NAME", "ModelId", "_objectId", "_modelQuantity"].map(field => (
                   <label key={field} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
                     <input
                       type="checkbox"
@@ -1561,7 +1741,8 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-      {/* Copy modal */}
+
+      {/* Copy modal UUENDATUD - sama nagu export */}
       {showCopyModal && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
@@ -1592,7 +1773,7 @@ T5.11.MG2005\t2`;
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Täiendavad andmed</label>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {["GUID", "PROJECT NAME"].map(field => (
+                {["GUID", "PROJECT NAME", "ModelId", "_objectId", "_modelQuantity"].map(field => (
                   <label key={field} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
                     <input
                       type="checkbox"
@@ -1622,11 +1803,11 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
-      {/* View save modal */}
+
       {showViewSave && (
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
-            <h3 style={modalHeadingStyle}>💾Salvesta vaatesse</h3>
+            <h3 style={modalHeadingStyle}>💾 Salvesta vaatesse</h3>
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: COLORS.textLight }}>Vaate nimi:</label>
             <input
               type="text"
@@ -1652,74 +1833,35 @@ T5.11.MG2005\t2`;
           </div>
         </div>
       )}
+
       {/* Tabel */}
       {rows.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.borderLight}`, borderRadius: 8, padding: 12, background: COLORS.backgroundLight }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div>
-              <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>Mark veerg</div>
-              <select
-                value={markKey}
-                onChange={(e) => setMarkKey(e.target.value)}
-                style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
-              >
-                {headers.map((h) => <option key={h} value={h}>{h}</option>)}
-              </select>
-            </div>
-    
-            <div>
-              <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>Kogus veerg</div>
-              <select
-                value={qtyKey}
-                onChange={(e) => setQtyKey(e.target.value)}
-                style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
-              >
-                {headers.map((h) => <option key={h} value={h}>{h}</option>)}
-              </select>
-            </div>
-    
-            <div>
-              <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 2 }}>
-                Mudeli property <span title="Vali atribuut mudelist, nt 'AssemblyMark' mark'i sobitamiseks.">ℹ️</span>
-              </div>
-              <select
-                value={modelMarkProperty}
-                onChange={(e) => setModelMarkProperty(e.target.value)}
-                style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
-              >
-                <option value="AssemblyMark">Kooste märk (BLOCK)</option>
-                <option value="ASSEMBLY_POS">ASSEMBLY_POS</option>
-                <option value="NAME">NAME</option>
-                <option value="PART_POS">PART_POS</option>
-                <option value="ID">ID</option>
-              </select>
-            </div>
-    
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {/* Otsi mudelist modal nupp */}
               <button
                 style={{ ...btnPrimaryStyle, fontSize: 12 }}
                 disabled={searchingModel}
                 onClick={() => setShowSearchScopeModal(true)}
               >
-                {searchingModel ? "🔍..." : "🔍 Otsi mudelist"}
+                {searchingModel ? "🔍..." : "🔍 Otsi"}
               </button>
-      
+
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12, background: COLORS.secondary, color: COLORS.white, border: "none" }}
                 disabled={!modelObjects.length}
                 onClick={selectInModel}
               >
-                🎯 Selecti mudelist
+                🎯 Selecti
               </button>
-      
+
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => setShowFindReplace(true)}
               >
                 🔄 Otsi/Asenda
               </button>
-      
+
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => {
@@ -1730,7 +1872,7 @@ T5.11.MG2005\t2`;
               >
                 📥 Eksport
               </button>
-          
+
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => {
@@ -1741,7 +1883,7 @@ T5.11.MG2005\t2`;
               >
                 📋 Kopeeri
               </button>
-          
+
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={initSaveView}
@@ -1749,111 +1891,96 @@ T5.11.MG2005\t2`;
               >
                 💾 Salvesta
               </button>
+              
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
-                onClick={() => setShowAddColumnModal(true)}
+                onClick={() => setShowColumnsModal(true)}
               >
-                ➕ Lisa veerg
-              </button>
-              <button
-                style={{ ...btnSecondaryStyle, fontSize: 12 }}
-                onClick={() => setShowReorderColumnsModal(true)}
-              >
-                🔄 Järjesta veerud
+                📊 Veerud
               </button>
             </div>
           </div>
-          {/* Column selector */}
-          <div style={{ marginBottom: 12, padding: 8, background: COLORS.background, borderRadius: 6, border: `1px solid ${COLORS.borderLight}` }}>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, color: COLORS.textLight }}>Näidatavad veerud:</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {headers.map((h) => (
-                <label key={h} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedColumns.includes(h)}
-                    onChange={() => toggleColumn(h)}
-                  />
-                  <span>{h}</span>
-                  <button
-                    style={{ padding: 0, background: "transparent", border: "none", color: COLORS.error, cursor: "pointer" }}
-                    onClick={() => removeColumn(h)}
-                  >
-                    ❌
-                  </button>
-                </label>
-              ))}
-            </div>
-          </div>
-          {/* Statistics */}
+
+          {/* Kompaktsem statistika */}
           <div style={{
-            display: "flex",
-            gap: 8,
-            marginBottom: 12,
-            flexWrap: "wrap",
-            justifyContent: "space-between"
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(70px, 1fr))",
+            gap: 6,
+            marginBottom: 12
           }}>
-            <div style={{ padding: "6px 10px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
-              <div style={{ fontWeight: 500, color: "#1e40af" }}>📋 Rid. kokku</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#1e40af" }}>{totalRows}</div>
+            <div style={{ padding: "4px 8px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
+              <div style={{ fontWeight: 600, color: "#1e40af", fontSize: 12 }}>{totalRows}</div>
+              <div style={{ color: "#1e40af" }}>Kokku</div>
             </div>
-    
+
             {foundRows > 0 && (
-              <div style={{ padding: "6px 10px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
-                <div style={{ fontWeight: 500, color: "#15803d" }}>✅ Leitud</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#15803d" }}>{foundRows}</div>
+              <div style={{ padding: "4px 8px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
+                <div style={{ fontWeight: 600, color: "#15803d", fontSize: 12 }}>{foundRows}</div>
+                <div style={{ color: "#15803d" }}>Leitud</div>
               </div>
             )}
-    
+
             {notFoundRows > 0 && (
-              <div style={{ padding: "6px 10px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
-                <div style={{ fontWeight: 500, color: "#c2410c" }}>❌ Ei leitud</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#c2410c" }}>{notFoundRows}</div>
+              <div style={{ padding: "4px 8px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
+                <div style={{ fontWeight: 600, color: "#c2410c", fontSize: 12 }}>{notFoundRows}</div>
+                <div style={{ color: "#c2410c" }}>Puudu</div>
               </div>
             )}
-    
+
             {warningRows > 0 && (
-              <div style={{ padding: "6px 10px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
-                <div style={{ fontWeight: 500, color: "#dc2626" }}>⚠️ Hoiat.</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#dc2626" }}>{warningRows}</div>
+              <div style={{ padding: "4px 8px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
+                <div style={{ fontWeight: 600, color: "#dc2626", fontSize: 12 }}>{warningRows}</div>
+                <div style={{ color: "#dc2626" }}>Hoiat.</div>
               </div>
             )}
-    
+
             {qtyKey && totalSheetQty > 0 && (
-              <div style={{ padding: "6px 10px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
-                <div style={{ fontWeight: 500, color: "#92400e" }}>📄 Saateleht</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e" }}>{totalSheetQty} tk</div>
+              <div style={{ padding: "4px 8px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
+                <div style={{ fontWeight: 600, color: "#92400e", fontSize: 12 }}>{totalSheetQty}</div>
+                <div style={{ color: "#92400e" }}>Leht</div>
               </div>
             )}
-    
+
             {totalModelQty > 0 && (
-              <div style={{ padding: "6px 10px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
-                <div style={{ fontWeight: 500, color: "#6b21a8" }}>🏗️ Mudel</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#6b21a8" }}>{totalModelQty} tk</div>
+              <div style={{ padding: "4px 8px", background: "#f3e8ff", border: "1px solid #d8b4fe", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
+                <div style={{ fontWeight: 600, color: "#6b21a8", fontSize: 12 }}>{totalModelQty}</div>
+                <div style={{ color: "#6b21a8" }}>Mudel</div>
               </div>
             )}
-    
+
             {qtyMismatchRows > 0 && (
-              <div style={{ padding: "6px 10px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 6, fontSize: 11, textAlign: "center", minWidth: "80px" }}>
-                <div style={{ fontWeight: 500, color: "#ea580c" }}>⚠️ Erinev.</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#ea580c" }}>{qtyMismatchRows}</div>
+              <div style={{ padding: "4px 8px", background: "#ffedd5", border: "1px solid #fdba74", borderRadius: 4, fontSize: 10, textAlign: "center" }}>
+                <div style={{ fontWeight: 600, color: "#ea580c", fontSize: 12 }}>{qtyMismatchRows}</div>
+                <div style={{ color: "#ea580c" }}>Erinev</div>
               </div>
             )}
           </div>
+
           <div style={{ overflow: "auto", border: `1px solid ${COLORS.borderLight}`, borderRadius: 6 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10, width: "30px" }}>#</th>
-                  <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, width: "40px", zIndex: 10 }}>✓</th>
+                  <th style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px 4px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10, width: "25px", fontSize: 10 }}>#</th>
+                  <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px 4px", background: COLORS.background, position: "sticky", top: 0, width: "30px", zIndex: 10, fontSize: 10 }}>✓</th>
                   {displayColumns.map((key) => (
-                    <th key={key} style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10, ...(key === "_modelQuantity" ? { width: "60px" } : {}) }}>
-                      {key === "_modelQuantity" ? "KOGUS mudelis" : key}
-                      {key === markKey && " 🔖"}
+                    <th key={key} style={{ 
+                      textAlign: "left", 
+                      borderBottom: `2px solid ${COLORS.borderLight}`, 
+                      padding: "6px", 
+                      background: COLORS.background, 
+                      position: "sticky", 
+                      top: 0, 
+                      zIndex: 10, 
+                      fontSize: 11,
+                      ...(key === markKey || key === qtyKey ? { minWidth: "60px", width: "auto" } : {}),
+                      ...(key === "_modelQuantity" ? { width: "60px" } : {}) 
+                    }}>
+                      {key === "_modelQuantity" ? "M.kogus" : key}
+                      {key === markKey && " 📖"}
                       {key === qtyKey && " 🔢"}
                     </th>
                   ))}
-                  <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px", background: COLORS.background, position: "sticky", top: 0, width: 100, zIndex: 10 }}>-</th>
+                  <th style={{ textAlign: "center", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px 4px", background: COLORS.background, position: "sticky", top: 0, width: 90, zIndex: 10, fontSize: 10 }}>-</th>
                 </tr>
               </thead>
               <tbody>
@@ -1872,9 +1999,9 @@ T5.11.MG2005\t2`;
                       onDrop={(e) => handleDrop(e, idx)}
                       style={{ background: rowBg, ...highlight }}
                     >
-                      <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", opacity: 0.5, fontWeight: 600 }}>{idx + 1}</td>
-                      <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", fontSize: 14 }} title={r._warning}>
-                        {hasWarning ? "⚠️" : notFound ? "❌" : found ? "✅" : ""}
+                      <td style={{ padding: "4px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", opacity: 0.5, fontWeight: 600, fontSize: 10 }}>{idx + 1}</td>
+                      <td style={{ padding: "4px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center", fontSize: 12 }} title={r._warning}>
+                        {hasWarning ? "⚠️" : notFound ? "⛔" : found ? "✅" : ""}
                       </td>
                       {displayColumns.map((key, colIdx) => (
                         <td key={key} style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}` }}>
@@ -1897,33 +2024,15 @@ T5.11.MG2005\t2`;
                           />
                         </td>
                       ))}
-                      <td style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center" }}>
-                        <button
-                          onClick={() => moveRowUp(idx)}
-                          style={{ padding: "3px 8px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginRight: 4 }}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          onClick={() => moveRowDown(idx)}
-                          style={{ padding: "3px 8px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginRight: 4 }}
-                        >
-                          ↓
-                        </button>
-                        <button
-                          onClick={() => removeRow(idx)}
-                          style={{ padding: "3px 8px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer", fontSize: 11 }}
-                        >
-                          ❌
-                        </button>
-                        {r._foundInModel && r.modelId && r._objectId && (
-                          <button
-                            onClick={() => zoomToRow(r)}
-                            style={{ padding: "3px 8px", background: "#e7f3ff", border: "1px solid #1E88E5", borderRadius: 4, cursor: "pointer", fontSize: 11, marginLeft: 4 }}
-                          >
-                            🔍
-                          </button>
-                        )}
+                      <td style={{ padding: "2px", borderBottom: `1px solid ${COLORS.borderLight}`, textAlign: "center" }}>
+                        <div style={{ display: "flex", gap: 2, justifyContent: "center" }}>
+                          <IconButton icon="↑" onClick={() => moveRowUp(idx)} tooltip="Liiguta üles" size="small" disabled={idx === 0} />
+                          <IconButton icon="↓" onClick={() => moveRowDown(idx)} tooltip="Liiguta alla" size="small" disabled={idx === rows.length - 1} />
+                          <IconButton icon="×" onClick={() => removeRow(idx)} tooltip="Kustuta" variant="danger" size="small" />
+                          {r._foundInModel && r.modelId && r._objectId && (
+                            <IconButton icon="🔎" onClick={() => zoomToRow(r)} tooltip="Zoom" variant="info" size="small" />
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
