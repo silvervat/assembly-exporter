@@ -1,5 +1,4 @@
 import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
-
 type Row = Record<string, string> & {
   _confidence?: number;
   _warning?: string;
@@ -8,7 +7,6 @@ type Row = Record<string, string> & {
   _objectId?: number;
   modelId?: string;
 };
-
 type Props = {
   api: any;
   settings?: {
@@ -21,10 +19,8 @@ type Props = {
   translations?: any;
   styles?: any;
 };
-
 const LOCAL_STORAGE_KEY = "scanAppState";
 const DEBOUNCE_SAVE_MS = 500;
-
 const COLORS = {
   primary: "#0a3a67",
   primaryHover: "#083254",
@@ -48,7 +44,6 @@ const COLORS = {
   infoLight: "#DBEAFE",
   white: "#FFFFFF",
 };
-
 const Tooltip: React.FC<{ children: React.ReactNode; text: string }> = ({ children, text }) => {
   const [show, setShow] = useState(false);
   return (
@@ -93,7 +88,6 @@ const Tooltip: React.FC<{ children: React.ReactNode; text: string }> = ({ childr
     </div>
   );
 };
-
 const IconButton: React.FC<{
   onClick?: () => void;
   disabled?: boolean;
@@ -113,7 +107,7 @@ const IconButton: React.FC<{
   const style = variants[variant];
   const padding = size === "small" ? "4px 6px" : "8px 10px";
   const fontSize = size === "small" ? 13 : 16;
-  
+ 
   return (
     <Tooltip text={tooltip}>
       <button
@@ -155,7 +149,6 @@ const IconButton: React.FC<{
     </Tooltip>
   );
 };
-
 export default function ScanApp({ api, settings, onConfirm, translations, styles: parentStyles }: Props) {
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
@@ -202,10 +195,8 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
-
   const t = translations || {};
   const c = parentStyles || {};
-
   useEffect(() => {
     const savedState = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (savedState) {
@@ -226,7 +217,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
       }
     }
   }, []);
-
   useEffect(() => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -256,7 +246,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
       }
     };
   }, [rawText, headers, rows, markKey, qtyKey, selectedColumns, imagePreview, targetColumns, totalScannedRows, modelObjects]);
-
   useEffect(() => {
     try {
       localStorage.setItem('ocrAdditionalPrompt', additionalPrompt);
@@ -264,7 +253,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
       console.error("Failed to save additional prompt:", e);
     }
   }, [additionalPrompt]);
-
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
@@ -287,7 +275,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
   }, []);
-
   async function fileToBase64(f: File): Promise<string> {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -300,7 +287,6 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
       r.readAsDataURL(f);
     });
   }
-
   async function handleFileSelect(fileList: FileList | null) {
     if (!fileList || !fileList.length) return;
     const file = fileList[0];
@@ -312,13 +298,11 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     };
     reader.readAsDataURL(file);
   }
-
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const fileList = e.dataTransfer.files;
     handleFileSelect(fileList);
   };
-
   async function runGptOcr(imageBase64: string): Promise<string> {
     if (!apiKey) {
       throw new Error("⛔ Sisesta OpenAI API võti!");
@@ -331,7 +315,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
     const prompt = `Sa oled ekspert logistika transpordilehtede ja tootmisnimekirjade lugemises. Ole väga täpne tähtede ja numbrite eristamisel (nt "T" ja "5" on erinevad, "TS" ei ole "T5"). Numbrid on kogused, loe neid täpselt, ära muuda neid.
 ${columnInstruction}
 Lisa alati veerg "Notes" lõppu, kuhu pane olulist infot: kui midagi on pastakaga lisatud, kahtlane või arusaamatu (nt "Pastakaga kriipsutatud", "Kahtlane number: võimalik 1 või 7", "Lisamärge: X").
-Hoia TÄPNE ALGNE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
+Hoia TÄPNE ALGINE JÄRJEKORD ridadest nagu nad pildil on (ülalt alla).
 Kui sa ei suuda lahtrit selgelt lugeda, pane sinna "???" ja lisa Notes'i selgitus.
 Ära jäta ühtegi rida vahele.
 Ära lisa lisaridu.
@@ -381,7 +365,6 @@ Kasuta veergude eraldamiseks AINULT TAB-märki (\t). Read eralda \n-ga, iga rida
       throw new Error(`OpenAI API viga: ${error.message}`);
     }
   }
-
   async function verifyRowCount(text: string): Promise<string> {
     if (!apiKey) return "";
     const prompt = `Analüüsi seda TSV teksti: ${text}
@@ -406,15 +389,14 @@ Loenda read (välja arvatud päis). Kui on ekstra ridu või puuduvad read, anna 
       return "Kontroll ebaõnnestus.";
     }
   }
-
   async function getOcrFeedback(text: string): Promise<string> {
     if (!apiKey) return "";
     const prompt = `Analüüsi seda OCR tulemust (TSV formaat): ${text}
-Hinda:
-1. Kas dokument oli hästi loetav? (nt pilt kvaliteet, font, skaneerimine)
-2. Kas said kõigist ridadest ilusti aru? Kui mitte, millised probleemid?
-3. Kas soovitad uuesti scanida lisajuhistega (nt parem valgustus, täpsem prompt)?
-Anna lühike kokkuvõte eesti keeles.`;
+Koonda ainult oluline info konkreetse skanni kohta. Hinda lühidalt:
+- Dokumendi loetavus (kvaliteet, font).
+- Lugemisraskused ja probleemid ridades/lahtrites.
+- Soovitused uuesti skannimiseks (nt parem valgustus).
+Vorminda vastus bulletitega eesti keeles, hoia lühike ja selge.`;
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -435,7 +417,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       return "";
     }
   }
-
   async function runOcr() {
     try {
       setMsg("");
@@ -460,14 +441,13 @@ Anna lühike kokkuvõte eesti keeles.`;
       setRawText(text);
       const feedback = await getOcrFeedback(text);
       setOcrFeedback(feedback);
-      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside: ${feedback}`);
+      setMsg(`✅ OCR valmis! ${rowCheck}\n\nTagasiside:\n${feedback}`);
     } catch (e: any) {
       setMsg("⛔ Viga: " + (e?.message || String(e)));
     } finally {
       setBusy(false);
     }
   }
-
   function parseTextToTable(text: string) {
     const lines = text
       .split(/\r?\n/)
@@ -483,7 +463,7 @@ Anna lühike kokkuvõte eesti keeles.`;
     let headerIdx = 0;
     let bestScore = -1;
     for (let i = 0; i < Math.min(lines.length, 20); i++) {
-      const cols = lines[i].split(/\s+|\t/).filter(Boolean);
+      const cols = lines[i].split('\t').filter(Boolean);
       const hasKeywords = /\b(component|mark|qty|pcs|kogus|profile|length|weight|komponent)\b/i.test(lines[i]) ? 3 : 0;
       const score = cols.length + hasKeywords;
       if (score > bestScore) {
@@ -492,17 +472,23 @@ Anna lühike kokkuvõte eesti keeles.`;
       }
     }
     const rawHeaders = lines[headerIdx]
-      .split(/\s+|\t/)
+      .split('\t')
       .map((s) => cleanHeader(s))
       .filter(Boolean);
     const normalizedHeaders = rawHeaders.length > 0
       ? rawHeaders
-      : lines[0].split(/\s+|\t/).map((_, i) => "Col" + (i + 1));
+      : lines[0].split('\t').map((_, i) => "Col" + (i + 1));
     const outRows: Row[] = [];
     let warnings = 0;
     for (let i = 0; i < lines.length; i++) {
       if (i === headerIdx) continue;
-      const cols = lines[i].split(/\s+|\t/);
+      let cols = lines[i].split('\t');
+      while (cols.length < normalizedHeaders.length) {
+        cols.push('');
+      }
+      if (cols.length > normalizedHeaders.length) {
+        cols = cols.slice(0, normalizedHeaders.length);
+      }
       if (cols.length < 2) {
         warnings++;
         continue;
@@ -510,8 +496,8 @@ Anna lühike kokkuvõte eesti keeles.`;
       const r: Row = {};
       let hasData = false;
       let hasWarning = false;
-      for (let c = 0; c < Math.min(cols.length, normalizedHeaders.length); c++) {
-        const val = cols[c].trim();
+      for (let c = 0; c < normalizedHeaders.length; c++) {
+        const val = (cols[c] || '').trim();
         r[normalizedHeaders[c]] = val;
         if (val) hasData = true;
         if (val === "???") hasWarning = true;
@@ -519,9 +505,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       if (hasWarning) {
         r._warning = "⚠️ OCR ei suutnud lugeda";
         r._confidence = 0.5;
-      } else if (cols.length < normalizedHeaders.length) {
-        r._warning = "⚠️ Puudulikud veerud";
-        r._confidence = 0.6;
       } else if (!hasData) {
         r._warning = "⚠️ Tühi rida";
         r._confidence = 0.3;
@@ -546,7 +529,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       : "";
     setMsg(`✓ Tabel valmis: ${outRows.length} rida.${warnMsg}${ocrWarnMsg}${rowCountMsg}`);
   }
-
   function cleanHeader(s: string) {
     const x = s.replace(/\s+/g, " ").trim();
     if (!x) return "";
@@ -557,7 +539,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       .replace(/Quantity/i, "Qty");
     return m.replace(/[^\w\s.-]/g, "").trim();
   }
-
   function changeCell(rIdx: number, key: string, value: string) {
     setRows((prev) => {
       const next = [...prev];
@@ -569,17 +550,14 @@ Anna lühike kokkuvõte eesti keeles.`;
       return next;
     });
   }
-
   function addRow() {
     const base: Row = { _confidence: 1.0 };
     headers.forEach(h => base[h] = "");
     setRows((prev) => [...prev, base]);
   }
-
   function removeRow(rIdx: number) {
     setRows((prev) => prev.filter((_, i) => i !== rIdx));
   }
-
   function moveRow(oldIdx: number, newIdx: number) {
     setRows((prev) => {
       const next = [...prev];
@@ -590,26 +568,21 @@ Anna lühike kokkuvõte eesti keeles.`;
     setMovedRowIdx(newIdx);
     setTimeout(() => setMovedRowIdx(null), 1000);
   }
-
   function moveRowUp(rIdx: number) {
     if (rIdx === 0) return;
     moveRow(rIdx, rIdx - 1);
   }
-
   function moveRowDown(rIdx: number) {
     if (rIdx === rows.length - 1) return;
     moveRow(rIdx, rIdx + 1);
   }
-
   function handleDragStart(e: React.DragEvent, idx: number) {
     setDragIdx(idx);
     e.dataTransfer.setData("text/plain", idx.toString());
   }
-
   function handleDragOver(e: React.DragEvent, idx: number) {
     e.preventDefault();
   }
-
   function handleDrop(e: React.DragEvent, idx: number) {
     e.preventDefault();
     if (dragIdx !== null && dragIdx !== idx) {
@@ -617,7 +590,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     }
     setDragIdx(null);
   }
-
   function addColumn() {
     if (!newColumnName.trim()) return;
     setHeaders((prev) => [...prev, newColumnName]);
@@ -625,7 +597,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     setSelectedColumns((prev) => [...prev, newColumnName]);
     setNewColumnName("");
   }
-
   function removeColumn(col: string) {
     if (col === markKey || col === qtyKey) {
       setMsg("⛔ Mark ja Kogus veergu ei saa kustutada!");
@@ -639,12 +610,10 @@ Anna lühike kokkuvõte eesti keeles.`;
       return newR;
     }));
   }
-
   function reorderColumns(newOrder: string[]) {
     setHeaders(newOrder);
     setSelectedColumns(newOrder.filter(c => selectedColumns.includes(c)));
   }
-
   function toggleColumn(col: string) {
     setSelectedColumns(prev =>
       prev.includes(col)
@@ -652,7 +621,6 @@ Anna lühike kokkuvõte eesti keeles.`;
         : [...prev, col]
     );
   }
-
   function findAndReplace() {
     if (!findText.trim()) {
       setMsg("⛔ Sisesta otsitav tekst!");
@@ -677,7 +645,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     setMsg(`✓ Asendatud ${replacedCount} kohta.`);
     setShowFindReplace(false);
   }
-
   async function searchInModel() {
     if (searchingModel) {
       console.log("Search already in progress, skipping...");
@@ -716,7 +683,7 @@ Anna lühike kokkuvõte eesti keeles.`;
               for (const p of set?.properties ?? []) {
                 const propName = String(p?.name || "");
                 const shouldCheck = /assembly[\/\s]?cast[_\s]?unit[_\s]?mark|^mark$|block/i.test(propName);
-                
+               
                 if (shouldCheck) {
                   const val = String(p?.value || p?.displayValue || "").trim();
                   if (uniqueMarks.some(m => val.toLowerCase() === m.toLowerCase())) {
@@ -772,7 +739,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       setSearchingModel(false);
     }
   }
-
   async function selectInModel() {
     if (!modelObjects.length) {
       setMsg("⛔ Tee esmalt otsing mudelist!");
@@ -796,7 +762,6 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("⛔ Selectimine ebaõnnestus: " + (e?.message || String(e)));
     }
   }
-
   async function zoomToRow(row: Row) {
     const mark = String(row[markKey] || "").trim().toLowerCase();
     if (!mark) return;
@@ -821,13 +786,11 @@ Anna lühike kokkuvõte eesti keeles.`;
       setMsg("⛔ Zoom/märgistus ebaõnnestus: " + (e?.message || String(e)));
     }
   }
-
   function getExportData(row: Row, col: string) {
     if (col === "GUID") return row._objectId ? String(row._objectId) : "";
     if (col === "PROJECT NAME") return "ProjectX";
     return String(row[col] || "");
   }
-
   function exportData() {
     if (!rows.length) return;
     const allColumns = [...exportColumns, ...additionalExportFields];
@@ -852,7 +815,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     setMsg(`✓ Eksporditud ${exportType.toUpperCase()}-sse.`);
     setShowExportModal(false);
   }
-
   function copyToClipboard() {
     if (!rows.length) return;
     const allColumns = [...copyColumns, ...additionalExportFields];
@@ -865,7 +827,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     setMsg("✅ Kopeeritud lõikelauale.");
     setShowCopyModal(false);
   }
-
   const totalRows = rows.length;
   const warningRows = rows.filter(r => r._warning).length;
   const notFoundRows = rows.filter(r => r._foundInModel === false).length;
@@ -896,7 +857,6 @@ Anna lühike kokkuvõte eesti keeles.`;
   const totalModelQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + (r._modelQuantity || 0), 0);
   }, [rows]);
-
   function onConfirmClick() {
     if (!rows.length) {
       setMsg("⛔ Tabel on tühi.");
@@ -919,7 +879,6 @@ Anna lühike kokkuvõte eesti keeles.`;
     }
     setMsg("✅ Kinnitatud: " + previewMarks.length + " kirjet.");
   }
-
   function loadSampleData() {
     const sample = `Component\tPcs
 T5.11.MG2001\t2
@@ -931,7 +890,6 @@ T5.11.MG2005\t2`;
     setTargetColumns("Component, Pcs");
     setMsg("📋 Näidis laaditud.");
   }
-
   const initSaveView = () => {
     if (!modelObjects.length) return;
     selectInModel();
@@ -945,7 +903,6 @@ T5.11.MG2005\t2`;
     setViewName(defaultName);
     setShowViewSave(true);
   };
-
   const saveView = async () => {
     if (!modelObjects.length || !viewName.trim()) return;
     try {
@@ -957,14 +914,12 @@ T5.11.MG2005\t2`;
       setMsg("⛔ Viga vaate salvestamisel: " + (e?.message || "tundmatu viga"));
     }
   };
-
   const cancelSaveView = () => {
     setShowViewSave(false);
     setViewName("");
   };
-
   const hasInput = files.length > 0 || rawText.trim().length > 0;
-  
+ 
   const modalOverlayStyle: React.CSSProperties = {
     position: "fixed",
     top: 0,
@@ -1013,7 +968,6 @@ T5.11.MG2005\t2`;
     cursor: "pointer",
     fontSize: 13
   };
-
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>, rIdx: number, colIdx: number) {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -1025,10 +979,8 @@ T5.11.MG2005\t2`;
       }
     }
   }
-
   const isLoading = busy || searchingModel;
   const loadingMessage = busy ? "Palun oota... Scannime infot" : "Palun oota... Otsime detaile";
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: COLORS.text }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -1054,7 +1006,7 @@ T5.11.MG2005\t2`;
         <div style={modalOverlayStyle}>
           <div style={modalContentStyle}>
             <h3 style={modalHeadingStyle}>🔑 OpenAI API võti</h3>
-            
+           
             {!apiKey && (
               <div style={{
                 padding: "12px",
@@ -1077,7 +1029,7 @@ T5.11.MG2005\t2`;
                 </p>
               </div>
             )}
-            
+           
             <input
               type="password"
               value={apiKey}
@@ -1153,7 +1105,7 @@ T5.11.MG2005\t2`;
             Või kleebi (Ctrl+V)
           </div>
         </div>
-        
+       
         {/* Kaamera nupp mobiilile */}
         <button
           className="camera-button"
@@ -1172,7 +1124,7 @@ T5.11.MG2005\t2`;
         >
           📷 Kaamera
         </button>
-        
+       
         {/* CSS kaamera nupu nähtavuseks */}
         <style>{`
           @media (max-width: 767px) {
@@ -1526,7 +1478,7 @@ T5.11.MG2005\t2`;
             {/* Mark ja Qty veergude valik */}
             <div style={{ marginBottom: 20, padding: 12, background: "#e7f3ff", borderRadius: 6, border: `1px solid ${COLORS.secondary}` }}>
               <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600, color: COLORS.secondary }}>🔖 Põhiveerud</h4>
-              
+             
               <div style={{ marginBottom: 8 }}>
                 <label style={{ display: "block", fontSize: 11, color: COLORS.textLight, marginBottom: 4 }}>Mark veerg 📖</label>
                 <select
@@ -1852,7 +1804,7 @@ T5.11.MG2005\t2`;
               >
                 💾 Salvesta
               </button>
-              
+             
               <button
                 style={{ ...btnSecondaryStyle, fontSize: 12 }}
                 onClick={() => setShowColumnsModal(true)}
@@ -1909,8 +1861,8 @@ T5.11.MG2005\t2`;
               </div>
             )}
           </div>
-          <div style={{ overflow: "auto", border: `1px solid ${COLORS.borderLight}`, borderRadius: 6 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <div style={{ overflow: "auto", border: `1px solid ${COLORS.borderLight}`, borderRadius: 6, maxWidth: "100%" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
               <thead>
                 <tr>
                   <th style={{ textAlign: "left", borderBottom: `2px solid ${COLORS.borderLight}`, padding: "6px 4px", background: COLORS.background, position: "sticky", top: 0, zIndex: 10, width: "25px", fontSize: 10 }}>#</th>
@@ -1955,7 +1907,7 @@ T5.11.MG2005\t2`;
                         {hasWarning ? "⚠️" : notFound ? "⛔" : found ? "✅" : ""}
                       </td>
                       {displayColumns.map((key, colIdx) => (
-                        <td key={key} style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}` }}>
+                        <td key={key} style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, wordBreak: "break-word" }}>
                           <input
                             id={`input-${idx}-${colIdx}`}
                             value={r[key] || ""}
@@ -1963,6 +1915,8 @@ T5.11.MG2005\t2`;
                             onKeyDown={(e) => handleKeyDown(e, idx, colIdx)}
                             style={{
                               width: "100%",
+                              maxWidth: "100%",
+                              boxSizing: "border-box",
                               padding: "4px 6px",
                               border: (r[key] === "???" ? "2px solid #f59e0b" : `1px solid ${COLORS.borderLight}`),
                               borderRadius: 4,
