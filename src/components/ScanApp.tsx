@@ -1150,25 +1150,34 @@ T5.11.MG2005\t2`;
             📁 Lohista pilt siia või kliki valimiseks
           </div>
           <div style={{ fontSize: 11, color: COLORS.textLight }}>
-            Või kleebi (Ctrl+V) • Või{" "}
-            <span
-              className="camera-link"
-              style={{ color: COLORS.secondary, textDecoration: "underline", cursor: "pointer" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                cameraInputRef.current?.click();
-              }}
-            >
-              võta foto
-            </span>
+            Või kleebi (Ctrl+V)
           </div>
         </div>
         
-        {/* CSS for mobile camera visibility */}
+        {/* Kaamera nupp mobiilile */}
+        <button
+          className="camera-button"
+          onClick={() => cameraInputRef.current?.click()}
+          style={{
+            padding: "8px 16px",
+            background: COLORS.primary,
+            color: COLORS.white,
+            border: "none",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 13,
+            fontWeight: 600,
+            display: "none" // Nähtav ainult mobiilil CSS-i abil
+          }}
+        >
+          📷 Kaamera
+        </button>
+        
+        {/* CSS kaamera nupu nähtavuseks */}
         <style>{`
-          @media (min-width: 768px) {
-            .camera-link {
-              display: none !important;
+          @media (max-width: 767px) {
+            .camera-button {
+              display: block !important;
             }
           }
         `}</style>
@@ -1916,8 +1925,7 @@ T5.11.MG2005\t2`;
                       top: 0,
                       zIndex: 10,
                       fontSize: 11,
-                      ...(key === markKey ? { minWidth: "60px", width: "auto" } : {}),
-                      ...(key === qtyKey ? { minWidth: "40px", width: "min-content", whiteSpace: "nowrap" } : {}),
+                      ...(key === markKey || key === qtyKey ? { width: "min-content", whiteSpace: "nowrap" } : {}),
                       ...(key === "_modelQuantity" ? { width: "60px" } : {})
                     }}>
                       {key === "_modelQuantity" ? "M.kogus" : key}
