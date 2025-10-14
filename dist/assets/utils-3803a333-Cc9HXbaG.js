@@ -1,0 +1,1 @@
+function r(){return"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(t){const x=Math.random()*16|0;return(t=="x"?x:x&3|8).toString(16)})}let e=0;function c(){return`mwc_id_${e++}`}export{r as c,c as g};
