@@ -1,4 +1,3 @@
-// MarkupCreator.tsx
 import { useState, useCallback, useEffect, type CSSProperties } from "react";
 import { WorkspaceAPI, TextMarkup, MarkupPick } from "trimble-connect-workspace-api";
 
@@ -42,11 +41,18 @@ export default function MarkupCreator({
     over: null,
   });
   const [viewName, setViewName] = useState<string>("");
+  const [markupIds, setMarkupIds] = useState<number[]>([]); // Lisa markupIds state
 
   // Laadi Pset-id
   const loadPsets = useCallback(() => {
-    const psets = allKeys.filter(key => key.startsWith("Pset_"));
-    setPsetOrder(psets);
+    console.log("Loading Psets, allKeys:", allKeys);
+    const psets = allKeys.filter(key => 
+      key.startsWith("Pset_") || 
+      key.startsWith("Tekla_") || 
+      key.startsWith("IfcElement") || 
+      key.startsWith("ProductProduct_")
+    );
+    setPsetOrder(psets.length ? psets : ["No Psets found"]); // Default väärtus, kui Pset-e pole
   }, [allKeys]);
 
   useEffect(() => {
@@ -55,14 +61,21 @@ export default function MarkupCreator({
 
   // Pset väärtuse hankimine
   async function getPropertyValue(modelId: string, objectId: number, propertyName: string): Promise<string> {
-    const [set, prop] = propertyName.split(".");
-    const properties = await api.viewer.getObjectProperties(modelId, [objectId]);
-    const props = properties[0].properties;
-    if (!props) return "";
-    const propertySet = props.find(p => p.name === set);
-    if (!propertySet || !propertySet.properties) return "";
-    const property = propertySet.properties.find(p => p.name === prop);
-    return property ? property.value.toString() : "";
+    try {
+      console.log(`Fetching property for modelId: ${modelId}, objectId: ${objectId}, property: ${propertyName}`);
+      const [set, prop] = propertyName.split(".");
+      const properties = await api.viewer.getObjectProperties(modelId, [objectId]);
+      console.log("Properties fetched:", properties);
+      const props = properties[0]?.properties;
+      if (!props) return "";
+      const propertySet = props.find(p => p.name === set);
+      if (!propertySet || !propertySet.properties) return "";
+      const property = propertySet.properties.find(p => p.name === prop);
+      return property ? property.value.toString() : "";
+    } catch (e) {
+      console.error("Error fetching property:", e);
+      return "";
+    }
   }
 
   // Markuppide lisamine
@@ -79,6 +92,11 @@ export default function MarkupCreator({
 
       const markups: TextMarkup[] = [];
       const bBoxes = await api.viewer.getObjectBoundingBoxes(modelId, ids);
+      if (!bBoxes.length) {
+        onError("No bounding boxes found for selected objects.");
+        return;
+      }
+
       for (const bBox of bBoxes) {
         const midPoint = {
           x: (bBox.boundingBox.min.x + bBox.boundingBox.max.x) / 2.0,
@@ -92,7 +110,7 @@ export default function MarkupCreator({
         };
 
         let text = markupText;
-        if (markupType === "text" && psetOrder.length) {
+        if (markupType === "text" && psetOrder.length && psetOrder[0] !== "No Psets found") {
           text = await getPropertyValue(modelId, bBox.id, psetOrder[0]) || markupText;
         }
 
@@ -100,14 +118,16 @@ export default function MarkupCreator({
           text: markupType === "text" ? text : "",
           start: point,
           end: markupType === "arrow" ? { positionX: point.positionX + 100, positionY: point.positionY, positionZ: point.positionZ } : point,
-          color: markupColor, // Eeldab, et API toetab värvi
+          color: markupColor,
         };
         markups.push(markup);
       }
 
       const newMarkupIds = (await api.markup.addTextMarkup(markups)).map(t => t.id as number);
+      setMarkupIds(newMarkupIds); // Uuenda markupIds
       onMarkupAdded(newMarkupIds);
     } catch (e: any) {
+      console.error("Markup addition error:", e);
       onError(e?.message || t.unknownError);
     }
   }
@@ -119,10 +139,16 @@ export default function MarkupCreator({
         onError("⚠️ Enter view name.");
         return;
       }
+      if (!markupIds.length) {
+        onError("No markups to save.");
+        return;
+      }
       await api.viewer.saveView({ name: viewName, markups: markupIds });
       onMarkupAdded([]); // Tühjenda markup ID-d
+      setMarkupIds([]); // Tühjenda markupIds
       setViewName("");
     } catch (e: any) {
+      console.error("Save view error:", e);
       onError(e?.message || t.unknownError);
     }
   }
@@ -145,7 +171,7 @@ export default function MarkupCreator({
   return (
     <div style={c.section}>
       <h3 style={c.heading}>{t.markupTitle}</h3>
-      <div style={c.note}>{t.markupHint}</div>
+      <div style={c.note}>{t.markupHint || "Add markups to selected objects."}</div>
       <div style={c.fieldGroup}>
         <label style={c.labelTop}>Pset-ide järjekord</label>
         <div style={c.columnListNoscroll}>
@@ -221,10 +247,10 @@ export default function MarkupCreator({
       </div>
       <div style={c.controls}>
         <button style={c.btn} onClick={addMarkups} disabled={!lastSelection.length}>
-          {t.markupTitle}
+          {t.markupTitle || "Add Markups"}
         </button>
         <button style={c.btn} onClick={saveMarkupsToView} disabled={!viewName || !markupIds.length}>
-          {t.saveViewButton}
+          {t.saveViewButton || "Save View"}
         </button>
       </div>
     </div>
