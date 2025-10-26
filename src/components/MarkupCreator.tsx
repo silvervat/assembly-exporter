@@ -1,20 +1,25 @@
-import { useState, useCallback, useEffect, type CSSProperties } from "react";
-import { WorkspaceAPI, TextMarkup, MarkupPick } from "trimble-connect-workspace-api";
+import { useEffect, useState, useCallback } from 'react';
+import { WorkspaceAPI, TextMarkup, MarkupPick } from 'trimble-connect-workspace-api';
+import './DragDropMarkupBuilder.css';
 
-interface Pset {
+interface Property {
   key: string;
-  label: string;
+  value: string;
 }
 
-interface Props {
+interface SelectedObject {
+  modelId: string;
+  id: number;
+}
+
+interface DragDropMarkupBuilderProps {
   api: WorkspaceAPI;
+  selectedObjects: SelectedObject[];
   allKeys: string[];
-  lastSelection: { modelId: string; ids: number[] }[];
   translations: Record<string, string>;
-  styles: Record<string, CSSProperties>;
-  onMarkupAdded: (ids: number[]) => void;
+  styles: Record<string, any>;
   onError: (error: string) => void;
-  onRemoveMarkups: () => Promise<void>;
+  onSuccess: (count: number) => void;
 }
 
 const COLORS = [
@@ -22,403 +27,480 @@ const COLORS = [
   "#039BE5", "#00ACC1", "#00897B", "#43A047", "#7CB342", "#C0CA33",
 ];
 
-export default function MarkupCreator({
+const DEFAULT_TRANSLATIONS = {
+  et: {
+    title: 'Markup Builder',
+    availableProps: 'Saadaolevad omadused',
+    selectedProps: 'Valitud omadused',
+    dragHint: 'Lohistage omadused siia',
+    removeButton: 'Eemalda',
+    clearButton: 'Tühjenda',
+    additionalText: 'Täiendav tekst:',
+    separator: 'Eraldaja:',
+    separatorComma: 'Koma (,)',
+    separatorNewline: 'Uus rida',
+    color: 'Värvus:',
+    preview: 'Eelvaade:',
+    applyButton: 'LISA MARKEERING',
+    applying: 'Lisatakse...',
+    success: 'Markeering lisatud {count} objektile',
+    noObjects: 'Valige objektid otsingust',
+    noProperties: 'Omadusi ei leitud',
+  },
+  en: {
+    title: 'Markup Builder',
+    availableProps: 'Available properties',
+    selectedProps: 'Selected properties',
+    dragHint: 'Drag properties here',
+    removeButton: 'Remove',
+    clearButton: 'Clear',
+    additionalText: 'Additional text:',
+    separator: 'Separator:',
+    separatorComma: 'Comma (,)',
+    separatorNewline: 'New line',
+    color: 'Color:',
+    preview: 'Preview:',
+    applyButton: 'ADD MARKUP',
+    applying: 'Adding...',
+    success: 'Markup added to {count} objects',
+    noObjects: 'Select objects from search',
+    noProperties: 'No properties found',
+  },
+};
+
+export default function DragDropMarkupBuilder({
   api,
+  selectedObjects,
   allKeys,
-  lastSelection,
-  translations: t,
-  styles: c,
-  onMarkupAdded,
+  translations = DEFAULT_TRANSLATIONS.et,
+  styles,
   onError,
-  onRemoveMarkups,
-}: Props) {
-  const [markupType, setMarkupType] = useState<"text" | "arrow" | "highlight">("text");
-  const [markupText, setMarkupText] = useState<string>("");
-  const [markupColor, setMarkupColor] = useState<string>(COLORS[0]);
-  const [psetOrder, setPsetOrder] = useState<string[]>([]);
-  const [dragState, setDragState] = useState<{ dragging: string | null; over: string | null }>({
+  onSuccess,
+}: DragDropMarkupBuilderProps) {
+  const t = translations;
+  
+  // State
+  const [availableProps, setAvailableProps] = useState<Property[]>([]);
+  const [selectedProps, setSelectedProps] = useState<Property[]>([]);
+  const [additionalText, setAdditionalText] = useState('');
+  const [separator, setSeparator] = useState(',');
+  const [markupColor, setMarkupColor] = useState(COLORS[0]);
+  const [isApplying, setIsApplying] = useState(false);
+  const [dragState, setDragState] = useState<{ dragging: Property | null; over: number | null }>({
     dragging: null,
     over: null,
   });
-  const [viewName, setViewName] = useState<string>("");
-  const [markupIds, setMarkupIds] = useState<number[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [loading, setLoading] = useState(false);
 
-  // Laadi Pset-id
-  const loadPsets = useCallback(() => {
-    console.log("Loading Psets, allKeys:", allKeys);
-    const psets = allKeys.filter(key => 
-      key.startsWith("Pset_") || 
-      key.startsWith("Tekla_") || 
-      key.startsWith("IfcElement") || 
-      key.startsWith("ProductProduct_")
-    );
-    const filteredPsets = psets.length > 0 ? psets : [];
-    setPsetOrder(filteredPsets);
-    console.log("Loaded psets:", filteredPsets);
-  }, [allKeys]);
-
+  // Laadi saadaolevad omadused valitud objektidest
   useEffect(() => {
-    loadPsets();
-  }, [loadPsets]);
-
-  // Pset väärtuse hankimine - parandustega
-  const getPropertyValue = useCallback(async (
-    modelId: string,
-    objectId: number,
-    propertyName: string
-  ): Promise<string> => {
-    try {
-      console.log(`Fetching property - modelId: ${modelId}, objectId: ${objectId}, property: ${propertyName}`);
-      
-      const [set, prop] = propertyName.split(".");
-      
-      if (!set || !prop) {
-        console.warn(`Invalid property format: ${propertyName}`);
-        return "";
-      }
-
-      const properties = await api.viewer.getObjectProperties(modelId, [objectId], { includeHidden: true });
-      console.log("Properties fetched:", properties);
-      
-      if (!properties || properties.length === 0) {
-        console.warn(`No properties found for object ${objectId}`);
-        return "";
-      }
-
-      const objectProps = properties[0]?.properties;
-      if (!objectProps || !Array.isArray(objectProps)) {
-        console.warn(`Invalid properties structure for object ${objectId}`);
-        return "";
-      }
-
-      const propertySet = objectProps.find(p => p.name === set);
-      if (!propertySet) {
-        console.warn(`PropertySet "${set}" not found for object ${objectId}`);
-        return "";
-      }
-
-      if (!propertySet.properties || !Array.isArray(propertySet.properties)) {
-        console.warn(`Invalid properties array in PropertySet "${set}"`);
-        return "";
-      }
-
-      const property = propertySet.properties.find(p => p.name === prop);
-      if (!property) {
-        console.warn(`Property "${prop}" not found in PropertySet "${set}"`);
-        return "";
-      }
-
-      const value = property.value?.toString() || "";
-      console.log(`Property value retrieved: ${value}`);
-      return value;
-    } catch (e) {
-      console.error("Error fetching property:", e);
-      return "";
-    }
-  }, [api.viewer]);
-
-  // Markuppide lisamine - parandustega
-  const addMarkups = useCallback(async () => {
-    if (isLoading) return;
-    
-    try {
-      setIsLoading(true);
-      await onRemoveMarkups();
-
-      if (!lastSelection.length) {
-        onError(t.selectObjects || "Please select objects first");
+    const loadProperties = async () => {
+      if (selectedObjects.length === 0) {
+        setAvailableProps([]);
         return;
       }
 
-      const { modelId, ids } = lastSelection[0];
-      
-      if (!modelId || !ids.length) {
-        onError("Invalid selection data");
-        return;
-      }
+      try {
+        setLoading(true);
+        const props: Property[] = [];
+        const seenKeys = new Set<string>();
 
-      const bBoxes = await api.viewer.getObjectBoundingBoxes(modelId, ids);
-      
-      if (!bBoxes || bBoxes.length === 0) {
-        onError(t.noBoundingBoxes || "No bounding boxes found for selected objects");
-        return;
-      }
+        for (const obj of selectedObjects) {
+          try {
+            // Hankida objekti omadused koos peidetutega
+            const properties = await api.viewer.getObjectProperties(obj.modelId, [obj.id], {
+              includeHidden: true,
+            });
 
-      const markups: TextMarkup[] = [];
+            if (!properties || properties.length === 0) continue;
 
-      for (const bBox of bBoxes) {
-        // Kontrolli, et bBox.boundingBox on kehtiv
-        if (!bBox.boundingBox || !bBox.boundingBox.min || !bBox.boundingBox.max) {
-          console.warn(`Invalid bounding box for object ${bBox.id}`);
-          continue;
+            const objectProps = properties[0]?.properties;
+            if (!objectProps || !Array.isArray(objectProps)) continue;
+
+            // Itereerida kõik property setid
+            objectProps.forEach((propSet: any) => {
+              if (!propSet.properties || !Array.isArray(propSet.properties)) return;
+
+              propSet.properties.forEach((prop: any) => {
+                const key = `${propSet.name}.${prop.name}`;
+                const value = prop.value?.toString() || '';
+
+                if (!seenKeys.has(key) && value) {
+                  props.push({ key, value });
+                  seenKeys.add(key);
+                }
+              });
+            });
+          } catch (e) {
+            console.error(`Error loading properties for object ${obj.id}:`, e);
+          }
         }
 
-        const midPoint = {
-          x: (bBox.boundingBox.min.x + bBox.boundingBox.max.x) / 2.0,
-          y: (bBox.boundingBox.min.y + bBox.boundingBox.max.y) / 2.0,
-          z: (bBox.boundingBox.min.z + bBox.boundingBox.max.z) / 2.0,
-        };
-
-        const point: MarkupPick = {
-          positionX: midPoint.x * 1000,
-          positionY: midPoint.y * 1000,
-          positionZ: midPoint.z * 1000,
-        };
-
-        let text = markupText;
-
-        // Hankida teksti esimesest Pset-ist kui on valitud
-        if (markupType === "text" && psetOrder.length > 0) {
-          const propertyValue = await getPropertyValue(modelId, bBox.id, psetOrder[0]);
-          text = propertyValue || markupText || "";
-        }
-
-        // Loomine markup objekti
-        const markup: TextMarkup = {
-          text: markupType === "text" ? text : "",
-          start: point,
-          end: markupType === "arrow" 
-            ? { 
-                positionX: point.positionX + 100, 
-                positionY: point.positionY, 
-                positionZ: point.positionZ 
-              } 
-            : point,
-          color: markupColor,
-        };
-
-        markups.push(markup);
+        console.log(`Loaded ${props.length} available properties`);
+        setAvailableProps(props);
+      } catch (e) {
+        console.error('Error loading properties:', e);
+        onError('Failed to load properties');
+      } finally {
+        setLoading(false);
       }
+    };
 
-      if (markups.length === 0) {
-        onError("No valid markups to add");
-        return;
-      }
+    loadProperties();
+  }, [selectedObjects, api]);
 
-      console.log(`Adding ${markups.length} markups...`);
-      const result = await api.markup.addTextMarkup(markups);
-      
-      if (!result || result.length === 0) {
-        onError("Failed to add markups - no result returned");
-        return;
-      }
-
-      const newMarkupIds = result
-        .map(m => m.id)
-        .filter((id): id is number => id !== null && id !== undefined);
-
-      if (newMarkupIds.length === 0) {
-        onError("Failed to extract markup IDs from result");
-        return;
-      }
-
-      setMarkupIds(newMarkupIds);
-      onMarkupAdded(newMarkupIds);
-      console.log(`Successfully added ${newMarkupIds.length} markups`);
-    } catch (e: any) {
-      console.error("Markup addition error:", e);
-      onError(e?.message || t.unknownError || "Failed to add markups");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [api, lastSelection, markupType, markupText, markupColor, psetOrder, getPropertyValue, onMarkupAdded, onError, onRemoveMarkups, isLoading, t]);
-
-  // Salvesta vaatesse - parandustega
-  const saveMarkupsToView = useCallback(async () => {
-    if (isSaving) return;
-
-    try {
-      setIsSaving(true);
-
-      if (!viewName.trim()) {
-        onError(t.viewNameRequired || "Please enter a view name");
-        return;
-      }
-
-      if (!markupIds.length) {
-        onError(t.noMarkupsToSave || "No markups to save");
-        return;
-      }
-
-      console.log(`Saving view "${viewName}" with ${markupIds.length} markups...`);
-      await api.viewer.saveView({ name: viewName.trim(), markups: markupIds });
-      
-      // Puuduta state pärast salvestamist
-      setMarkupIds([]);
-      setViewName("");
-      
-      onMarkupAdded([]);
-      console.log("View saved successfully");
-    } catch (e: any) {
-      console.error("Save view error:", e);
-      onError(e?.message || t.unknownError || "Failed to save view");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [api.viewer, viewName, markupIds, onMarkupAdded, onError, isSaving, t]);
-
-  // Drag-and-drop loogika - parandustega
-  const handlePsetDragStart = useCallback((key: string) => {
-    setDragState(prev => ({ ...prev, dragging: key }));
+  // Drag start - valitud property lohistamine
+  const handleDragStart = useCallback((prop: Property) => {
+    setDragState({ dragging: prop, over: null });
   }, []);
 
-  const handlePsetDragOver = useCallback((key: string) => {
-    setDragState(prev => ({ ...prev, over: key }));
+  // Drag over - teisele kohale lohistamine
+  const handleDragOver = useCallback((index: number) => {
+    setDragState(prev => ({ ...prev, over: index }));
   }, []);
 
-  const handlePsetDrop = useCallback(() => {
-    setDragState(prev => {
-      if (prev.dragging && prev.over && prev.dragging !== prev.over) {
-        const newOrder = [...psetOrder];
-        const fromIndex = newOrder.indexOf(prev.dragging);
-        const toIndex = newOrder.indexOf(prev.over);
-        
-        if (fromIndex !== -1 && toIndex !== -1) {
-          newOrder.splice(fromIndex, 1);
-          newOrder.splice(toIndex, 0, prev.dragging);
-          setPsetOrder(newOrder);
-        }
-      }
-      return { dragging: null, over: null };
-    });
-  }, [psetOrder]);
-
-  const handleDragEnd = useCallback(() => {
+  // Drop - property lisamine valitud nimekirja
+  const handleDropToSelected = useCallback(() => {
+    if (dragState.dragging && !selectedProps.find(p => p.key === dragState.dragging!.key)) {
+      setSelectedProps([...selectedProps, dragState.dragging]);
+    }
     setDragState({ dragging: null, over: null });
+  }, [dragState, selectedProps]);
+
+  // Drop - sorteerimine valitud nimekirjas
+  const handleDropInSelected = useCallback((targetIndex: number) => {
+    if (dragState.dragging && dragState.over !== null) {
+      const dragIndex = selectedProps.findIndex(p => p.key === dragState.dragging!.key);
+      if (dragIndex !== -1) {
+        const newProps = [...selectedProps];
+        newProps.splice(dragIndex, 1);
+        newProps.splice(targetIndex, 0, dragState.dragging);
+        setSelectedProps(newProps);
+      }
+    }
+    setDragState({ dragging: null, over: null });
+  }, [dragState, selectedProps]);
+
+  // Eemalda property
+  const removeProperty = useCallback((key: string) => {
+    setSelectedProps(prev => prev.filter(p => p.key !== key));
   }, []);
+
+  // Tühjenda valitud
+  const clearSelected = useCallback(() => {
+    setSelectedProps([]);
+  }, []);
+
+  // Genereerida teksti eelvaadet
+  const generateMarkupText = useCallback((): string => {
+    const parts = selectedProps.map(p => p.value);
+    if (additionalText) parts.unshift(additionalText);
+    
+    if (separator === 'newline') {
+      return parts.join('\n');
+    } else {
+      return parts.join(` ${separator} `);
+    }
+  }, [selectedProps, additionalText, separator]);
+
+  // Rakenda markup valitud objektidele
+  const applyMarkup = useCallback(async () => {
+    if (isApplying) return;
+
+    try {
+      if (selectedObjects.length === 0) {
+        onError(t.noObjects || 'Select objects first');
+        return;
+      }
+
+      if (selectedProps.length === 0) {
+        onError('Select properties to apply');
+        return;
+      }
+
+      setIsApplying(true);
+      const markupText = generateMarkupText();
+
+      // Gruppeerida objektid modelite järgi
+      const objectsByModel: Record<string, number[]> = {};
+      selectedObjects.forEach(obj => {
+        if (!objectsByModel[obj.modelId]) {
+          objectsByModel[obj.modelId] = [];
+        }
+        objectsByModel[obj.modelId].push(obj.id);
+      });
+
+      let totalMarkupsAdded = 0;
+
+      for (const [modelId, ids] of Object.entries(objectsByModel)) {
+        try {
+          // Hankida bounding boxes
+          const bBoxes = await api.viewer.getObjectBoundingBoxes(modelId, ids);
+          if (!bBoxes || bBoxes.length === 0) {
+            console.warn(`No bounding boxes for model ${modelId}`);
+            continue;
+          }
+
+          const markups: TextMarkup[] = [];
+
+          for (const bBox of bBoxes) {
+            if (!bBox.boundingBox || !bBox.boundingBox.min || !bBox.boundingBox.max) {
+              console.warn(`Invalid bounding box for object ${bBox.id}`);
+              continue;
+            }
+
+            // Arvutada keskpunkt
+            const midPoint = {
+              x: (bBox.boundingBox.min.x + bBox.boundingBox.max.x) / 2.0,
+              y: (bBox.boundingBox.min.y + bBox.boundingBox.max.y) / 2.0,
+              z: (bBox.boundingBox.min.z + bBox.boundingBox.max.z) / 2.0,
+            };
+
+            const point: MarkupPick = {
+              positionX: midPoint.x * 1000,
+              positionY: midPoint.y * 1000,
+              positionZ: midPoint.z * 1000,
+            };
+
+            const markup: TextMarkup = {
+              text: markupText,
+              start: point,
+              end: point,
+              color: markupColor,
+            };
+
+            markups.push(markup);
+          }
+
+          if (markups.length > 0) {
+            const result = await api.markup.addTextMarkup(markups);
+            const addedCount = result?.filter(m => m.id).length || 0;
+            totalMarkupsAdded += addedCount;
+            console.log(`Added ${addedCount} markups to model ${modelId}`);
+          }
+        } catch (e) {
+          console.error(`Error applying markups to model ${modelId}:`, e);
+        }
+      }
+
+      if (totalMarkupsAdded > 0) {
+        onSuccess(totalMarkupsAdded);
+      } else {
+        onError('Failed to add markups');
+      }
+    } catch (e: any) {
+      console.error('Error applying markup:', e);
+      onError(e?.message || 'Error adding markup');
+    } finally {
+      setIsApplying(false);
+    }
+  }, [selectedObjects, selectedProps, generateMarkupText, markupColor, isApplying, onError, onSuccess, t]);
 
   return (
-    <div style={c.section}>
-      <h3 style={c.heading}>{t.markupTitle || "Add Markups"}</h3>
-      <div style={c.note}>{t.markupHint || "Add markups to selected objects."}</div>
+    <div style={styles.section || {}}>
+      <h3 style={styles.heading || {}}>{t.title || 'Markup Builder'}</h3>
 
-      {/* Pset-ide järjekord */}
-      <div style={c.fieldGroup}>
-        <label style={c.labelTop}>{t.psetOrder || "Pset Order"}</label>
-        <div style={c.columnListNoscroll}>
-          {psetOrder.length > 0 ? (
-            psetOrder.map(key => (
+      {/* Saadaolevad omadused */}
+      <div style={styles.fieldGroup || {}}>
+        <label style={styles.labelTop || {}}>{t.availableProps || 'Available'}</label>
+        <div style={{ ...styles.columnListNoscroll, minHeight: '150px', border: '1px solid #ccc' }}>
+          {loading ? (
+            <div style={{ padding: '10px', textAlign: 'center', opacity: 0.7 }}>
+              Loading properties...
+            </div>
+          ) : availableProps.length > 0 ? (
+            availableProps.map(prop => (
               <div
-                key={key}
-                style={{
-                  ...c.columnItem,
-                  ...(dragState.dragging === key ? c.columnItemDragging : {}),
-                  ...(dragState.over === key ? c.columnItemHighlight : {}),
-                }}
+                key={prop.key}
                 draggable
-                onDragStart={() => handlePsetDragStart(key)}
-                onDragOver={e => {
-                  e.preventDefault();
-                  handlePsetDragOver(key);
+                onDragStart={() => handleDragStart(prop)}
+                style={{
+                  ...styles.columnItem,
+                  cursor: 'grab',
+                  opacity: selectedProps.find(p => p.key === prop.key) ? 0.5 : 1,
                 }}
-                onDrop={handlePsetDrop}
-                onDragEnd={handleDragEnd}
+                title={`${prop.key}: ${prop.value}`}
               >
-                <span style={c.dragHandle}>☰</span>
-                <span style={c.ellipsis}>{key}</span>
+                <span style={styles.dragHandle || {}}>☰</span>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {prop.key}
+                  </div>
+                  <div style={{ fontSize: '0.85em', opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {prop.value}
+                  </div>
+                </div>
               </div>
             ))
           ) : (
-            <div style={{ ...c.columnItem, opacity: 0.5 }}>
-              {t.noPsetsFound || "No Psets found"}
+            <div style={{ padding: '10px', textAlign: 'center', opacity: 0.5 }}>
+              {t.noProperties || 'No properties'}
             </div>
           )}
         </div>
-        <button 
-          style={c.btnGhost} 
-          onClick={loadPsets}
-          disabled={isLoading}
-        >
-          {t.refreshData || "Refresh"}
-        </button>
       </div>
 
-      {/* Markup tüüp */}
-      <div style={c.fieldGroup}>
-        <label style={c.labelTop}>{t.markupType || "Markup Type"}</label>
-        <select
-          value={markupType}
-          onChange={e => setMarkupType(e.target.value as "text" | "arrow" | "highlight")}
-          style={c.input}
-          disabled={isLoading}
+      {/* Valitud omadused - lohistamisel sorteerida */}
+      <div style={styles.fieldGroup || {}}>
+        <label style={styles.labelTop || {}}>{t.selectedProps || 'Selected'}</label>
+        <div
+          onDragOver={e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          }}
+          onDrop={handleDropToSelected}
+          style={{
+            ...styles.columnListNoscroll,
+            minHeight: '150px',
+            border: '2px dashed #999',
+            backgroundColor: dragState.dragging ? '#f5f5f5' : 'transparent',
+          }}
         >
-          <option value="text">{t.text || "Text"}</option>
-          <option value="arrow">{t.arrow || "Arrow"}</option>
-          <option value="highlight">{t.highlight || "Highlight"}</option>
+          {selectedProps.length > 0 ? (
+            selectedProps.map((prop, index) => (
+              <div
+                key={prop.key}
+                onDragOver={() => handleDragOver(index)}
+                onDrop={() => handleDropInSelected(index)}
+                style={{
+                  ...styles.columnItem,
+                  backgroundColor: dragState.over === index ? '#e0e0e0' : 'transparent',
+                  borderTop: dragState.over === index ? '2px solid #1E88E5' : 'none',
+                }}
+              >
+                <span style={styles.dragHandle || {}}>☰</span>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {prop.key}
+                  </div>
+                  <div style={{ fontSize: '0.85em', opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {prop.value}
+                  </div>
+                </div>
+                <button
+                  onClick={() => removeProperty(prop.key)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#d32f2f',
+                    cursor: 'pointer',
+                    fontSize: '1.2em',
+                    padding: '0 5px',
+                  }}
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+            ))
+          ) : (
+            <div style={{ padding: '10px', textAlign: 'center', opacity: 0.5 }}>
+              {t.dragHint || 'Drag properties here'}
+            </div>
+          )}
+        </div>
+        {selectedProps.length > 0 && (
+          <button
+            style={styles.btnGhost || { marginTop: '8px', padding: '6px 12px', cursor: 'pointer' }}
+            onClick={clearSelected}
+          >
+            {t.clearButton || 'Clear'}
+          </button>
+        )}
+      </div>
+
+      {/* Seadistused */}
+      <div style={styles.fieldGroup || {}}>
+        <label style={styles.labelTop || {}}>{t.additionalText || 'Additional text'}</label>
+        <input
+          type="text"
+          value={additionalText}
+          onChange={e => setAdditionalText(e.target.value)}
+          placeholder={t.additionalPlaceholder || 'Optional...'}
+          style={styles.input || {}}
+          disabled={isApplying}
+        />
+      </div>
+
+      <div style={styles.fieldGroup || {}}>
+        <label style={styles.labelTop || {}}>{t.separator || 'Separator'}</label>
+        <select
+          value={separator}
+          onChange={e => setSeparator(e.target.value)}
+          style={styles.input || {}}
+          disabled={isApplying}
+        >
+          <option value=",">{t.separatorComma || 'Comma'}</option>
+          <option value=";">{t.separatorSemicolon || 'Semicolon'}</option>
+          <option value="|">{t.separatorPipe || 'Pipe'}</option>
+          <option value="newline">{t.separatorNewline || 'New line'}</option>
         </select>
       </div>
 
-      {/* Markup tekst */}
-      {markupType === "text" && (
-        <div style={c.fieldGroup}>
-          <label style={c.labelTop}>{t.markupText || "Markup Text"}</label>
-          <input
-            type="text"
-            value={markupText}
-            onChange={e => setMarkupText(e.target.value)}
-            placeholder={t.markupTextPlaceholder || "Enter text (or first Pset will be used)"}
-            style={c.input}
-            disabled={isLoading}
-          />
-        </div>
-      )}
-
-      {/* Markup värv */}
-      <div style={c.fieldGroup}>
-        <label style={c.labelTop}>{t.markupColor || "Color"}</label>
-        <div style={c.colorPicker}>
+      <div style={styles.fieldGroup || {}}>
+        <label style={styles.labelTop || {}}>{t.color || 'Color'}</label>
+        <div style={styles.colorPicker || { display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           {COLORS.map(color => (
             <div
               key={color}
+              onClick={() => !isApplying && setMarkupColor(color)}
               style={{
-                ...c.colorSwatch,
-                background: color,
-                ...(markupColor === color ? c.colorSwatchSelected : {}),
+                ...styles.colorSwatch,
+                width: '30px',
+                height: '30px',
+                borderRadius: '4px',
+                backgroundColor: color,
+                cursor: isApplying ? 'not-allowed' : 'pointer',
+                border: markupColor === color ? '3px solid #000' : '1px solid #ccc',
               }}
-              onClick={() => !isLoading && setMarkupColor(color)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if ((e.key === "Enter" || e.key === " ") && !isLoading) {
-                  setMarkupColor(color);
-                }
-              }}
+              title={color}
             />
           ))}
         </div>
       </div>
 
-      {/* Vaate nimi */}
-      <div style={c.fieldGroup}>
-        <label style={c.labelTop}>{t.viewNameLabel || "View Name"}</label>
-        <input
-          type="text"
-          value={viewName}
-          onChange={e => setViewName(e.target.value)}
-          placeholder={t.viewNamePlaceholder || "View name..."}
-          style={c.input}
-          disabled={isSaving}
-        />
+      {/* Eelvaade */}
+      {selectedProps.length > 0 && (
+        <div style={styles.fieldGroup || {}}>
+          <label style={styles.labelTop || {}}>{t.preview || 'Preview'}</label>
+          <div
+            style={{
+              padding: '12px',
+              backgroundColor: markupColor + '20',
+              border: `2px solid ${markupColor}`,
+              borderRadius: '4px',
+              fontFamily: 'monospace',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              maxHeight: '120px',
+              overflow: 'auto',
+            }}
+          >
+            {generateMarkupText() || '(empty)'}
+          </div>
+        </div>
+      )}
+
+      {/* Rakenda nupp */}
+      <div style={styles.controls || { marginTop: '20px', display: 'flex', gap: '10px' }}>
+        <button
+          onClick={applyMarkup}
+          disabled={isApplying || selectedObjects.length === 0 || selectedProps.length === 0}
+          style={{
+            ...styles.btn,
+            flex: 1,
+            opacity: isApplying || selectedObjects.length === 0 || selectedProps.length === 0 ? 0.6 : 1,
+            cursor: isApplying || selectedObjects.length === 0 || selectedProps.length === 0 ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {isApplying ? (t.applying || 'Adding...') : (t.applyButton || 'ADD MARKUP')}
+        </button>
       </div>
 
-      {/* Nupud */}
-      <div style={c.controls}>
-        <button 
-          style={c.btn} 
-          onClick={addMarkups} 
-          disabled={!lastSelection.length || isLoading}
-        >
-          {isLoading ? (t.loading || "Loading...") : (t.markupTitle || "Add Markups")}
-        </button>
-        <button 
-          style={c.btn} 
-          onClick={saveMarkupsToView} 
-          disabled={!viewName.trim() || !markupIds.length || isSaving}
-        >
-          {isSaving ? (t.saving || "Saving...") : (t.saveViewButton || "Save View")}
-        </button>
+      {/* Info */}
+      <div style={{ marginTop: '16px', fontSize: '0.9em', opacity: 0.7 }}>
+        <div>Selected: {selectedProps.length} properties</div>
+        <div>Objects: {selectedObjects.length}</div>
       </div>
     </div>
   );
