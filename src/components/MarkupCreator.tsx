@@ -10,7 +10,6 @@ interface Pset {
 
 interface Props {
   api: WorkspaceAPI;
-  allKeys: string[];
   lastSelection: { modelId: string; ids: number[] }[];
   translations: Record<string, string>;
   styles: Record<string, CSSProperties>;
@@ -19,7 +18,7 @@ interface Props {
   onRemoveMarkups: () => Promise<void>;
 }
 
-const COMPONENT_VERSION = "1.1.0";
+const COMPONENT_VERSION = "1.2.0";
 
 const COLORS = [
   "#E53935", "#D81B60", "#8E24AA", "#5E35B1", "#3949AB", "#1E88E5",
@@ -33,8 +32,8 @@ const DEFAULT_TRANSLATIONS = {
     psetOrder: "Valitud omadused",
     noPsetsFound: "Omadusi ei leitud",
     refreshData: "Värskenda",
-    markupType: "Märkupi tüüp",
-    markupText: "Märkupi tekst",
+    markupType: "Märgistuse tüüp",
+    markupText: "Märgistuse tekst",
     markupTextPlaceholder: "Sisestage tekst või kasutatakse esimest omadust",
     markupColor: "Värvus",
     viewNameLabel: "Vaate nimi",
@@ -75,7 +74,6 @@ const DEFAULT_TRANSLATIONS = {
 
 export default function MarkupCreator({
   api,
-  allKeys,
   lastSelection,
   translations: t = DEFAULT_TRANSLATIONS.et,
   styles: c,
@@ -96,32 +94,58 @@ export default function MarkupCreator({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // Laadi Pset-id
-  const loadPsets = useCallback(() => {
-    console.log("Loading Psets, allKeys:", allKeys);
-    if (!allKeys || allKeys.length === 0) {
-      toast.error(t.noPsetsFound || "No properties available");
-      setPsetOrder([]);
-      return;
+  // Laadi PropertySet-id otse API-st
+  const loadPsets = useCallback(async () => {
+    setIsLoading(true);
+    console.log("Loading PropertySets from API for lastSelection:", lastSelection);
+    try {
+      if (!lastSelection.length || !lastSelection[0].modelId || !lastSelection[0].ids.length) {
+        toast.warn(t.selectObjects || "Please select objects");
+        setPsetOrder([]);
+        return;
+      }
+
+      const { modelId, ids } = lastSelection[0];
+      const properties = await api.viewer.getObjectProperties(modelId, ids, { includeHidden: true });
+      console.log("Fetched properties:", properties);
+
+      const psets: string[] = [];
+      properties.forEach((obj: any) => {
+        if (Array.isArray(obj.properties)) {
+          obj.properties.forEach((set: any) => {
+            const setName = set.name || "Unknown";
+            if (Array.isArray(set.properties)) {
+              set.properties.forEach((prop: any) => {
+                const propName = prop.name || "Unknown";
+                const key = `${setName}.${propName}`;
+                if (!psets.includes(key) && (setName.startsWith("Pset_") || setName.startsWith("Tekla_") || setName.startsWith("IfcElement") || setName.startsWith("ProductProduct_"))) {
+                  psets.push(key);
+                }
+              });
+            }
+          });
+        }
+      });
+
+      setPsetOrder(psets.length > 0 ? psets : []);
+      if (psets.length === 0) {
+        toast.warn(t.noPsetsFound || "No valid properties found");
+      } else {
+        console.log("Loaded psets:", psets);
+      }
+    } catch (e: any) {
+      console.error("Error loading psets:", e);
+      toast.error(t.unknownError || "Failed to load properties");
+    } finally {
+      setIsLoading(false);
     }
-    const psets = allKeys.filter(key =>
-      key.startsWith("Pset_") ||
-      key.startsWith("Tekla_") ||
-      key.startsWith("IfcElement") ||
-      key.startsWith("ProductProduct_")
-    );
-    setPsetOrder(psets.length > 0 ? psets : []);
-    if (psets.length === 0) {
-      toast.warn(t.noPsetsFound || "No valid properties found");
-    }
-    console.log("Loaded psets:", psets);
-  }, [allKeys, t]);
+  }, [api.viewer, lastSelection, t]);
 
   useEffect(() => {
     loadPsets();
   }, [loadPsets]);
 
-  // Pset väärtuse hankimine
+  // Hanki omaduse väärtus
   const getPropertyValue = useCallback(
     async (modelId: string, objectId: number, propertyName: string): Promise<string> => {
       try {
@@ -136,8 +160,8 @@ export default function MarkupCreator({
         console.log("Properties fetched:", properties);
 
         const value = properties?.[0]?.properties
-          ?.find(p => p.name === set)
-          ?.properties?.find(p => p.name === prop)
+          ?.find((p: any) => p.name === set)
+          ?.properties?.find((p: any) => p.name === prop)
           ?.value?.toString() || "";
 
         if (!value) {
@@ -145,7 +169,7 @@ export default function MarkupCreator({
           toast.warn(`Omadust ${propertyName} ei leitud objektile ${objectId}`);
         }
         return value;
-      } catch (e) {
+      } catch (e: any) {
         console.error("Error fetching property:", e);
         toast.error(t.unknownError || "Failed to fetch property");
         return "";
@@ -321,6 +345,21 @@ export default function MarkupCreator({
       <h3 style={c.heading}>{t.markupTitle || "Markup Builder"}</h3>
       <div style={c.note}>{t.markupHint || "Add markups to selected objects."}</div>
 
+      {/* Märgistuse tüüp */}
+      <div style={c.fieldGroup}>
+        <label style={c.labelTop}>{t.markupType || "Markup Type"}</label>
+        <select
+          value={markupType}
+          onChange={e => setMarkupType(e.target.value as "text" | "arrow" | "highlight")}
+          style={c.input}
+          disabled={isLoading}
+        >
+          <option value="text">Tekst</option>
+          <option value="arrow">Nool</option>
+          <option value="highlight">Esiletõstmine</option>
+        </select>
+      </div>
+
       {/* Pset-ide järjekord */}
       <div style={c.fieldGroup}>
         <label style={c.labelTop}>{t.psetOrder || "Selected properties"}</label>
@@ -357,7 +396,7 @@ export default function MarkupCreator({
         </div>
         <button style={c.btnGhost} onClick={loadPsets} disabled={isLoading}>
           {isLoading ? (
-            <span>Loading...</span>
+            <span>{t.loading || "Loading..."}</span>
           ) : (
             t.refreshData || "Refresh"
           )}
@@ -380,24 +419,32 @@ export default function MarkupCreator({
       {/* Markup värv */}
       <div style={c.fieldGroup}>
         <label style={c.labelTop}>{t.markupColor || "Color"}</label>
-        <div style={c.colorPicker}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 24px)", gap: 4 }}>
           {COLORS.map(color => (
             <div
               key={color}
               style={{
-                ...c.colorSwatch,
+                width: 24,
+                height: 24,
+                borderRadius: 4,
+                border: markupColor === color ? "2px solid #1E88E5" : "1px solid #e6eaf0",
                 background: color,
-                ...(markupColor === color ? c.colorSwatchSelected : {}),
+                cursor: isLoading ? "not-allowed" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "transform 0.15s ease",
               }}
               onClick={() => !isLoading && setMarkupColor(color)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if ((e.key === "Enter" || e.key === " ") && !isLoading) {
-                  setMarkupColor(color);
-                }
-              }}
-            />
+              onMouseEnter={(e) => !isLoading && (e.currentTarget.style.transform = "scale(1.1)")}
+              onMouseLeave={(e) => !isLoading && (e.currentTarget.style.transform = "scale(1)")}
+            >
+              {markupColor === color && (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path d="M13 4L6 11L3 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
+            </div>
           ))}
         </div>
       </div>
