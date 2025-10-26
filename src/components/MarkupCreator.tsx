@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, type CSSProperties } from "react";
 import { WorkspaceAPI, TextMarkup, MarkupPick } from "trimble-connect-workspace-api";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 interface Pset {
   key: string;
@@ -17,7 +19,7 @@ interface Props {
   onRemoveMarkups: () => Promise<void>;
 }
 
-const COMPONENT_VERSION = "1.0.0";
+const COMPONENT_VERSION = "1.1.0";
 
 const COLORS = [
   "#E53935", "#D81B60", "#8E24AA", "#5E35B1", "#3949AB", "#1E88E5",
@@ -41,9 +43,11 @@ const DEFAULT_TRANSLATIONS = {
     noMarkupsToSave: "Pole märkupeid, mida salvestada",
     selectObjects: "Palun valige objektid",
     unknownError: "Teadmatu viga",
-    loading: "Laadimise...",
+    loading: "Laadimine...",
     saving: "Salvestamine...",
     version: "Versioon",
+    successMarkupAdded: "Märgendid edukalt lisatud",
+    successViewSaved: "Vaade edukalt salvestatud",
   },
   en: {
     markupTitle: "Markup Builder",
@@ -64,6 +68,8 @@ const DEFAULT_TRANSLATIONS = {
     loading: "Loading...",
     saving: "Saving...",
     version: "Version",
+    successMarkupAdded: "Markups successfully added",
+    successViewSaved: "View successfully saved",
   },
 };
 
@@ -93,218 +99,193 @@ export default function MarkupCreator({
   // Laadi Pset-id
   const loadPsets = useCallback(() => {
     console.log("Loading Psets, allKeys:", allKeys);
+    if (!allKeys || allKeys.length === 0) {
+      toast.error(t.noPsetsFound || "No properties available");
+      setPsetOrder([]);
+      return;
+    }
     const psets = allKeys.filter(key =>
       key.startsWith("Pset_") ||
       key.startsWith("Tekla_") ||
       key.startsWith("IfcElement") ||
       key.startsWith("ProductProduct_")
     );
-    const filteredPsets = psets.length > 0 ? psets : [];
-    setPsetOrder(filteredPsets);
-    console.log("Loaded psets:", filteredPsets);
-  }, [allKeys]);
+    setPsetOrder(psets.length > 0 ? psets : []);
+    if (psets.length === 0) {
+      toast.warn(t.noPsetsFound || "No valid properties found");
+    }
+    console.log("Loaded psets:", psets);
+  }, [allKeys, t]);
 
   useEffect(() => {
     loadPsets();
   }, [loadPsets]);
 
-  // Pset väärtuse hankimine - parandustega
-  const getPropertyValue = useCallback(async (
-    modelId: string,
-    objectId: number,
-    propertyName: string
-  ): Promise<string> => {
-    try {
-      console.log(`Fetching property - modelId: ${modelId}, objectId: ${objectId}, property: ${propertyName}`);
+  // Pset väärtuse hankimine
+  const getPropertyValue = useCallback(
+    async (modelId: string, objectId: number, propertyName: string): Promise<string> => {
+      try {
+        console.log(`Fetching property - modelId: ${modelId}, objectId: ${objectId}, property: ${propertyName}`);
+        const [set, prop] = propertyName.split(".");
+        if (!set || !prop) {
+          console.warn(`Invalid property format: ${propertyName}`);
+          return "";
+        }
 
-      const [set, prop] = propertyName.split(".");
+        const properties = await api.viewer.getObjectProperties(modelId, [objectId], { includeHidden: true });
+        console.log("Properties fetched:", properties);
 
-      if (!set || !prop) {
-        console.warn(`Invalid property format: ${propertyName}`);
+        const value = properties?.[0]?.properties
+          ?.find(p => p.name === set)
+          ?.properties?.find(p => p.name === prop)
+          ?.value?.toString() || "";
+
+        if (!value) {
+          console.warn(`Property ${propertyName} not found for object ${objectId}`);
+          toast.warn(`Omadust ${propertyName} ei leitud objektile ${objectId}`);
+        }
+        return value;
+      } catch (e) {
+        console.error("Error fetching property:", e);
+        toast.error(t.unknownError || "Failed to fetch property");
         return "";
       }
+    },
+    [api.viewer, t]
+  );
 
-      const properties = await api.viewer.getObjectProperties(modelId, [objectId], { includeHidden: true });
-      console.log("Properties fetched:", properties);
-
-      if (!properties || properties.length === 0) {
-        console.warn(`No properties found for object ${objectId}`);
-        return "";
+  // Loo märgend
+  const createMarkup = useCallback(
+    async (
+      modelId: string,
+      bBox: { id: number; boundingBox: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } },
+      markupType: string,
+      markupText: string,
+      markupColor: string,
+      psetOrder: string[]
+    ): Promise<TextMarkup | null> => {
+      if (!bBox.boundingBox || !bBox.boundingBox.min || !bBox.boundingBox.max) {
+        console.warn(`Invalid bounding box for object ${bBox.id}`);
+        return null;
       }
 
-      const objectProps = properties[0]?.properties;
-      if (!objectProps || !Array.isArray(objectProps)) {
-        console.warn(`Invalid properties structure for object ${objectId}`);
-        return "";
+      const midPoint = {
+        x: (bBox.boundingBox.min.x + bBox.boundingBox.max.x) / 2.0,
+        y: (bBox.boundingBox.min.y + bBox.boundingBox.max.y) / 2.0,
+        z: (bBox.boundingBox.min.z + bBox.boundingBox.max.z) / 2.0,
+      };
+
+      const point: MarkupPick = {
+        positionX: midPoint.x * 1000,
+        positionY: midPoint.y * 1000,
+        positionZ: midPoint.z * 1000,
+      };
+
+      let text = markupText;
+      if (markupType === "text" && psetOrder.length > 0) {
+        text = await getPropertyValue(modelId, bBox.id, psetOrder[0]) || markupText || "";
       }
 
-      const propertySet = objectProps.find(p => p.name === set);
-      if (!propertySet) {
-        console.warn(`PropertySet "${set}" not found for object ${objectId}`);
-        return "";
-      }
+      return {
+        text: markupType === "text" ? text : "",
+        start: point,
+        end: markupType === "arrow" ? { ...point, positionX: point.positionX + 100 } : point,
+        color: markupColor,
+      };
+    },
+    [getPropertyValue]
+  );
 
-      if (!propertySet.properties || !Array.isArray(propertySet.properties)) {
-        console.warn(`Invalid properties array in PropertySet "${set}"`);
-        return "";
-      }
-
-      const property = propertySet.properties.find(p => p.name === prop);
-      if (!property) {
-        console.warn(`Property "${prop}" not found in PropertySet "${set}"`);
-        return "";
-      }
-
-      const value = property.value?.toString() || "";
-      console.log(`Property value retrieved: ${value}`);
-      return value;
-    } catch (e) {
-      console.error("Error fetching property:", e);
-      return "";
-    }
-  }, [api.viewer]);
-
-  // Markuppide lisamine - parandustega
+  // Märgendite lisamine
   const addMarkups = useCallback(async () => {
     if (isLoading) return;
+    setIsLoading(true);
 
     try {
-      setIsLoading(true);
       await onRemoveMarkups();
-
       if (!lastSelection.length) {
-        onError(t.selectObjects || "Please select objects first");
+        toast.error(t.selectObjects);
+        onError(t.selectObjects);
         return;
       }
 
       const { modelId, ids } = lastSelection[0];
-
       if (!modelId || !ids.length) {
+        toast.error("Invalid selection data");
         onError("Invalid selection data");
         return;
       }
 
       const bBoxes = await api.viewer.getObjectBoundingBoxes(modelId, ids);
-
       if (!bBoxes || bBoxes.length === 0) {
-        onError(t.unknownError || "No bounding boxes found for selected objects");
+        toast.error(t.unknownError);
+        onError(t.unknownError);
         return;
       }
 
-      const markups: TextMarkup[] = [];
-
-      for (const bBox of bBoxes) {
-        // Kontrolli, et bBox.boundingBox on kehtiv
-        if (!bBox.boundingBox || !bBox.boundingBox.min || !bBox.boundingBox.max) {
-          console.warn(`Invalid bounding box for object ${bBox.id}`);
-          continue;
-        }
-
-        const midPoint = {
-          x: (bBox.boundingBox.min.x + bBox.boundingBox.max.x) / 2.0,
-          y: (bBox.boundingBox.min.y + bBox.boundingBox.max.y) / 2.0,
-          z: (bBox.boundingBox.min.z + bBox.boundingBox.max.z) / 2.0,
-        };
-
-        const point: MarkupPick = {
-          positionX: midPoint.x * 1000,
-          positionY: midPoint.y * 1000,
-          positionZ: midPoint.z * 1000,
-        };
-
-        let text = markupText;
-
-        // Hankida teksti esimesest Pset-ist kui on valitud
-        if (markupType === "text" && psetOrder.length > 0) {
-          const propertyValue = await getPropertyValue(modelId, bBox.id, psetOrder[0]);
-          text = propertyValue || markupText || "";
-        }
-
-        // Loomine markup objekti
-        const markup: TextMarkup = {
-          text: markupType === "text" ? text : "",
-          start: point,
-          end: markupType === "arrow"
-            ? {
-              positionX: point.positionX + 100,
-              positionY: point.positionY,
-              positionZ: point.positionZ
-            }
-            : point,
-          color: markupColor,
-        };
-
-        markups.push(markup);
-      }
+      const markups = (await Promise.all(
+        bBoxes.map(bBox => createMarkup(modelId, bBox, markupType, markupText, markupColor, psetOrder))
+      )).filter((m): m is TextMarkup => m !== null);
 
       if (markups.length === 0) {
+        toast.error("No valid markups to add");
         onError("No valid markups to add");
         return;
       }
 
-      console.log(`Adding ${markups.length} markups...`);
       const result = await api.markup.addTextMarkup(markups);
-
-      if (!result || result.length === 0) {
-        onError("Failed to add markups - no result returned");
-        return;
-      }
-
       const newMarkupIds = result
         .map(m => m.id)
         .filter((id): id is number => id !== null && id !== undefined);
 
       if (newMarkupIds.length === 0) {
-        onError("Failed to extract markup IDs from result");
+        toast.error("Failed to extract markup IDs");
+        onError("Failed to extract markup IDs");
         return;
       }
 
       setMarkupIds(newMarkupIds);
       onMarkupAdded(newMarkupIds);
-      console.log(`Successfully added ${newMarkupIds.length} markups`);
+      toast.success(t.successMarkupAdded || "Markups successfully added");
     } catch (e: any) {
-      console.error("Markup addition error:", e);
-      onError(e?.message || t.unknownError || "Failed to add markups");
+      toast.error(e?.message || t.unknownError);
+      onError(e?.message || t.unknownError);
     } finally {
       setIsLoading(false);
     }
-  }, [api, lastSelection, markupType, markupText, markupColor, psetOrder, getPropertyValue, onMarkupAdded, onError, onRemoveMarkups, isLoading, t]);
+  }, [api, lastSelection, markupType, markupText, markupColor, psetOrder, createMarkup, onMarkupAdded, onError, onRemoveMarkups, isLoading, t]);
 
-  // Salvesta vaatesse - parandustega
+  // Salvesta vaatesse
   const saveMarkupsToView = useCallback(async () => {
     if (isSaving) return;
+    setIsSaving(true);
 
     try {
-      setIsSaving(true);
-
       if (!viewName.trim()) {
-        onError(t.viewNameRequired || "Please enter a view name");
+        toast.error(t.viewNameRequired);
+        onError(t.viewNameRequired);
         return;
       }
-
       if (!markupIds.length) {
-        onError(t.noMarkupsToSave || "No markups to save");
+        toast.error(t.noMarkupsToSave);
+        onError(t.noMarkupsToSave);
         return;
       }
 
-      console.log(`Saving view "${viewName}" with ${markupIds.length} markups...`);
       await api.viewer.saveView({ name: viewName.trim(), markups: markupIds });
-
-      // Puuduta state pärast salvestamist
       setMarkupIds([]);
       setViewName("");
-
       onMarkupAdded([]);
-      console.log("View saved successfully");
+      toast.success(t.successViewSaved || "View successfully saved");
     } catch (e: any) {
-      console.error("Save view error:", e);
-      onError(e?.message || t.unknownError || "Failed to save view");
+      toast.error(e?.message || t.unknownError);
+      onError(e?.message || t.unknownError);
     } finally {
       setIsSaving(false);
     }
   }, [api.viewer, viewName, markupIds, onMarkupAdded, onError, isSaving, t]);
 
-  // Drag-and-drop loogika - parandustega
+  // Drag-and-drop loogika
   const handlePsetDragStart = useCallback((key: string) => {
     setDragState(prev => ({ ...prev, dragging: key }));
   }, []);
@@ -336,6 +317,7 @@ export default function MarkupCreator({
 
   return (
     <div style={c.section}>
+      <ToastContainer position="top-right" autoClose={3000} />
       <h3 style={c.heading}>{t.markupTitle || "Markup Builder"}</h3>
       <div style={c.note}>{t.markupHint || "Add markups to selected objects."}</div>
 
@@ -356,7 +338,9 @@ export default function MarkupCreator({
                 onDragStart={() => handlePsetDragStart(key)}
                 onDragOver={e => {
                   e.preventDefault();
-                  handlePsetDragOver(key);
+                  if (dragState.dragging !== key) {
+                    handlePsetDragOver(key);
+                  }
                 }}
                 onDrop={handlePsetDrop}
                 onDragEnd={handleDragEnd}
@@ -371,12 +355,12 @@ export default function MarkupCreator({
             </div>
           )}
         </div>
-        <button
-          style={c.btnGhost}
-          onClick={loadPsets}
-          disabled={isLoading}
-        >
-          {t.refreshData || "Refresh"}
+        <button style={c.btnGhost} onClick={loadPsets} disabled={isLoading}>
+          {isLoading ? (
+            <span>Loading...</span>
+          ) : (
+            t.refreshData || "Refresh"
+          )}
         </button>
       </div>
 
@@ -438,14 +422,22 @@ export default function MarkupCreator({
           onClick={addMarkups}
           disabled={!lastSelection.length || isLoading}
         >
-          {isLoading ? (t.loading || "Loading...") : (t.markupTitle || "Add Markups")}
+          {isLoading ? (
+            <span>{t.loading || "Loading..."}</span>
+          ) : (
+            t.markupTitle || "Add Markups"
+          )}
         </button>
         <button
           style={c.btn}
           onClick={saveMarkupsToView}
           disabled={!viewName.trim() || !markupIds.length || isSaving}
         >
-          {isSaving ? (t.saving || "Saving...") : ("Save View")}
+          {isSaving ? (
+            <span>{t.saving || "Saving..."}</span>
+          ) : (
+            "Save View"
+          )}
         </button>
       </div>
 
