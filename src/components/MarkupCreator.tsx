@@ -116,7 +116,7 @@ export default function MarkupCreator({
   async function saveMarkupsToView() {
     try {
       if (!viewName) {
-        onError("⚠️ Sisesta vaate nimi.");
+        onError("⚠️ Enter view name.");
         return;
       }
       await api.viewer.saveView({ name: viewName, markups: markupIds });
@@ -188,7 +188,7 @@ export default function MarkupCreator({
             type="text"
             value={markupText}
             onChange={e => setMarkupText(e.target.value)}
-            placeholder="Sisesta tekst (või kasutatakse esimest Pset-i)"
+            placeholder="Enter text (or first Pset will be used)"
             style={c.input}
           />
         </div>
@@ -215,7 +215,7 @@ export default function MarkupCreator({
           type="text"
           value={viewName}
           onChange={e => setViewName(e.target.value)}
-          placeholder="Vaate nimi..."
+          placeholder="View name..."
           style={c.input}
         />
       </div>
