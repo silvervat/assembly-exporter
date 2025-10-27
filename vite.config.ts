@@ -12,7 +12,8 @@ export default defineConfig({
         '@dnd-kit/core',
         '@dnd-kit/sortable',
         '@dnd-kit/utilities',
-        '@dnd-kit/accessibility'
+        '@dnd-kit/accessibility',
+        'lucide-react'
       ]
     }
   },
