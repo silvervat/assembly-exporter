@@ -1,6 +1,6 @@
 ## Paigaldamine Trimble Connecti
 
-### 1. Lae alla .tcx fail
+### 1. L2e alla .tcx fail
 
 ### 2. Paigalda Trimble Connecti
 1. Ava Trimble Connect
