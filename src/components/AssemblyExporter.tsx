@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, mem
 import * as XLSX from "xlsx";
 import React from "react";
 import { createPortal } from "react-dom";
-import MarkupAdvanced from "./MarkupAdvanced"; // Auto-discover markup komponent
+import MarkupCreator  from "./MarkupCreator"; // Auto-discover markup komponent
 type Language = "et" | "en";
 type Tab = "search" | "discover" | "export" | "markup" | "settings" | "about" | "scan" | "log";
 type Row = Record<string, string>;
