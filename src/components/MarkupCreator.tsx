@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[]; // ✅ Salvestatav väljude järjekord
 }
 
-const COMPONENT_VERSION = "7.3.1";
+const COMPONENT_VERSION = "7.4.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 const MARKUP_COLOR = "FF0000";
 
@@ -434,14 +434,13 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
     const preview = values.join(settings.delimiter);
     setPreviewMarkup(preview);
-  }, [getOrderedSelectedFields, selectedData, settings.delimiter]);
+  }, [getOrderedSelectedFields, selectedData, settings.delimiter, allFields]);
 
   useEffect(() => {
     updatePreview();
   }, [updatePreview]);
 
-  // ✅ Drag-drop muutmine järjekorda
-  // ✅ Hangi salvestatud või valitud väljad
+  // ✅ Hangi salvestatud või valitud väljad - ENNE updatePreview!
   const getOrderedSelectedFields = useCallback(() => {
     const selectedFields = allFields.filter((f) => f.selected);
     if (selectedFields.length === 0) return [];
