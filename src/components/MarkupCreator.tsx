@@ -36,7 +36,7 @@ const MARKUP_COLOR = "#FF0000"; // Väärtus õige formaadiga
 
 const DEFAULTS: Settings = {
   delimiter: " | ",
-  selectedFields: ["TeklaAssembly.Assembly/CastunitMark"],  // ✅ Vaikimisi valitud
+  selectedFields: [],  // ✅ Tühi - intelligent valitsus teeb tööd loadSelectionData-s
   autoRefreshEnabled: true,
   markupColor: "#FF0000",
 };
