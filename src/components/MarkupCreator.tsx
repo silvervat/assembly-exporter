@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[]; // ✅ Salvestatav väljude järjekord
 }
 
-const COMPONENT_VERSION = "7.4.0";
+const COMPONENT_VERSION = "7.5.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 const MARKUP_COLOR = "FF0000";
 
@@ -413,7 +413,23 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     };
   }, [api, addLog, settings]);
 
-  // ✅ Arvuta eelvaade
+  // ✅ Hangi salvestatud või valitud väljad - ENNE updatePreview!
+  const getOrderedSelectedFields = useCallback(() => {
+    const selectedFields = allFields.filter((f) => f.selected);
+    if (selectedFields.length === 0) return [];
+
+    // Kui järjekord salvestatud, kasuta seda järjekorda
+    if (settings.selectedFields.length > 0) {
+      return settings.selectedFields
+        .map((k) => selectedFields.find((f) => f.key === k))
+        .filter(Boolean) as PropertyField[];
+    }
+
+    // Muidu valitud väljad originaalses järjekorras
+    return selectedFields;
+  }, [allFields, settings.selectedFields]);
+
+  // ✅ Arvuta eelvaade - simplify dependencies!
   const updatePreview = useCallback(() => {
     const selectedFields = getOrderedSelectedFields();
 
@@ -434,27 +450,16 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
     const preview = values.join(settings.delimiter);
     setPreviewMarkup(preview);
-  }, [getOrderedSelectedFields, selectedData, settings.delimiter, allFields]);
+  }, [getOrderedSelectedFields, selectedData, settings.delimiter]);
 
   useEffect(() => {
     updatePreview();
   }, [updatePreview]);
 
-  // ✅ Hangi salvestatud või valitud väljad - ENNE updatePreview!
-  const getOrderedSelectedFields = useCallback(() => {
-    const selectedFields = allFields.filter((f) => f.selected);
-    if (selectedFields.length === 0) return [];
-
-    // Kui järjekord salvestatud, kasuta seda järjekorda
-    if (settings.selectedFields.length > 0) {
-      return settings.selectedFields
-        .map((k) => selectedFields.find((f) => f.key === k))
-        .filter(Boolean) as PropertyField[];
-    }
-
-    // Muidu valitud väljad originaalses järjekorras
-    return selectedFields;
-  }, [allFields, settings.selectedFields]);
+  // ✅ Update preview kui valimised muutuvad
+  useEffect(() => {
+    updatePreview();
+  }, [selectedData, allFields]);
 
   const handleDragStart = (field: PropertyField) => {
     setDraggedField(field.key);
