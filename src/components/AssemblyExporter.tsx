@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent, Suspense } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, memo, type CSSProperties, type DragEvent, Suspense, lazy } from "react";
 import * as XLSX from "xlsx";
 import React from "react";
 import { createPortal } from "react-dom";
-import MarkupCreator from "./MarkupCreator"; // Uus markuppide komponent
+const MarkupCreator = lazy(() => import("./MarkupCreator")); // Uus markuppide komponent - lazy loaded
 type Language = "et" | "en";
 type Tab = "search" | "discover" | "export" | "markup" | "settings" | "about" | "scan" | "log";
 type Row = Record<string, string>;
