@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[];
 }
 
-const COMPONENT_VERSION = "7.8.1";
+const COMPONENT_VERSION = "8.0.0";
 const BUILD_DATE = new Date().toISOString().split("T")[0];
 const MARKUP_COLOR = "FF0000";
 const DEFAULTS: Settings = { delimiter: " | ", selectedFields: [] };
@@ -36,10 +36,8 @@ const DEFAULTS: Settings = { delimiter: " | ", selectedFields: [] };
 function useSettings(allFields: PropertyField[]) {
   const [settings, setSettings] = useState<Settings>(() => {
     try {
-      const raw = window.localStorage?.getItem?.("markupCreatorSettings");
-      if (!raw) return DEFAULTS;
-      const parsed = JSON.parse(raw) as Partial<Settings>;
-      return { ...DEFAULTS, ...parsed };
+      const raw = localStorage.getItem("markupCreatorSettings");
+      return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
     } catch {
       return DEFAULTS;
     }
@@ -50,10 +48,10 @@ function useSettings(allFields: PropertyField[]) {
       setSettings((prev) => {
         const next = { ...prev, ...patch };
         if (next.selectedFields) {
-          const validKeys = new Set(allFields.map((f) => f.key));
-          next.selectedFields = next.selectedFields.filter((k) => validKeys.has(k));
+          const valid = new Set(allFields.map((f) => f.key));
+          next.selectedFields = next.selectedFields.filter((k) => valid.has(k));
         }
-        window.localStorage?.setItem?.("markupCreatorSettings", JSON.stringify(next));
+        localStorage.setItem("markupCreatorSettings", JSON.stringify(next));
         return next;
       });
     },
@@ -63,14 +61,10 @@ function useSettings(allFields: PropertyField[]) {
   return [settings, update] as const;
 }
 
-function sanitizeKey(s: string): string {
-  return !s ? "" : String(s).replace(/[\s\-_.+()[\]{}]/g, "").trim();
-}
-
 function classifyGuid(guid: string): "IFC" | "MS" | "OTHER" {
   if (!guid) return "OTHER";
-  const s = String(guid).toLowerCase();
-  if (/^[\da-f]{4}[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(s)) return "IFC";
+  const s = guid.toLowerCase();
+  if (/^[\da-f]{22}$/.test(s.replace(/-/g, ""))) return "IFC";
   if (/^\d{20,}$/.test(s)) return "MS";
   return "OTHER";
 }
@@ -110,78 +104,49 @@ async function flattenProps(
   api: any
 ): Promise<Row> {
   const out: Row = {
-    GUID: "",
-    GUID_IFC: "",
-    GUID_MS: "",
-    Project: String(projectName || ""),
-    ModelId: String(modelId),
-    FileName: modelNameById.get(modelId) || "",
-    Name: String(obj?.name || ""),
-    Type: String(obj?.type || "Unknown"),
-    ObjectId: String(obj?.id || ""), // Kriitiline: alati olemas
+    GUID: "", GUID_IFC: "", GUID_MS: "", Project: projectName, ModelId: modelId,
+    FileName: modelNameById.get(modelId) || "", Name: obj?.name || "", Type: obj?.type || "Unknown",
+    ObjectId: String(obj?.id || "")
   };
-
-  const propMap = new Map<string, string>();
-  const keyCounts = new Map<string, number>();
 
   const push = (group: string, name: string, val: unknown) => {
-    const g = sanitizeKey(group);
-    const n = sanitizeKey(name);
-    const baseKey = g ? `${g}.${n}` : n;
-    let key = baseKey;
-    const count = keyCounts.get(baseKey) || 0;
-    if (count > 0) key = `${baseKey}_${count}`;
-    keyCounts.set(baseKey, count + 1);
-    const s = val == null ? "" : Array.isArray(val) ? val.map(String).join(" | ") : String(val);
-    propMap.set(key, s);
-    out[key] = s;
+    const key = `${sanitizeKey(group)}.${sanitizeKey(name)}`.replace(/^\./, "");
+    const v = val == null ? "" : Array.isArray(val) ? val.map(String).join(" | ") : String(val);
+    out[key] = v;
   };
 
-  if (Array.isArray(obj?.properties)) {
-    obj.properties.forEach((set: any) => {
-      const setName = set?.name || "Unknown";
-      (set?.properties || []).forEach((prop: any) => {
-        push(setName, prop?.name || "Unknown", prop?.displayValue ?? prop?.value);
-      });
-    });
-  }
+  (obj?.properties || []).forEach((set: any) => {
+    (set?.properties || []).forEach((p: any) => push(set.name || "Unknown", p.name || "Unknown", p.displayValue ?? p.value));
+  });
 
   let guidIfc = "", guidMs = "";
-  for (const [k, v] of propMap) {
-    if (!/guid|globalid/i.test(k)) continue;
+  Object.entries(out).forEach(([k, v]) => {
+    if (!/guid|globalid/i.test(k)) return;
     const cls = classifyGuid(v);
     if (cls === "IFC" && !guidIfc) guidIfc = v;
     if (cls === "MS" && !guidMs) guidMs = v;
-  }
-
-  try {
-    const meta = await api?.viewer?.getObjectMetadata?.(modelId, [obj?.id]);
-    const g = String(meta?.[0]?.globalId || "");
-    if (g) { out.GUID_MS = g; guidMs = g; }
-  } catch {}
-
-  if (!guidIfc && obj.id) {
-    try {
-      const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
-      if (externalIds[0] && classifyGuid(externalIds[0]) === "IFC") guidIfc = externalIds[0];
-    } catch {}
-  }
+  });
 
   const rid = Number(obj?.id);
   if (Number.isFinite(rid)) {
-    if (![...propMap.keys()].some(k => k.toLowerCase().startsWith("presentation_layers."))) {
-      const layerStr = await getPresentationLayerString(api, modelId, rid);
-      if (layerStr) out["Presentation_Layers.Layer"] = layerStr;
+    try { const meta = await api.viewer.getObjectMetadata(modelId, [rid]); if (meta?.[0]?.globalId) guidMs = meta[0].globalId; } catch {}
+    if (!guidIfc) try { const ids = await api.viewer.convertToObjectIds(modelId, [rid]); if (ids[0] && classifyGuid(ids[0]) === "IFC") guidIfc = ids[0]; } catch {}
+
+    if (!Object.keys(out).some(k => k.startsWith("Presentation_Layers"))) {
+      const layers = await api.viewer.getPresentationLayers(modelId, [rid]).catch(() => []);
+      if (layers?.[0]?.length) out["Presentation_Layers.Layer"] = layers[0].map((l: any) => l.name || l).join(" | ");
     }
 
-    const hasRef = [...propMap.keys()].some(k => k.toLowerCase().startsWith("referenceobject."));
-    if (!hasRef) {
-      const ref = await getReferenceObjectInfo(api, modelId, rid);
-      if (ref.fileName) out["ReferenceObject.File_Name"] = ref.fileName;
+    if (!Object.keys(out).some(k => k.startsWith("ReferenceObject"))) {
+      const ref = await api.viewer.getReferenceObject(modelId, rid).catch(() => ({}));
+      if (ref.file?.name) out["ReferenceObject.File_Name"] = ref.file.name;
       if (ref.fileFormat) out["ReferenceObject.File_Format"] = ref.fileFormat;
       if (ref.commonType) out["ReferenceObject.Common_Type"] = ref.commonType;
-      if (!guidIfc && ref.guidIfc) guidIfc = ref.guidIfc;
-      if (!guidMs && ref.guidMs) guidMs = ref.guidMs;
+      if (ref.guid) {
+        const cls = classifyGuid(ref.guid);
+        if (cls === "IFC") guidIfc = ref.guid;
+        if (cls === "MS") guidMs = ref.guid;
+      }
     }
   }
 
@@ -191,61 +156,46 @@ async function flattenProps(
   return out;
 }
 
-async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
+async function getSelectedObjects(api: any) {
   const mos = await api?.viewer?.getObjects?.({ selected: true });
-  if (!Array.isArray(mos) || !mos.length) return [];
-  return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
+  return (Array.isArray(mos) ? mos : []).map((m: any) => ({ modelId: String(m.modelId), objects: m.objects || [] }));
 }
 
-async function buildModelNameMap(api: any, modelIds: string[]) {
+async function buildModelNameMap(api: any, ids: string[]) {
   const map = new Map<string, string>();
-  try {
-    const list = await api?.viewer?.getModels?.();
-    for (const m of list || []) if (m?.id && m?.name) map.set(String(m.id), String(m.name));
-  } catch {}
-  for (const id of new Set(modelIds)) {
-    if (map.has(id)) continue;
-    try {
-      const f = await api?.viewer?.getLoadedModel?.(id);
-      const n = f?.name || f?.file?.name;
-      if (n) map.set(id, String(n));
-    } catch {}
-  }
+  try { (await api.viewer.getModels?.() || []).forEach((m: any) => m.id && m.name && map.set(String(m.id), String(m.name))); } catch {}
+  for (const id of new Set(ids)) if (!map.has(id)) try { const f = await api.viewer.getLoadedModel(id); const n = f?.name || f?.file?.name; if (n) map.set(id, n); } catch {}
   return map;
 }
 
-async function getProjectName(api: any): Promise<string> {
-  try {
-    const proj = typeof api?.project?.getProject === "function" ? await api.project.getProject() : api?.project || {};
-    return String(proj?.name || "");
-  } catch {
-    return "";
-  }
+async function getProjectName(api: any) {
+  try { const p = typeof api.project?.getProject === "function" ? await api.project.getProject() : api.project || {}; return p.name || ""; } catch { return ""; }
 }
 
-const groupKeys = (keys: string[]): Map<string, string[]> => {
-  const groups = new Map<string, string[]>();
-  keys.forEach((key) => {
-    let group = "Other";
-    if (key.startsWith("Tekla_Assembly.")) group = "Tekla_Assembly";
-    else if (key.startsWith("Nordec_Dalux.")) group = "Nordec_Dalux";
-    else if (key.startsWith("IfcElementAssembly.")) group = "IfcElementAssembly";
-    else if (key.startsWith("AssemblyBaseQuantities.")) group = "AssemblyBaseQuantities";
-    else if (["GUID_IFC", "GUID_MS", "GUID", "ModelId", "Name", "Type", "ObjectId", "Project", "FileName"].includes(key))
-      group = "Standard";
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group)!.push(key);
+const groupKeys = (keys: string[]) => {
+  const g = new Map<string, string[]>();
+  keys.forEach((k) => {
+    let grp = "Other";
+    if (k.startsWith("Tekla_Assembly.")) grp = "Tekla_Assembly";
+    else if (k.startsWith("Nordec_Dalux.")) grp = "Nordec_Dalux";
+    else if (k.startsWith("IfcElementAssembly.")) grp = "IfcElementAssembly";
+    else if (k.startsWith("AssemblyBaseQuantities.")) grp = "AssemblyBaseQuantities";
+    else if (["GUID_IFC","GUID_MS","GUID","ModelId","Name","Type","ObjectId","Project","FileName"].includes(k)) grp = "Standard";
+    if (!g.has(grp)) g.set(grp, []);
+    g.get(grp)!.push(k);
   });
-  return groups;
+  return g;
 };
 
-export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
+const sanitizeKey = (s: string) => String(s).replace(/[\s\-_.+()[\]{}]/g, "").trim();
+
+export default function MarkupCreator({ api }: MarkupCreatorProps) {
   const [allFields, setAllFields] = useState<PropertyField[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [markupIds, setMarkupIds] = useState<number[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showDebugLog, setShowDebugLog] = useState(false);
-  const [previewMarkup, setPreviewMarkup] = useState<string>("");
+  const [previewMarkup, setPreviewMarkup] = useState("");
   const [draggedField, setDraggedField] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
@@ -259,7 +209,11 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     console.log(`[${timestamp}] [${level.toUpperCase()}] ${message}`);
   }, []);
 
-  // ✅ Reaalajas valiku kuulamine + automaatne uuendamine
+  useEffect(() => {
+    addLog(`🚀 MarkupCreator v${COMPONENT_VERSION} laaditud`, "info");
+  }, [addLog]);
+
+  // Reaalajas valiku kuulamine + automaatne uuendamine
   useEffect(() => {
     if (!api?.viewer || listenerRegistered.current) return;
 
@@ -269,7 +223,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         if (!selectedWithBasic?.length) {
           setAllFields([]);
           setPreviewMarkup("");
-          addLog("⚠️ Valik tühi", "warn");
+          addLog("❌ Valitud objektid puuduvad", "warn");
           return;
         }
 
@@ -278,43 +232,59 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         const nameMap = await buildModelNameMap(api, modelIds);
         const allRows: Row[] = [];
 
-        for (const { modelId, objects } of selectedWithBasic) {
-          const ids = objects.map((o: any) => o?.id || o).filter(Boolean);
-          if (!ids.length) continue;
+        for (const selection of selectedWithBasic) {
+          const modelId = selection.modelId;
+          const objectRuntimeIds = selection.objects.map((o: any) => o?.id || o).filter(Boolean);
+          if (!objectRuntimeIds.length) continue;
+
           try {
-            const fullObjs = await api.viewer.getObjectProperties(modelId, ids, { includeHidden: true });
-            const flattened = await Promise.all(fullObjs.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api)));
+            const fullObjects = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
+            const flattened = await Promise.all(
+              fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api))
+            );
             allRows.push(...flattened);
           } catch (err: any) {
-            addLog(`Viga: ${err.message}`, "error");
+            addLog(`Viga: ${err?.message}`, "error");
           }
         }
 
-        if (!allRows.length) {
-          addLog("❌ Andmed puuduvad", "error");
+        if (allRows.length === 0) {
+          addLog("❌ Andmeid ei leitud", "error");
           return;
         }
 
-        const allKeys = Array.from(new Set(allRows.flatMap(Object.keys))).sort();
+        addLog(`✅ Laaditud ${allRows.length} objekti`, "success");
+
+        const allKeys = Array.from(new Set(allRows.flatMap((r) => Object.keys(r)))).sort();
         const groups = groupKeys(allKeys);
         const groupOrder = ["Standard", "Tekla_Assembly", "Nordec_Dalux", "IfcElementAssembly", "AssemblyBaseQuantities", "Other"];
         const newFields: PropertyField[] = [];
         let fieldsWithData = 0;
 
         groupOrder.forEach((groupName) => {
-          (groups.get(groupName) || []).forEach((key) => {
-            const hasData = allRows.some((r) => r[key]?.trim());
+          const groupKeys = groups.get(groupName) || [];
+          groupKeys.forEach((key) => {
+            const hasData = allRows.some((row) => row[key]?.trim());
             if (hasData) fieldsWithData++;
-            const isSelected = settings.selectedFields.length
+
+            const isSelected = settings.selectedFields.length > 0
               ? settings.selectedFields.includes(key)
               : key === "Tekla_Assembly.AssemblyCast_unit_Mark" && hasData;
 
-            newFields.push({ key, label: key, selected: isSelected, group: groupName, hasData });
+            newFields.push({
+              key,
+              label: key,
+              selected: isSelected,
+              group: groupName,
+              hasData,
+            });
           });
         });
 
-        setAllFields(newFields);
-        addLog(`✅ ${allRows.length} objekti, ${newFields.filter(f => f.selected).length} välja`, "success");
+        if (mountedRef.current) {
+          setAllFields(newFields);
+          addLog(`✅ Väljad uuendatud: ${newFields.filter((f) => f.selected).length} valitud`, "success");
+        }
 
         // Eelvaade
         const selected = newFields.filter(f => f.selected);
@@ -327,76 +297,76 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         }
 
       } catch (err: any) {
-        addLog(`❌ Laadimine ebaõnnestus: ${err.message}`, "error");
+        addLog(`❌ Valimise laadimine ebaõnnestus: ${err?.message}`, "error");
       }
     };
 
-    const handleSelection = () => loadSelectionData();
-    api.viewer.addOnSelectionChanged?.(handleSelection);
+    const handleSelectionChanged = () => loadSelectionData();
+    api.viewer.addOnSelectionChanged?.(handleSelectionChanged);
     listenerRegistered.current = true;
     loadSelectionData();
 
     return () => {
-      api.viewer.removeOnSelectionChanged?.(handleSelection);
+      api.viewer.removeOnSelectionChanged?.(handleSelectionChanged);
       listenerRegistered.current = false;
     };
   }, [api, addLog, settings]);
 
-  // ✅ Drag & Drop – kompaktne ja ilus
-  const selectedFields = useMemo(() => allFields.filter(f => f.selected), [allFields]);
-  const orderedFields = useMemo(() => {
-    if (!settings.selectedFields.length) return selectedFields;
-    return settings.selectedFields
-      .map(k => selectedFields.find(f => f.key === k))
-      .filter(Boolean) as PropertyField[];
-  }, [selectedFields, settings.selectedFields]);
+  const getOrderedSelectedFields = useCallback(() => {
+    const selected = allFields.filter(f => f.selected);
+    if (!selected.length) return [];
+    if (settings.selectedFields.length > 0) {
+      return settings.selectedFields.map(k => selected.find(f => f.key === k)).filter(Boolean) as PropertyField[];
+    }
+    return selected;
+  }, [allFields, settings.selectedFields]);
 
-  const handleDragStart = (e: React.DragEvent, key: string) => {
-    setDraggedField(key);
-    e.dataTransfer.effectAllowed = "move";
-  };
-
-  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
-
-  const handleDrop = (e: React.DragEvent, targetKey: string) => {
-    e.preventDefault();
-    if (!draggedField || draggedField === targetKey) return;
-
-    const newOrder = orderedFields.map(f => f.key);
-    const fromIdx = newOrder.indexOf(draggedField);
-    const toIdx = newOrder.indexOf(targetKey);
-    if (fromIdx === -1 || toIdx === -1) return;
-
-    newOrder.splice(fromIdx, 1);
-    newOrder.splice(toIdx, 0, draggedField);
+  const handleDragStart = (field: PropertyField) => setDraggedField(field.key);
+  const handleDrop = (targetField: PropertyField) => {
+    if (!draggedField || draggedField === targetField.key) {
+      setDraggedField(null);
+      return;
+    }
+    const ordered = getOrderedSelectedFields();
+    const draggedIdx = ordered.findIndex(f => f.key === draggedField);
+    const targetIdx = ordered.findIndex(f => f.key === targetField.key);
+    if (draggedIdx === -1 || targetIdx === -1) {
+      setDraggedField(null);
+      return;
+    }
+    const newOrder = ordered.map(f => f.key);
+    newOrder.splice(draggedIdx, 1);
+    newOrder.splice(targetIdx, 0, draggedField);
     updateSettings({ selectedFields: newOrder });
     setDraggedField(null);
     addLog(`✅ "${draggedField}" liigutatud`, "success");
   };
 
-  const moveField = (key: string, dir: "up" | "down") => {
-    const idx = orderedFields.findIndex(f => f.key === key);
-    if (idx === -1 || (dir === "up" && idx === 0) || (dir === "down" && idx === orderedFields.length - 1)) return;
-    const newOrder = orderedFields.map(f => f.key);
-    const target = dir === "up" ? idx - 1 : idx + 1;
+  const moveField = (key: string, direction: "up" | "down") => {
+    const ordered = getOrderedSelectedFields();
+    const idx = ordered.findIndex(f => f.key === key);
+    if (idx === -1 || (direction === "up" && idx === 0) || (direction === "down" && idx === ordered.length - 1)) return;
+    const newOrder = ordered.map(f => f.key);
+    const target = direction === "up" ? idx - 1 : idx + 1;
     [newOrder[idx], newOrder[target]] = [newOrder[target], newOrder[idx]];
     updateSettings({ selectedFields: newOrder });
+    addLog(`✅ "${key}" liigutatud ${direction === "up" ? "üles" : "alla"}`, "success");
   };
 
   const toggleField = (key: string) => {
-    const updated = allFields.map(f => f.key === key ? { ...f, selected: !f.selected } : f);
-    const newSelected = updated.filter(f => f.selected).map(f => f.key);
-    updateSettings({ selectedFields: newSelected });
-    setAllFields(updated);
+    setAllFields(prev => {
+      const updated = prev.map(f => f.key === key ? { ...f, selected: !f.selected } : f);
+      updateSettings({ selectedFields: updated.filter(f => f.selected).map(f => f.key) });
+      return updated;
+    });
   };
 
-  // ✅ createMarkups – alati värske valik
   const createMarkups = useCallback(async () => {
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("🔄 ALUSTAN VÄRSKE VALIKU KONTROLLI", "info");
+    addLog("🔍 KONTROLL - ALUSTAN VÄRSKE VALIKUGA", "info");
 
     const fresh = await getSelectedObjects(api);
-    if (!fresh?.length) {
+    if (!fresh.length) {
       addLog("❌ Ühtegi objekti pole valitud", "error");
       return;
     }
@@ -411,81 +381,106 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       if (!ids.length) continue;
       try {
         const objs = await api.viewer.getObjectProperties(modelId, ids, { includeHidden: true });
-        const flat = await Promise.all(objs.map(o => flattenProps(o, modelId, projectName, nameMap, api)));
-        rows.push(...flat);
+        rows.push(...await Promise.all(objs.map(o => flattenProps(o, modelId, projectName, nameMap, api))));
       } catch (err: any) {
         addLog(`Viga: ${err.message}`, "error");
       }
     }
 
     if (!rows.length) {
-      addLog("❌ Andmed puuduvad", "error");
+      addLog("❌ Andmeid ei leitud", "error");
       return;
     }
 
-    const selected = orderedFields;
-    if (!selected.length) {
-      addLog("❌ Valitud väljad puuduvad", "error");
+    const selectedFields = getOrderedSelectedFields();
+    if (!selectedFields.length) {
+      addLog("❌ Valitud väljad puuduvad!", "error");
       return;
     }
 
-    addLog(`✅ Loen ${rows.length} objektile markupid`, "success");
+    addLog(`\n✅ LOON MARKUPID ${rows.length} OBJEKTILE`, "success");
     setIsLoading(true);
 
     try {
-      const markups: any[] = [];
+      const markupsToCreate: any[] = [];
       const modelId = rows[0].ModelId;
-      const ids = rows.map(r => Number(r.ObjectId)).filter(Boolean);
-      const bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, ids).catch(() => []);
-      const bBoxMap = new Map(bBoxes.map((b: any) => [b.id, b]));
+      const objectIds = rows.map(r => Number(r.ObjectId)).filter(Boolean);
+      let bBoxes: any[] = [];
+      try {
+        bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, objectIds);
+        addLog(`✅ Saadud ${bBoxes.length} BBox-i`, "success");
+      } catch (err: any) {
+        addLog(`⚠️ BBox viga: ${err?.message}`, "warn");
+        bBoxes = objectIds.map(id => ({ id, boundingBox: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } } }));
+      }
 
-      for (const row of rows) {
-        const values = selected.map(f => row[f.key] || "").filter(v => v.trim());
-        if (!values.length) continue;
+      const bBoxMap = new Map(bBoxes.map(b => [b.id, b]));
+      let successCount = 0;
 
-        const bBox = bBoxMap.get(Number(row.ObjectId));
-        const mid = bBox?.boundingBox
-          ? {
-              x: (bBox.boundingBox.min.x + bBox.boundingBox.max.x) / 2,
-              y: (bBox.boundingBox.min.y + bBox.boundingBox.max.y) / 2,
-              z: (bBox.boundingBox.min.z + bBox.boundingBox.max.z) / 2,
-            }
-          : { x: 0, y: 0, z: 0 };
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        const objectId = Number(row.ObjectId);
+        const bBox = bBoxMap.get(objectId);
 
-        markups.push({
+        if (!bBox) {
+          addLog(` ⚠️ ${idx + 1}. ID ${objectId}: BBox puudub`, "warn");
+          continue;
+        }
+
+        const values = selectedFields.map(f => row[f.key] || "").filter(v => v.trim());
+        if (!values.length) {
+          addLog(` ⚠️ ${idx + 1}. ID ${objectId}: andmed puuduvad`, "warn");
+          continue;
+        }
+
+        const bb = bBox.boundingBox;
+        const mid = {
+          x: (bb.min.x + bb.max.x) / 2,
+          y: (bb.min.y + bb.max.y) / 2,
+          z: (bb.min.z + bb.max.z) / 2,
+        };
+
+        markupsToCreate.push({
           text: values.join(settings.delimiter),
           start: { positionX: mid.x * 1000, positionY: mid.y * 1000, positionZ: mid.z * 1000 },
           end: { positionX: mid.x * 1000, positionY: mid.y * 1000, positionZ: mid.z * 1000 },
           color: MARKUP_COLOR,
         });
+
+        successCount++;
+        if (idx < 3) addLog(` ✅ ${idx + 1}. "${values.join(settings.delimiter).substring(0, 50)}"`, "debug");
       }
 
-      if (!markups.length) {
-        addLog("❌ Ühtegi markupit ei loodud", "error");
+      if (!markupsToCreate.length) {
+        addLog("❌ Ühtegi märgupit ei saadud luua", "error");
         return;
       }
 
-      const result = await api.markup?.addTextMarkup?.(markups);
-      const ids = (Array.isArray(result) ? result : []).map((i: any) => i?.id).filter(Boolean);
-      if (ids.length) {
-        setMarkupIds(ids);
-        addLog(`✅ Loodi ${ids.length} markupit!`, "success");
+      const result = await api.markup?.addTextMarkup?.(markupsToCreate);
+      const createdIds = (Array.isArray(result) ? result : []).map((i: any) => i?.id).filter(Boolean);
+      if (createdIds.length) {
+        setMarkupIds(createdIds);
+        addLog(`\n✅ LOODUD: ${createdIds.length} märgupit! 🎉`, "success");
       }
     } catch (err: any) {
       addLog(`❌ Viga: ${err.message}`, "error");
     } finally {
       setIsLoading(false);
+      addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
-  }, [api, addLog, orderedFields, settings.delimiter]);
+  }, [api, addLog, getOrderedSelectedFields, settings.delimiter]);
 
   const handleRemoveAllMarkups = useCallback(async () => {
+    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+    addLog("🗑️ KÕIGI MARKUPITE KUSTUTAMINE", "info");
+
     setIsLoading(true);
     try {
       const all = await api.markup?.getTextMarkups?.();
       const ids = (all || []).map((m: any) => m?.id).filter(Boolean);
       if (ids.length) {
         await api.markup?.removeMarkups?.(ids);
-        addLog(`✅ Kustutatud ${ids.length} markupit`, "success");
+        addLog(`✅ Kustutatud ${ids.length} märgupit`, "success");
         setMarkupIds([]);
       } else {
         addLog("ℹ️ Markupeid pole", "warn");
@@ -494,92 +489,111 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       addLog(`❌ Viga: ${err.message}`, "error");
     } finally {
       setIsLoading(false);
+      addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
   }, [api, addLog]);
 
-  const grouped = useMemo(() => {
-    const g = new Map<string, PropertyField[]>();
+  const groupedFields = useMemo(() => {
+    const groups = new Map<string, PropertyField[]>();
     allFields.forEach(f => {
-      const grp = f.group || "Other";
-      if (!g.has(grp)) g.set(grp, []);
-      g.get(grp)!.push(f);
+      const g = f.group || "Other";
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g)!.push(f);
     });
-    return g;
+    return groups;
   }, [allFields]);
+
+  const selectedCount = allFields.filter(f => f.selected).length;
 
   return (
     <div style={{ padding: 12, fontFamily: "system-ui, -apple-system, sans-serif", display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#f5f5f5" }}>
-      <div style={{ marginBottom: 12, textAlign: "center" }}>
+      <div style={{ marginBottom: 12, textAlign: "center", padding: "12px 12px 0 12px" }}>
         <div style={{ fontSize: 13, color: "#333", fontWeight: 600 }}>
-          Valitud: {allFields.length ? orderedFields.length : 0} välja
+          📊 Valitud: {allFields.length ? selectedCount : 0} välja
         </div>
       </div>
 
       <div style={{ border: "1px solid #e0e0e0", borderRadius: 6, padding: 12, backgroundColor: "#fff", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-        <h3 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "#333" }}>⚙️ Seaded</h3>
-        <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 4, color: "#555" }}>Eraldaja:</label>
+        <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 600, color: "#333" }}>⚙️ Seaded</h3>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 6, color: "#555" }}>Eraldaja:</label>
           <input
             type="text"
             value={settings.delimiter}
             onChange={e => updateSettings({ delimiter: e.target.value })}
-            style={{ width: "100%", padding: "6px 8px", border: "1px solid #d0d0d0", borderRadius: 4, fontSize: 11 }}
+            style={{ width: "100%", padding: "8px 10px", border: "1px solid #d0d0d0", borderRadius: 4, fontSize: 11 }}
           />
         </div>
-        <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 4, color: "#555" }}>Eelvaade:</label>
-          <div style={{ fontFamily: "monospace", fontSize: 11, backgroundColor: "#fafbfc", padding: 8, borderRadius: 4, border: "1px solid #e0e0e0", minHeight: 32, wordBreak: "break-all" }}>
-            {previewMarkup || "(vali objektid)"}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 6, color: "#555" }}>👁️ Eelvaade:</label>
+          <div style={{ fontSize: 11, color: previewMarkup ? "#333" : "#999", fontFamily: "monospace", backgroundColor: "#fafbfc", padding: 10, borderRadius: 4, border: "1px solid #e0e0e0", wordBreak: "break-all", minHeight: 36 }}>
+            {previewMarkup || "(ei andmeid)"}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={createMarkups} disabled={isLoading || !orderedFields.length} style={{ flex: 1, padding: "8px", backgroundColor: isLoading || !orderedFields.length ? "#ccc" : "#1976d2", color: "#fff", border: "none", borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
-            Loo
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={createMarkups}
+            disabled={isLoading || selectedCount === 0}
+            style={{
+              flex: 1, padding: "10px 12px", backgroundColor: isLoading || selectedCount === 0 ? "#d0d0d0" : "#1976d2",
+              color: "white", border: "none", borderRadius: 4, cursor: isLoading || selectedCount === 0 ? "not-allowed" : "pointer",
+              fontSize: 12, fontWeight: 600
+            }}
+          >
+            ➕ Loo
           </button>
-          <button onClick={handleRemoveAllMarkups} disabled={isLoading} style={{ padding: "6px 8px", backgroundColor: "#d32f2f", color: "#fff", border: "none", borderRadius: 3, fontSize: 9 }}>
-            Kustuta
+          <button
+            onClick={handleRemoveAllMarkups}
+            disabled={isLoading}
+            style={{ flex: 1, padding: "6px 8px", backgroundColor: isLoading ? "#ccc" : "#d32f2f", color: "white", border: "none", borderRadius: 3, fontSize: 9, fontWeight: 600 }}
+          >
+            🗑️ Kustuta kõik
           </button>
+        </div>
+        <div style={{ fontSize: 8, color: "#666", marginTop: 6, padding: 6, backgroundColor: "#f9f9f9", borderRadius: 2 }}>
+          ℹ️ Punane värviga. Järjekord muudatav: drag-drop või ↑↓ nupud
         </div>
       </div>
 
       <div style={{ flex: 1, border: "1px solid #e0e0e0", borderRadius: 6, padding: 12, backgroundColor: "#fff", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-        <h3 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "#333" }}>Omadused</h3>
+        <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 600, color: "#333" }}>📋 Omadused ({selectedCount} valitud)</h3>
         <div style={{ flex: 1, overflowY: "auto" }}>
           {allFields.length === 0 ? (
             <p style={{ color: "#999", fontSize: 11, margin: 0 }}>Vali objektid 3D vaates...</p>
           ) : (
-            Array.from(grouped.entries()).map(([group, fields]) => (
-              <div key={group} style={{ marginBottom: 12 }}>
-                <div style={{ padding: "6px 8px", backgroundColor: "#f5f5f5", borderRadius: 4, fontWeight: 600, fontSize: 11, color: "#333", border: "1px solid #e0e0e0", display: "flex", justifyContent: "space-between" }}>
-                  <span>{group}</span>
-                  <span style={{ color: "#666" }}>{fields.filter(f => f.selected).length}/{fields.length}</span>
+            Array.from(groupedFields.entries()).map(([groupName, groupFields]) => (
+              <div key={groupName} style={{ marginBottom: 12 }}>
+                <div style={{ padding: "8px 10px", backgroundColor: "#f5f5f5", borderRadius: 4, marginBottom: 6, fontWeight: 600, fontSize: 11, color: "#333", border: "1px solid #e0e0e0", display: "flex", justifyContent: "space-between" }}>
+                  <span>{groupName}</span>
+                  <span style={{ fontWeight: 500, color: "#666" }}>{groupFields.filter(f => f.selected).length}/{groupFields.length}</span>
                 </div>
-                {fields.map((f) => {
-                  const idx = orderedFields.findIndex(x => x.key === f.key);
-                  const isFirst = idx === 0;
-                  const isLast = idx === orderedFields.length - 1;
+                {groupFields.map(field => {
+                  const ordered = getOrderedSelectedFields();
+                  const idx = ordered.findIndex(f => f.key === field.key);
+                  const isFirst = idx === 0, isLast = idx === ordered.length - 1;
+                  const isSelected = idx !== -1;
                   return (
                     <div
-                      key={f.key}
-                      draggable={f.selected}
-                      onDragStart={(e) => handleDragStart(e, f.key)}
-                      onDragOver={handleDragOver}
-                      onDrop={(e) => handleDrop(e, f.key)}
+                      key={field.key}
+                      draggable={field.selected}
+                      onDragStart={() => handleDragStart(field)}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={() => handleDrop(field)}
                       style={{
-                        display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", margin: "2px 0", borderRadius: 4,
-                        backgroundColor: f.selected ? "#e3f2fd" : "transparent",
-                        border: f.selected ? "1px solid #1976d2" : draggedField === f.key ? "1px dashed #1976d2" : "1px solid transparent",
-                        opacity: f.hasData ? 1 : 0.6,
-                        cursor: f.selected ? "grab" : "default",
+                        display: "flex", gap: 8, alignItems: "center", marginBottom: 6, padding: "8px 10px", borderRadius: 4,
+                        backgroundColor: field.selected ? "#e3f2fd" : "transparent",
+                        opacity: field.hasData ? 1 : 0.6,
+                        border: field.selected ? "1px solid #1976d2" : draggedField === field.key ? "1px dashed #1976d2" : "1px solid transparent",
+                        cursor: field.selected ? "grab" : "default"
                       }}
                     >
-                      <span style={{ fontSize: 10, color: f.selected ? "#1976d2" : "#ccc" }}>⋮⋮</span>
-                      <input type="checkbox" checked={f.selected} onChange={() => toggleField(f.key)} style={{ cursor: "pointer" }} />
-                      <span style={{ flex: 1, fontSize: 11, fontWeight: 500, color: "#0066cc" }}>{f.label}</span>
-                      {f.selected && (
-                        <div style={{ display: "flex", gap: 2 }}>
-                          {!isFirst && <button onClick={() => moveField(f.key, "up")} style={{ padding: "2px 6px", fontSize: 10, background: "#f0f0f0", border: "1px solid #d0d0d0", borderRadius: 3 }}>↑</button>}
-                          {!isLast && <button onClick={() => moveField(f.key, "down")} style={{ padding: "2px 6px", fontSize: 10, background: "#f0f0f0", border: "1px solid #d0d0d0", borderRadius: 3 }}>↓</button>}
+                      <span style={{ fontSize: 10, color: field.selected ? "#1976d2" : "#ccc" }}>⋮⋮</span>
+                      <input type="checkbox" checked={field.selected} onChange={() => toggleField(field.key)} style={{ cursor: "pointer", width: 16, height: 16 }} />
+                      <span style={{ color: "#0066cc", fontSize: 11, fontWeight: 500, flex: 1, wordBreak: "break-word" }}>{field.label}</span>
+                      {isSelected && (
+                        <div style={{ display: "flex", gap: 4 }}>
+                          {!isFirst && <button onClick={() => moveField(field.key, "up")} style={{ padding: "4px 6px", fontSize: 11, background: "#f0f0f0", border: "1px solid #d0d0d0", borderRadius: 4 }}>↑</button>}
+                          {!isLast && <button onClick={() => moveField(field.key, "down")} style={{ padding: "4px 6px", fontSize: 11, background: "#f0f0f0", border: "1px solid #d0d0d0", borderRadius: 4 }}>↓</button>}
                         </div>
                       )}
                     </div>
@@ -591,17 +605,20 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </div>
       </div>
 
-      <div style={{ backgroundColor: "#fff", border: "1px solid #e0e0e0", borderRadius: 6, overflow: "hidden", fontFamily: "monospace", fontSize: 10, maxHeight: showDebugLog ? 120 : 28, transition: "max-height 0.2s" }}>
-        <div onClick={() => setShowDebugLog(!showDebugLog)} style={{ padding: "6px 10px", backgroundColor: "#f5f5f5", cursor: "pointer", fontWeight: 600, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11 }}>
-          <span>{showDebugLog ? "▼" : "▶"} LOG ({logs.length})</span>
-          {showDebugLog && <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(logs.map(l => `[${l.timestamp}] ${l.message}`).join("\n")); addLog("LOG kopeeritud", "success"); }} style={{ fontSize: 8, padding: "2px 6px", background: "#e0e0e0", border: "none", borderRadius: 2 }}>Kopeeri</button>}
+      <div style={{ backgroundColor: "#fff", border: "1px solid #e0e0e0", borderRadius: 6, overflow: "hidden", fontFamily: "monospace", fontSize: 10, maxHeight: showDebugLog ? 140 : 28, transition: "max-height 0.2s" }}>
+        <div onClick={() => setShowDebugLog(!showDebugLog)} style={{ padding: "8px 12px", backgroundColor: "#f5f5f5", cursor: "pointer", fontWeight: 600, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11 }}>
+          <span>{showDebugLog ? "▼" : "▶"} 📋 LOG ({logs.length})</span>
+          {showDebugLog && <button onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(logs.map(l => `[${l.timestamp}] ${l.message}`).join("\n")); addLog("LOG kopeeritud", "success"); }} style={{ padding: "2px 6px", fontSize: 8, background: "#e0e0e0", border: "none", borderRadius: 2 }}>Kopeeri</button>}
         </div>
-        {showDebugLog && <div style={{ maxHeight: 100, overflowY: "auto", padding: "4px 8px", backgroundColor: "#fafafa" }}>
-          {logs.map((l, i) => <div key={i} style={{ color: { success: "#2e7d32", error: "#c62828", warn: "#f57f17", info: "#0277bd", debug: "#666" }[l.level] || "#333" }}>[{l.timestamp}] {l.message}</div>)}
+        {showDebugLog && <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px", backgroundColor: "#fafafa" }}>
+          {logs.map((log, i) => {
+            const colors = { success: "#2e7d32", error: "#c62828", warn: "#f57f17", info: "#0277bd", debug: "#666" };
+            return <div key={i} style={{ marginBottom: 1, color: colors[log.level] || "#333" }}>[{log.timestamp}] {log.message}</div>;
+          })}
         </div>}
       </div>
 
-      <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid #e0e0e0", textAlign: "center", fontSize: 10, color: "#999" }}>
+      <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid #e0e0e0", textAlign: "center", fontSize: 10, color: "#999", fontWeight: 500 }}>
         MARKUP GENERATOR {COMPONENT_VERSION} • {BUILD_DATE}
       </div>
     </div>
