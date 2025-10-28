@@ -24,7 +24,7 @@ interface Row {
   [key: string]: string;
 }
 
-const COMPONENT_VERSION = "6.2.22";
+const COMPONENT_VERSION = "6.3.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 
 // ✅ Samad funktsioonid kui Assembly Exporter'is
@@ -481,53 +481,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     [fields]
   );
 
-  const getObjectBoundingBox = useCallback(
-    async (modelId: string, objectId: number) => {
-      const key = `${modelId}:${objectId}`;
-      if (bboxCache.current.has(key)) {
-        return bboxCache.current.get(key);
-      }
-
-      try {
-        // ✅ AINULT ÕIGE API: viewer.getObjectBoundingBox
-        // ❌ EEMALDA: api.object.getObjectGeometry (ei ole Trimble Connectis!)
-        
-        try {
-          const bbox = await api.viewer?.getObjectBoundingBox?.(modelId, objectId);
-          if (bbox) {
-            addLog(`   ✅ ${objectId}: BBox viewer API-st`, "debug");
-            bboxCache.current.set(key, bbox);
-            return bbox;
-          }
-        } catch (e1: any) {
-          addLog(`   ℹ️ ${objectId}: viewer.getObjectBoundingBox pole saadaval`, "debug");
-        }
-
-        // ✅ Fallback: Kui BBox ei leidu, kasuta randomiseeritud koordinaate
-        // Nii ei kattu markup'id üksteise peal
-        const randomOffset = () => (Math.random() - 0.5) * 100; // ±50
-        
-        return {
-          min: { 
-            x: randomOffset(), 
-            y: randomOffset(), 
-            z: randomOffset() 
-          },
-          max: { 
-            x: randomOffset() + 1, 
-            y: randomOffset() + 1, 
-            z: randomOffset() + 1 
-          },
-        };
-      } catch (err: any) {
-        addLog(`   ⚠️ ${objectId}: BBox viga: ${err?.message}`, "warn");
-      }
-
-      return null;
-    },
-    [api, addLog]
-  );
-
   const createMarkups = useCallback(async () => {
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     addLog("🔧 MARKUPITE LOOMINE", "info");
@@ -549,21 +502,70 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
     try {
       const markupsToCreate: any[] = [];
-      const createdIds: number[] = [];
-      let processed = 0;
-      let skipped = 0;
-
       const modelId = selectedData[0]?.ModelId;
+
+      // ✅ PRODUKTIIVSUSEST: Hangi KÕIK BBox-id KORRAGA
+      addLog("\n1️⃣ BBOXE HANKIMINE:", "debug");
+
+      const objectIds = selectedData.map((row) => Number(row.ObjectId)).filter(Boolean);
+      
+      if (objectIds.length === 0) {
+        addLog("❌ ObjectId-d puuduvad", "error");
+        return;
+      }
+
+      addLog(`   Hangin ${objectIds.length} BBox-i korraga...`, "debug");
+
+      let bBoxes: any[] = [];
+      try {
+        // ✅ ÕIGE API: getObjectBoundingBoxes (MASSIIV!)
+        bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, objectIds);
+        addLog(`   ✅ Saadud: ${bBoxes.length} BBox-i`, "success");
+      } catch (err: any) {
+        addLog(`   ⚠️ getObjectBoundingBoxes viga: ${err?.message}`, "warn");
+        addLog(`   💡 Fallback: kasutame staatilist positsioonida`, "debug");
+        
+        // Fallback: lihtne fallback
+        bBoxes = objectIds.map((id) => ({
+          id,
+          boundingBox: {
+            min: { x: 0, y: 0, z: 0 },
+            max: { x: 1, y: 1, z: 1 },
+          },
+        }));
+      }
+
+      // ✅ PRODUKTIIVSUSEST: Loome markup'id BBox-idest
+      addLog("\n2️⃣ MARKUP'IDE LOOMINE:", "debug");
 
       for (let idx = 0; idx < selectedData.length; idx++) {
         const row = selectedData[idx];
+        const objectId = Number(row.ObjectId);
+
         try {
-          const objectId = Number(row.ObjectId);
-          if (!objectId) {
-            skipped++;
+          // Leia vastav BBox
+          const bBox = bBoxes.find((b) => b.id === objectId);
+          if (!bBox) {
+            addLog(`   ⚠️ ${objectId}: BBox puudub`, "warn");
             continue;
           }
 
+          // ✅ PRODUKTIIVSUSEST: getMidPoint
+          const bb = bBox.boundingBox;
+          const midPoint = {
+            x: (bb.min.x + bb.max.x) / 2,
+            y: (bb.min.y + bb.max.y) / 2,
+            z: (bb.min.z + bb.max.z) / 2,
+          };
+
+          // ✅ PRODUKTIIVSUSEST: start JA end on SAMAD!
+          const point = {
+            positionX: midPoint.x * 1000,
+            positionY: midPoint.y * 1000,
+            positionZ: midPoint.z * 1000,
+          };
+
+          // Koguma teksti
           const values: string[] = [];
           for (const field of selectedFields) {
             const value = row[field.key] || "";
@@ -573,103 +575,65 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           }
 
           if (values.length === 0) {
-            addLog(`   ⚠️ ${objectId}: Andmeid valitud väljadele pole`, "warn");
-            skipped++;
+            addLog(`   ⚠️ ${objectId}: Andmeid pole`, "warn");
             continue;
           }
 
           const text = values.join(delimiter);
           const hexColor = normalizeColor(markupColor);
 
-          // ✅ Random offset - et markup'id ei kattuks
-          const randomOffset = () => (Math.random() - 0.5) * 2; // -1..1
-
-          // Hangige BBox
-          const bbox = await getObjectBoundingBox(modelId, objectId);
-
-          let startX, startY, startZ, endX, endY, endZ;
-
-          if (bbox && bbox.min && bbox.max) {
-            // BBox leiti - kasuta keskpunkti + offset
-            const minX = bbox.min.x || 0;
-            const maxX = bbox.max.x || 1;
-            const minY = bbox.min.y || 0;
-            const maxY = bbox.max.y || 1;
-            const minZ = bbox.min.z || 0;
-            const maxZ = bbox.max.z || 1;
-
-            const centerX = (minX + maxX) / 2;
-            const centerY = (minY + maxY) / 2;
-            const centerZ = (minZ + maxZ) / 2;
-
-            // Lisa random offset, et markup'id ei kattuks
-            startX = centerX + randomOffset() * 0.5;
-            startY = centerY + randomOffset() * 0.5;
-            startZ = centerZ + randomOffset() * 0.5;
-
-            endX = startX + 0.5 + randomOffset() * 0.2;
-            endY = startY + 0.5 + randomOffset() * 0.2;
-            endZ = startZ;
-
-            addLog(`   ✅ ${objectId}: BBox koos offsetiga`, "debug");
-          } else {
-            // ✅ BBox PUUDUB - kasuta randomiseeritud fallback
-            startX = randomOffset() * 50;
-            startY = randomOffset() * 50;
-            startZ = randomOffset() * 50;
-
-            endX = startX + 0.5 + randomOffset() * 0.2;
-            endY = startY + 0.5 + randomOffset() * 0.2;
-            endZ = startZ;
-
-            addLog(`   ℹ️ ${objectId}: Fallback randomiseeritud offset`, "debug");
-          }
-
-          const markupObj = {
+          // ✅ TextMarkup struktuuri ÕIGESTI
+          const markup = {
             text: text,
-            start: {
-              positionX: startX * 1000,
-              positionY: startY * 1000,
-              positionZ: startZ * 1000,
-            },
-            end: {
-              positionX: endX * 1000,
-              positionY: endY * 1000,
-              positionZ: endZ * 1000,
-            },
+            start: point,
+            end: point, // ← SAMA!
             color: hexColor,
           };
 
-          markupsToCreate.push(markupObj);
-          processed++;
+          markupsToCreate.push(markup);
 
-          if (idx < 3 || idx % 5 === 0) {
+          if (idx < 3) {
             addLog(`   ✅ ${idx + 1}. "${text.substring(0, 40)}"`, "debug");
           }
         } catch (err: any) {
           addLog(`   ❌ Objekti ${idx + 1}: ${err?.message}`, "error");
-          skipped++;
         }
       }
 
-      addLog(`\n📊 Statustika: ${processed} valmis, ${skipped} vahele jäetud`, "info");
+      addLog(`\n   📊 Valmis: ${markupsToCreate.length} märgupit`, "success");
 
       if (markupsToCreate.length === 0) {
         addLog("❌ Ühtegi märgupit ei saadud luua", "error");
         return;
       }
 
-      const result = await api.markup.addTextMarkup(markupsToCreate);
+      // ✅ PRODUKTIIVSUSEST: addTextMarkup tagastab OBJEKTIDE massiivi
+      addLog("\n3️⃣ SAATMINE API-LE:", "debug");
+      addLog(`   📤 Saadetak: ${markupsToCreate.length} märgupit`, "debug");
+
+      const result = await api.markup?.addTextMarkup?.(markupsToCreate);
+
+      addLog(`   ✅ API vastus kätte`, "success");
+
+      // ✅ Parse vastused - koguvad .id omadust
+      const createdIds: number[] = [];
 
       if (Array.isArray(result)) {
-        if (result.length > 0 && typeof result[0] === "number") {
-          createdIds.push(...result);
-        }
+        addLog(`   📊 Vastus: massiiv ${result.length} elemendiga`, "debug");
+
+        result.forEach((item: any, idx: number) => {
+          if (typeof item === "object" && item?.id) {
+            createdIds.push(Number(item.id));
+            if (idx < 3) addLog(`      ✅ ${idx + 1}. ID: ${item.id}`, "debug");
+          }
+        });
       }
 
       if (createdIds.length > 0) {
         setMarkupIds(createdIds);
-        addLog(`✅ MARKUPID LOODUD: ${createdIds.length} märgupit! 🎉`, "success");
+        addLog(`\n✅ MARKUPID LOODUD: ${createdIds.length} märgupit! 🎉`, "success");
+      } else {
+        addLog("⚠️ Vastus saadi, aga ID-sid ei leitud", "warn");
       }
     } catch (err: any) {
       addLog("❌ Viga", "error", err?.message);
@@ -677,14 +641,14 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       setIsLoading(false);
       addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
-  }, [fields, selectedData, delimiter, markupColor, getObjectBoundingBox, addLog]);
+  }, [fields, selectedData, delimiter, markupColor, addLog]);
 
   const handleRemoveMarkups = useCallback(async () => {
     if (markupIds.length === 0) return;
 
     setIsLoading(true);
     try {
-      await api.markup.removeMarkups?.(markupIds);
+      await api.markup?.removeMarkups?.(markupIds);
       setMarkupIds([]);
       addLog("✅ Markupit kustutatud", "success");
     } catch (err: any) {
@@ -883,7 +847,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           }}
           onClick={() => setShowDebugLog(!showDebugLog)}
         >
-          {showDebugLog ? "▼" : "▶"} 🔍 LOOOG ({logs.length})
+          {showDebugLog ? "▼" : "▶"} 🔍 LOG ({logs.length})
         </div>
 
         {showDebugLog && (
