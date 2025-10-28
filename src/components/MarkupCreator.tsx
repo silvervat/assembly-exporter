@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[]; // ✅ Salvestatav väljude järjekord
 }
 
-const COMPONENT_VERSION = "7.7.0";
+const COMPONENT_VERSION = "7.8.1";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 const MARKUP_COLOR = "FF0000";
 
@@ -315,6 +315,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         if (!selectedWithBasic || selectedWithBasic.length === 0) {
           setSelectedData([]);
           setAllFields([]);
+          addLog("❌ Valitud objektid puuduvad", "warn");
           return;
         }
 
@@ -340,9 +341,14 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           }
         }
 
-        if (allRows.length === 0) return;
+        if (allRows.length === 0) {
+          addLog("❌ Andmeid ei leitud", "error");
+          return;
+        }
 
+        // ✅ Uuenda selectedData kohe!
         setSelectedData(allRows);
+        addLog(`✅ Laaditud ${allRows.length} objekti`, "success");
 
         // ✅ Väljad - järjekord salvestatud seadetes
         const allKeys = Array.from(new Set(allRows.flatMap((r) => Object.keys(r)))).sort();
@@ -393,9 +399,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
         if (mountedRef.current) {
           setAllFields(newFields);
+          addLog(`✅ Väljad uuendatud: ${newFields.filter((f) => f.selected).length} valitud`, "success");
         }
       } catch (err: any) {
-        addLog("REAL-TIME valimise laadimine ebaõnnestus", "error");
+        addLog(`❌ Valimise laadimine ebaõnnestus: ${err?.message}`, "error");
       }
     };
 
@@ -1106,9 +1113,9 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         )}
       </div>
 
-      {/* JALUS */}
-      <div style={{ marginTop: 8, textAlign: "center", fontSize: 8, color: "#999" }}>
-        MARKUP GENERATOR V7 • {BUILD_DATE}
+      {/* JALUS - versioon + kuupäev */}
+      <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid #e0e0e0", textAlign: "center", fontSize: 10, color: "#999", fontWeight: 500 }}>
+        MARKUP GENERATOR {COMPONENT_VERSION} • {BUILD_DATE}
       </div>
     </div>
   );
