@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[]; // ✅ Salvestatav väljude järjekord
 }
 
-const COMPONENT_VERSION = "7.5.0";
+const COMPONENT_VERSION = "7.7.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 const MARKUP_COLOR = "FF0000";
 
@@ -364,14 +364,14 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
             // ✅ Smart default: 
             // 1. Kui localStorage'ss on savedFields, kasuta neid
-            // 2. Muidu default: ainult AssemblyCast_unit_Mark
+            // 2. Muidu default: AINULT Tekla_Assembly.AssemblyCast_unit_Mark (ja ainult kui hasData!)
             let isSelected = false;
             
             if (settings.selectedFields && settings.selectedFields.length > 0) {
               // ✅ Restore saved selection
               isSelected = settings.selectedFields.includes(key);
             } else {
-              // ✅ Default: ainult AssemblyCast_unit_Mark
+              // ✅ Default: AINULT Tekla_Assembly.AssemblyCast_unit_Mark + hasData peab olema true
               isSelected = key === "Tekla_Assembly.AssemblyCast_unit_Mark" && hasData;
             }
 
@@ -759,69 +759,85 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         backgroundColor: "#f5f5f5",
       }}
     >
-      {/* HEADER - MINIMEERITUD */}
-      <div style={{ marginBottom: 8, textAlign: "center" }}>
-        <div style={{ fontSize: 9, color: "#666" }}>
-          📊 Objektid: {stats.totalObjects} | Väljad: {stats.fieldsWithData}/{allFields.length} | Valitud: {selectedCount}
+      {/* HEADER - Assembly Exporter stiil */}
+      <div style={{ marginBottom: 12, textAlign: "center", padding: "12px 12px 0 12px" }}>
+        <div style={{ fontSize: 13, color: "#333", fontWeight: 600 }}>
+          📊 Valitud: {selectedData.length} objekti | Väljad: {selectedCount}
         </div>
       </div>
 
-      {/* SEADED PÄISES */}
-      <div style={{ border: "1px solid #ddd", borderRadius: 4, padding: 10, backgroundColor: "white", marginBottom: 10 }}>
-        <h3 style={{ margin: "0 0 8px 0", fontSize: 11, fontWeight: 700 }}>⚙️ Seaded</h3>
+      {/* SEADED PÄISES - Assembly Exporter stiil */}
+      <div style={{ border: "1px solid #e0e0e0", borderRadius: 6, padding: 12, backgroundColor: "#ffffff", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+        <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 600, color: "#333" }}>⚙️ Seaded</h3>
 
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ fontSize: 8, fontWeight: 600, display: "block", marginBottom: 3 }}>Eraldaja:</label>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 6, color: "#555" }}>Eraldaja:</label>
           <input
             type="text"
             value={settings.delimiter}
             onChange={(e) => updateSettings({ delimiter: e.target.value })}
             style={{
               width: "100%",
-              padding: 4,
-              border: "1px solid #ccc",
-              borderRadius: 3,
-              fontSize: 9,
+              padding: "8px 10px",
+              border: "1px solid #d0d0d0",
+              borderRadius: 4,
+              fontSize: 11,
               boxSizing: "border-box",
+              fontFamily: "system-ui, -apple-system, sans-serif",
+              transition: "border-color 0.2s",
             }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "#1976d2")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
           />
         </div>
 
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ fontSize: 8, fontWeight: 600, display: "block", marginBottom: 3 }}>👁️ Eelvaade:</label>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 6, color: "#555" }}>👁️ Eelvaade:</label>
           <div
             style={{
-              fontSize: 8,
+              fontSize: 11,
               color: previewMarkup ? "#333" : "#999",
               fontFamily: "monospace",
-              backgroundColor: "#f9f9f9",
-              padding: 6,
-              borderRadius: 2,
-              border: "1px solid #ddd",
+              backgroundColor: "#fafbfc",
+              padding: 10,
+              borderRadius: 4,
+              border: "1px solid #e0e0e0",
               wordBreak: "break-all",
-              minHeight: 24,
-              maxHeight: 50,
+              minHeight: 36,
+              maxHeight: 60,
               overflowY: "auto",
+              lineHeight: "1.4",
             }}
           >
             {previewMarkup || "(ei andmeid)"}
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={createMarkups}
             disabled={isLoading || selectedData.length === 0 || selectedCount === 0}
             style={{
               flex: 1,
-              padding: "6px 8px",
-              backgroundColor: isLoading || selectedData.length === 0 || selectedCount === 0 ? "#ccc" : "#1976d2",
+              padding: "10px 12px",
+              backgroundColor: isLoading || selectedData.length === 0 || selectedCount === 0 ? "#d0d0d0" : "#1976d2",
               color: "white",
               border: "none",
-              borderRadius: 3,
-              cursor: isLoading ? "not-allowed" : "pointer",
-              fontSize: 9,
+              borderRadius: 4,
+              cursor: isLoading || selectedData.length === 0 || selectedCount === 0 ? "not-allowed" : "pointer",
+              fontSize: 12,
               fontWeight: 600,
+              transition: "background-color 0.2s",
+            }}
+            onMouseOver={(e) => {
+              if (!(isLoading || selectedData.length === 0 || selectedCount === 0)) {
+                e.currentTarget.style.backgroundColor = "#1565c0";
+              }
+            }}
+            onMouseOut={(e) => {
+              if (!(isLoading || selectedData.length === 0 || selectedCount === 0)) {
+                e.currentTarget.style.backgroundColor = "#1976d2";
+              }
             }}
           >
             ➕ Loo
@@ -852,45 +868,53 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </div>
       </div>
 
-      {/* ✅ VÄLJAD - DRAG-DROP JÄRJESTUS */}
+      {/* ✅ VÄLJAD - Assembly Exporter stiil */}
       <div
         style={{
-          border: "1px solid #ddd",
-          borderRadius: 4,
-          padding: 10,
-          backgroundColor: "white",
+          border: "1px solid #e0e0e0",
+          borderRadius: 6,
+          padding: 12,
+          backgroundColor: "#ffffff",
           flex: 1,
           minHeight: 0,
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          marginBottom: 10,
+          marginBottom: 12,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
         }}
       >
-        <h3 style={{ margin: "0 0 8px 0", fontSize: 11, fontWeight: 700 }}>
+        <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 600, color: "#333" }}>
           📋 Omadused ({selectedCount} valitud)
         </h3>
 
         <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           {allFields.length === 0 ? (
-            <p style={{ color: "#999", fontSize: 9, margin: 0 }}>Vali objektid 3D vaates...</p>
+            <p style={{ color: "#999", fontSize: 11, margin: 0 }}>Vali objektid 3D vaates...</p>
           ) : (
             Array.from(groupedFields.entries()).map(([groupName, groupFields]) => (
-              <div key={groupName} style={{ marginBottom: 8 }}>
+              <div key={groupName} style={{ marginBottom: 12 }}>
                 <div
                   style={{
-                    padding: "4px 6px",
-                    backgroundColor: "#e8e8e8",
-                    borderRadius: 3,
-                    marginBottom: 3,
+                    padding: "8px 10px",
+                    backgroundColor: "#f5f5f5",
+                    borderRadius: 4,
+                    marginBottom: 6,
                     fontWeight: 600,
-                    fontSize: 9,
+                    fontSize: 11,
+                    color: "#333",
+                    border: "1px solid #e0e0e0",
+                    display: "flex",
+                    justifyContent: "space-between",
                   }}
                 >
-                  {groupName} ({groupFields.filter((f) => f.selected).length}/{groupFields.length})
+                  <span>{groupName}</span>
+                  <span style={{ fontWeight: 500, color: "#666" }}>
+                    {groupFields.filter((f) => f.selected).length}/{groupFields.length}
+                  </span>
                 </div>
 
-                <div style={{ paddingLeft: 4 }}>
+                <div style={{ paddingLeft: 0 }}>
                   {groupFields.map((field, idx) => {
                     // ✅ Nooled ainult VALITUD väljadele, õiges järjekorras
                     const orderedSelected = getOrderedSelectedFields();
@@ -908,44 +932,60 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                         onDrop={() => handleDrop(field)}
                         style={{
                           display: "flex",
-                          gap: 4,
+                          gap: 8,
                           alignItems: "center",
-                          marginBottom: 2,
-                          padding: "2px 4px",
-                          borderRadius: 2,
+                          marginBottom: 6,
+                          padding: "8px 10px",
+                          borderRadius: 4,
                           backgroundColor: field.selected ? "#e3f2fd" : "transparent",
                           opacity: field.hasData ? 1 : 0.6,
-                          border: draggedField === field.key ? "1px dashed #1976d2" : "none",
+                          border: field.selected ? "1px solid #1976d2" : draggedField === field.key ? "1px dashed #1976d2" : "1px solid transparent",
                           cursor: field.selected ? "grab" : "default",
+                          transition: "all 0.15s ease",
                         }}
                       >
                         {/* ✅ Drag handle */}
-                        <span style={{ fontSize: 8, color: field.selected ? "#666" : "#ccc", cursor: "grab" }}>⋮⋮</span>
+                        <span style={{ fontSize: 10, color: field.selected ? "#1976d2" : "#ccc", cursor: "grab", userSelect: "none" }}>⋮⋮</span>
 
-                        {/* Checkbox */}
+                        {/* Checkbox - suurem */}
                         <input
                           type="checkbox"
                           checked={field.selected}
                           onChange={() => toggleField(field.key)}
-                          style={{ cursor: "pointer", transform: "scale(0.8)", margin: 0 }}
+                          style={{ cursor: "pointer", transform: "scale(1)", margin: 0, width: 16, height: 16 }}
                         />
 
-                        {/* Label */}
-                        <code style={{ color: "#0066cc", fontSize: 8, fontWeight: 500, flex: 1 }}>{field.label}</code>
+                        {/* Label - SUUREM tekst (11px) */}
+                        <span style={{ color: "#0066cc", fontSize: 11, fontWeight: 500, flex: 1, wordBreak: "break-word", lineHeight: "1.3" }}>
+                          {field.label}
+                        </span>
 
                         {/* ✅ Nooled üles/alla - ainult VALITUD väljadele */}
-                        <div style={{ display: "flex", gap: 2, visibility: isInOrder ? "visible" : "hidden" }}>
+                        <div style={{ display: "flex", gap: 4, visibility: isInOrder ? "visible" : "hidden" }}>
                           {!isFirst && (
                             <button
                               onClick={() => moveField(field.key, "up")}
                               title="Liiguta üles"
                               style={{
-                                padding: "2px 4px",
-                                fontSize: 8,
-                                backgroundColor: "#e0e0e0",
-                                border: "none",
-                                borderRadius: 2,
+                                padding: "4px 6px",
+                                fontSize: 11,
+                                backgroundColor: "#f0f0f0",
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 4,
                                 cursor: "pointer",
+                                transition: "all 0.15s",
+                                display: "flex",
+                                alignItems: "center",
+                              }}
+                              onMouseOver={(e) => {
+                                e.currentTarget.style.backgroundColor = "#1976d2";
+                                e.currentTarget.style.color = "white";
+                                e.currentTarget.style.borderColor = "#1976d2";
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.backgroundColor = "#f0f0f0";
+                                e.currentTarget.style.color = "black";
+                                e.currentTarget.style.borderColor = "#d0d0d0";
                               }}
                             >
                               ↑
@@ -956,12 +996,25 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                               onClick={() => moveField(field.key, "down")}
                               title="Liiguta alla"
                               style={{
-                                padding: "2px 4px",
-                                fontSize: 8,
-                                backgroundColor: "#e0e0e0",
-                                border: "none",
-                                borderRadius: 2,
+                                padding: "4px 6px",
+                                fontSize: 11,
+                                backgroundColor: "#f0f0f0",
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 4,
                                 cursor: "pointer",
+                                transition: "all 0.15s",
+                                display: "flex",
+                                alignItems: "center",
+                              }}
+                              onMouseOver={(e) => {
+                                e.currentTarget.style.backgroundColor = "#1976d2";
+                                e.currentTarget.style.color = "white";
+                                e.currentTarget.style.borderColor = "#1976d2";
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.backgroundColor = "#f0f0f0";
+                                e.currentTarget.style.color = "black";
+                                e.currentTarget.style.borderColor = "#d0d0d0";
                               }}
                             >
                               ↓
@@ -978,33 +1031,35 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </div>
       </div>
 
-      {/* LOG - VALGE TAUST */}
+      {/* LOG - Assembly Exporter stiil */}
       <div
         style={{
           backgroundColor: "#ffffff",
           color: "#333",
-          border: "1px solid #ddd",
-          borderRadius: 3,
+          border: "1px solid #e0e0e0",
+          borderRadius: 6,
           overflow: "hidden",
           fontFamily: "monospace",
-          fontSize: 8,
-          maxHeight: showDebugLog ? 120 : 24,
+          fontSize: 10,
+          maxHeight: showDebugLog ? 140 : 28,
           display: "flex",
           flexDirection: "column",
           transition: "max-height 0.2s",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
         }}
       >
         <div
           style={{
-            padding: "4px 8px",
+            padding: "8px 12px",
             backgroundColor: "#f5f5f5",
-            borderBottom: showDebugLog ? "1px solid #ddd" : "none",
+            borderBottom: showDebugLog ? "1px solid #e0e0e0" : "none",
             cursor: "pointer",
-            fontWeight: "bold",
+            fontWeight: 600,
             userSelect: "none",
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
+            fontSize: 11,
           }}
           onClick={() => setShowDebugLog(!showDebugLog)}
         >
