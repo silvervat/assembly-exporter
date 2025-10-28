@@ -141,23 +141,11 @@ function useSettings() {
   const [settings, setSettings] = useState<Settings>(() => {
     try {
       const raw = window.localStorage?.getItem?.("markupCreatorSettings");
-      if (!raw) {
-        console.debug("[useSettings] localStorage tühi, kasutan DEFAULTS");
-        return DEFAULTS;
-      }
+      if (!raw) return DEFAULTS;
       const parsed = JSON.parse(raw) as Partial<Settings>;
-      // ✅ OLULINE: Veendu, et markupColor ALATI olemas (fallback)
-      const result = {
-        ...DEFAULTS,
-        ...parsed,
-        markupColor: parsed.markupColor ?? DEFAULTS.markupColor,
-      };
-      console.debug("[useSettings] Laaditud localStorage-ist:", {
-        markupColor: result.markupColor,
-      });
-      return result;
+      return { ...DEFAULTS, ...parsed };
     } catch (err) {
-      console.warn("[useSettings] localStorage lugemise viga:", err);
+      console.warn("[useSettings] localStorage error:", err);
       return DEFAULTS;
     }
   });
@@ -167,9 +155,8 @@ function useSettings() {
       const next = { ...prev, ...patch };
       try {
         window.localStorage?.setItem?.("markupCreatorSettings", JSON.stringify(next));
-        console.debug("[useSettings] Salvestatud localStorage-i:", patch);
       } catch (err) {
-        console.warn("[useSettings] localStorage salvestamise viga:", err);
+        console.warn("[useSettings] localStorage save error:", err);
       }
       return next;
     });
@@ -359,6 +346,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   const [selectedData, setSelectedData] = useState<Row[]>([]);
   const [previewMarkup, setPreviewMarkup] = useState<string>("");
   const [draggedField, setDraggedField] = useState<string | null>(null);
+  const [propertySearch, setPropertySearch] = useState<string>("");  // ✅ Search omaduste jaoks
 
   const mountedRef = useRef(true);
   const listenerRegistered = useRef(false);
@@ -391,7 +379,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     }
 
     try {
-      setIsLoading(true);
+      // ✅ Märgi loadSelectionData algus (silent, ei näita vilkumist)
       addLog("🔄 Laadin andmeid...", "info");
 
       const selectedWithBasic = await getSelectedObjects(api);
@@ -487,9 +475,9 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       }
     } catch (err: any) {
       addLog(`❌ Viga: ${err?.message}`, "error");
-    } finally {
-      setIsLoading(false);
     }
+    // ✅ TÄHTIS: Ei lülita isLoading sisse automaatse refresh ajal!
+    // Nupud ei vilgu taustaprogrammina!
   }, [api, settings.selectedFields, addLog]);
 
   useEffect(() => {
@@ -589,6 +577,26 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     );
   };
 
+  // ✅ UUED: Filtreerimine ja vali kõik/eemalda kõik
+  const filteredFields = allFields.filter((f) =>
+    f.label.toLowerCase().includes(propertySearch.toLowerCase())
+  );
+
+  const toggleAllFields = (selectAll: boolean) => {
+    const newFields = selectAll
+      ? filteredFields.map((f) => f.key)
+      : [];
+    updateSettings({ selectedFields: newFields });
+    setAllFields((prev) =>
+      prev.map((f) => ({
+        ...f,
+        selected: selectAll && filteredFields.some((sf) => sf.key === f.key),
+      }))
+    );
+  };
+
+  const allFilteredSelected = filteredFields.length > 0 && filteredFields.every((f) => f.selected);
+
   const moveField = (key: string, direction: "up" | "down") => {
     const current = settings.selectedFields || [];
     const idx = current.indexOf(key);
@@ -647,7 +655,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   }, [allFields]);
 
   const createMarkups = useCallback(async () => {
-    // ESMALT uuenda andmed
+    // ✅ SILENT uuendus (ei näita vilkumist - auto refresh)
     await loadSelectionData();
     
     // Seejärel loo markupid
@@ -663,6 +671,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       return;
     }
 
+    // ✅ SIIN näitame vilkumist (LOOMISEL - kasutaja initsieerib)
     setIsLoading(true);
     try {
       addLog("📊 Looma markupeid...", "info");
@@ -687,6 +696,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       }
 
       const markupsToCreate: any[] = [];
+      const colorToApply = settings.markupColor || MARKUP_COLOR;  // ✅ Salvesta värv
 
       for (const row of selectedData) {
         const objectId = Number(row.ObjectId);
@@ -721,11 +731,11 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
         if (values.length === 0) continue;
 
+        // ✅ ÄRA SAADA color - Trimble API ei toeta
         markupsToCreate.push({
           text: values.join(settings.delimiter),
           start: startPos,
           end: endPos,
-          color: settings.markupColor || MARKUP_COLOR,
         });
       }
 
@@ -748,8 +758,18 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         createdIds = [result];
       }
 
+      // ✅ 2. MUUDA VÄRVID (kasutades editMarkup)
       if (createdIds.length > 0) {
-        addLog(`✅ ${createdIds.length} märgupit loodud! 🎉`, "success");
+        let colorSuccess = 0;
+        for (const id of createdIds) {
+          try {
+            await api.markup?.editMarkup?.(id, { color: colorToApply });
+            colorSuccess++;
+          } catch (err: any) {
+            console.warn(`⚠️ Värvi muutmine ebaõnnestus ID ${id}:`, err?.message);
+          }
+        }
+        addLog(`✅ ${createdIds.length} märgupit loodud! 🎨 Värv: ${colorToApply} (${colorSuccess}/${createdIds.length})`, "success");
       }
     } catch (err: any) {
       addLog(`❌ Viga: ${err?.message}`, "error");
@@ -900,7 +920,52 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </label>
       </div>
 
-      {/* ACTION BUTTONS - COMPACT */}
+      {/* ✅ PREVIEW - MOVED TO HEADER */}
+      <div style={{
+        marginBottom: 8,
+        padding: 8,
+        backgroundColor: "#fff9c4",
+        borderRadius: 4,
+        border: "1px solid #fbc02d",
+      }}>
+        <label style={{
+          fontSize: 10,
+          fontWeight: 500,
+          color: "#555",
+          display: "block",
+          marginBottom: 4,
+        }}>
+          📋 {t.preview}
+        </label>
+        {selectedData.length > 1 && (
+          <div style={{
+            fontSize: 8,
+            color: "#d32f2f",
+            marginBottom: 4,
+            fontWeight: 500,
+          }}>
+            ⚠️ Näitab ainult esimest objekti ({selectedData.length} valitud)
+          </div>
+        )}
+        <div style={{
+          fontSize: 9,
+          color: previewMarkup ? "#333" : "#999",
+          fontFamily: "monospace",
+          backgroundColor: "#fafbfc",
+          padding: 6,
+          borderRadius: 3,
+          border: "1px solid #e0e0e0",
+          wordBreak: "break-all",
+          minHeight: 20,
+          maxHeight: 30,
+          overflowY: "auto",
+          lineHeight: "1.3",
+        }}>
+          {previewMarkup || t.noData}
+        </div>
+      </div>
+
+      {/* ACTION BUTTONS - WITH BLINK WHEN AUTO ENABLED */}
       <div style={{
         display: "flex",
         gap: 6,
@@ -920,6 +985,11 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             fontSize: 11,
             fontWeight: 600,
             transition: "background-color 0.2s",
+            // ✅ VILKUMINE KUI AUTO SEES
+            animation: settings.autoRefreshEnabled && !isLoading 
+              ? "blink 1.5s infinite" 
+              : "none",
+            opacity: settings.autoRefreshEnabled && !isLoading ? 1 : 1,
           }}
           onMouseOver={(e) => {
             if (!isLoading) e.currentTarget.style.backgroundColor = "#1565c0";
@@ -946,6 +1016,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             fontSize: 11,
             fontWeight: 600,
             transition: "background-color 0.2s",
+            // ✅ VILKUMINE KUI AUTO SEES
+            animation: settings.autoRefreshEnabled && !isLoading 
+              ? "blink 1.5s infinite" 
+              : "none",
           }}
           onMouseOver={(e) => {
             if (!isLoading) e.currentTarget.style.backgroundColor = "#388e3c";
@@ -971,6 +1045,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             fontSize: 11,
             fontWeight: 600,
             minWidth: 50,
+            // ✅ VILKUMINE KUI AUTO SEES
+            animation: settings.autoRefreshEnabled && !isLoading 
+              ? "blink 1.5s infinite" 
+              : "none",
           }}
           title="Kustuta kõik markupid"
         >
@@ -990,51 +1068,229 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         flexDirection: "column",
         boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
       } as any}>
-        <h3 style={{
-          margin: "0 0 8px 0",
-          fontSize: 12,
-          fontWeight: 600,
-          color: "#333",
-        }}>
-          {t.properties} ({selectedCount})
-        </h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <h3 style={{
+            margin: 0,
+            fontSize: 12,
+            fontWeight: 600,
+            color: "#333",
+          }}>
+            {t.properties} ({selectedCount})
+          </h3>
+          {/* ✅ VALI KÕIK / EEMALDA KÕIK NUPUD */}
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              onClick={() => toggleAllFields(true)}
+              title="Vali kõik"
+              style={{
+                padding: "3px 6px",
+                fontSize: 9,
+                backgroundColor: allFilteredSelected ? "#43a047" : "#e0e0e0",
+                color: allFilteredSelected ? "white" : "#333",
+                border: "none",
+                borderRadius: 3,
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              ✓ Kõik
+            </button>
+            <button
+              onClick={() => toggleAllFields(false)}
+              title="Eemalda kõik"
+              style={{
+                padding: "3px 6px",
+                fontSize: 9,
+                backgroundColor: "#e0e0e0",
+                color: "#333",
+                border: "none",
+                borderRadius: 3,
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              ✗ 0
+            </button>
+          </div>
+        </div>
 
-        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+        {/* ✅ SEARCH VÄLI */}
+        <input
+          type="text"
+          placeholder="🔍 Otsing..."
+          value={propertySearch}
+          onChange={(e) => setPropertySearch(e.target.value)}
+          style={{
+            marginBottom: 8,
+            padding: "5px 8px",
+            border: "1px solid #d0d0d0",
+            borderRadius: 3,
+            fontSize: 10,
+            boxSizing: "border-box",
+            width: "100%",
+          }}
+        />
+
+        {/* ✅ PROPERTIES - NO SCROLL (kõik nähtav) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
           {allFields.length === 0 ? (
             <p style={{ color: "#999", fontSize: 10, margin: 0 }}>{t.selectObjects}</p>
+          ) : filteredFields.length === 0 ? (
+            <p style={{ color: "#999", fontSize: 10, margin: 0 }}>Otsinguga tulemusi ei leitud</p>
           ) : (
-            Array.from(groupedFields.entries()).map(([groupName, groupFields]) => (
-              <div key={groupName} style={{ marginBottom: 8 }}>
-                <div style={{
-                  padding: "6px 8px",
-                  backgroundColor: "#f5f5f5",
-                  borderRadius: 3,
-                  marginBottom: 4,
-                  fontWeight: 600,
-                  fontSize: 10,
-                  color: "#333",
-                  border: "1px solid #e0e0e0",
-                  display: "flex",
-                  justifyContent: "space-between",
-                }}>
-                  <span>{groupName}</span>
-                  <span style={{ fontWeight: 500, color: "#666", fontSize: 9 }}>
-                    {groupFields.filter((f) => f.selected).length}/{groupFields.length}
-                  </span>
-                </div>
+            Array.from(groupedFields.entries()).map(([groupName, groupFields]) => {
+              const visibleGroupFields = groupFields.filter((f) =>
+                f.label.toLowerCase().includes(propertySearch.toLowerCase())
+              );
+              if (visibleGroupFields.length === 0) return null;
 
-                <div style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 3,
-                  border: "1px solid #e6eaf0",
-                  borderRadius: 4,
-                  padding: 4,
-                  background: "#fff",
-                  maxHeight: 300,
-                  overflow: "auto",
-                }}>
-                  {groupFields.map((field) => {
+              return (
+                <div key={groupName} style={{ marginBottom: 6 }}>
+                  <div style={{
+                    padding: "6px 8px",
+                    backgroundColor: "#f5f5f5",
+                    borderRadius: 3,
+                    marginBottom: 4,
+                    fontWeight: 600,
+                    fontSize: 10,
+                    color: "#333",
+                    border: "1px solid #e0e0e0",
+                    display: "flex",
+                    justifyContent: "space-between",
+                  }}>
+                    <span>{groupName}</span>
+                    <span style={{ fontWeight: 500, color: "#666", fontSize: 9 }}>
+                      {visibleGroupFields.filter((f) => f.selected).length}/{visibleGroupFields.length}
+                    </span>
+                  </div>
+
+                  <div style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 3,
+                    border: "1px solid #e6eaf0",
+                    borderRadius: 4,
+                    padding: 4,
+                    background: "#fff",
+                  }}>
+                    {visibleGroupFields.map((field) => {
+                      const orderedSelected = getOrderedSelectedFields();
+                      const fieldIdx = orderedSelected.findIndex((f) => f.key === field.key);
+                      const isFirst = fieldIdx === 0;
+                      const isLast = fieldIdx === orderedSelected.length - 1;
+                      const isInOrder = fieldIdx !== -1;
+
+                      return (
+                        <div
+                          key={field.key}
+                          draggable={field.selected}
+                          onDragStart={() => handleDragStart(field)}
+                          onDragOver={handleDragOver}
+                          onDrop={() => handleDrop(field)}
+                          onDragEnd={handleDragEnd}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 3,
+                            padding: 4,
+                            borderRadius: 3,
+                            border: field.selected ? "1px solid #1976d2" : draggedField === field.key ? "1px dashed #1976d2" : "1px solid #eef1f6",
+                            background: field.selected ? "#e3f2fd" : "#fff",
+                            opacity: field.hasData ? 1 : 0.6,
+                            cursor: field.selected ? "grab" : "default",
+                            transition: "all 0.15s",
+                          } as any}
+                        >
+                          <span style={{ fontSize: 9, color: field.selected ? "#1976d2" : "#ccc", userSelect: "none" }}>⋮⋮</span>
+
+                          <input
+                            type="checkbox"
+                            checked={field.selected}
+                            onChange={() => toggleField(field.key)}
+                            style={{
+                              cursor: "pointer",
+                              margin: 0,
+                              width: 14,
+                              height: 14,
+                            }}
+                          />
+
+                          <span style={{
+                            color: "#0066cc",
+                            fontSize: 9,
+                            fontWeight: 500,
+                            flex: 1,
+                            wordBreak: "break-word",
+                            lineHeight: "1.2",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}>
+                            {field.label}
+                          </span>
+
+                          {isInOrder && (
+                            <div style={{ display: "flex", gap: 1 }}>
+                              {!isFirst && (
+                                <button
+                                  onClick={() => moveField(field.key, "up")}
+                                  title="Üles"
+                                  style={{
+                                    padding: "3px 5px",
+                                    fontSize: 9,
+                                    backgroundColor: "#f0f0f0",
+                                    border: "1px solid #d0d0d0",
+                                    borderRadius: 2,
+                                    cursor: "pointer",
+                                    transition: "all 0.15s",
+                                  }}
+                                  onMouseOver={(e) => {
+                                    e.currentTarget.style.backgroundColor = "#1976d2";
+                                    e.currentTarget.style.color = "white";
+                                  }}
+                                  onMouseOut={(e) => {
+                                    e.currentTarget.style.backgroundColor = "#f0f0f0";
+                                    (e.currentTarget as any).style.color = "black";
+                                  }}
+                                >
+                                  ↑
+                                </button>
+                              )}
+                              {!isLast && (
+                                <button
+                                  onClick={() => moveField(field.key, "down")}
+                                  title="Alla"
+                                  style={{
+                                    padding: "3px 5px",
+                                    fontSize: 9,
+                                    backgroundColor: "#f0f0f0",
+                                    border: "1px solid #d0d0d0",
+                                    borderRadius: 2,
+                                    cursor: "pointer",
+                                    transition: "all 0.15s",
+                                  }}
+                                  onMouseOver={(e) => {
+                                    e.currentTarget.style.backgroundColor = "#1976d2";
+                                    e.currentTarget.style.color = "white";
+                                  }}
+                                  onMouseOut={(e) => {
+                                    e.currentTarget.style.backgroundColor = "#f0f0f0";
+                                    (e.currentTarget as any).style.color = "black";
+                                  }}
+                                >
+                                  ↓
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
                     const orderedSelected = getOrderedSelectedFields();
                     const fieldIdx = orderedSelected.findIndex((f) => f.key === field.key);
                     const isFirst = fieldIdx === 0;
@@ -1234,6 +1490,14 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                     justifyContent: "center",
                     transition: "all 0.15s ease",
                     opacity: isSelected ? 1 : 0.7,
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.transform = "scale(1.15)";
+                    e.currentTarget.style.boxShadow = "0 4px 8px rgba(0,0,0,0.3)";
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                    e.currentTarget.style.boxShadow = "none";
                   }}
                   title={opt.label}
                 >
