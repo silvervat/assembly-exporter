@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[]; // ✅ Salvestatav väljude järjekord
 }
 
-const COMPONENT_VERSION = "7.1.0";
+const COMPONENT_VERSION = "7.2.0";
 const MARKUP_COLOR = "FF0000";
 
 const DEFAULTS: Settings = {
@@ -404,13 +404,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
   // ✅ Arvuta eelvaade
   const updatePreview = useCallback(() => {
-    // Kasuta salvestatud järjekorda
-    const savedOrder = settings.selectedFields;
-    const selectedFields = savedOrder.length > 0
-      ? savedOrder
-        .map((k) => allFields.find((f) => f.key === k && f.selected))
-        .filter(Boolean) as PropertyField[]
-      : allFields.filter((f) => f.selected);
+    const selectedFields = getOrderedSelectedFields();
 
     if (selectedFields.length === 0 || selectedData.length === 0) {
       setPreviewMarkup("");
@@ -429,13 +423,29 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
     const preview = values.join(settings.delimiter);
     setPreviewMarkup(preview);
-  }, [allFields, selectedData, settings]);
+  }, [getOrderedSelectedFields, selectedData, settings.delimiter]);
 
   useEffect(() => {
     updatePreview();
   }, [updatePreview]);
 
   // ✅ Drag-drop muutmine järjekorda
+  // ✅ Hangi salvestatud või valitud väljad
+  const getOrderedSelectedFields = useCallback(() => {
+    const selectedFields = allFields.filter((f) => f.selected);
+    if (selectedFields.length === 0) return [];
+
+    // Kui järjekord salvestatud, kasuta seda järjekorda
+    if (settings.selectedFields.length > 0) {
+      return settings.selectedFields
+        .map((k) => selectedFields.find((f) => f.key === k))
+        .filter(Boolean) as PropertyField[];
+    }
+
+    // Muidu valitud väljad originaalses järjekorras
+    return selectedFields;
+  }, [allFields, settings.selectedFields]);
+
   const handleDragStart = (field: PropertyField) => {
     setDraggedField(field.key);
   };
@@ -446,38 +456,50 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       return;
     }
 
-    // ✅ Muuda järjekorda
-    const newOrder = settings.selectedFields.length > 0 ? settings.selectedFields : allFields.map((f) => f.key);
-    const draggedIdx = newOrder.indexOf(draggedField);
-    const targetIdx = newOrder.indexOf(targetField.key);
+    // ✅ Drag-drop ainult VALITUD väljadega
+    const orderedFields = getOrderedSelectedFields();
+    if (orderedFields.length === 0) {
+      setDraggedField(null);
+      return;
+    }
+
+    const draggedIdx = orderedFields.findIndex((f) => f.key === draggedField);
+    const targetIdx = orderedFields.findIndex((f) => f.key === targetField.key);
 
     if (draggedIdx === -1 || targetIdx === -1) {
       setDraggedField(null);
       return;
     }
 
+    // Järjestuse array - ainult valitud väljad
+    const newOrder = orderedFields.map((f) => f.key);
     const [moved] = newOrder.splice(draggedIdx, 1);
     newOrder.splice(targetIdx, 0, moved);
 
     updateSettings({ selectedFields: newOrder });
     setDraggedField(null);
-    addLog(`✅ Väljad järjestatud uuesti`, "success");
+    addLog(`✅ "${draggedField}" liigutatud järjestuses`, "success");
   };
 
-  // ✅ Move up/down
+  // ✅ Move up/down - ainult VALITUD väljadega
   const moveField = (key: string, direction: "up" | "down") => {
-    const currentOrder = settings.selectedFields.length > 0 ? settings.selectedFields : allFields.map((f) => f.key);
-    const idx = currentOrder.indexOf(key);
+    const orderedFields = getOrderedSelectedFields();
+    if (orderedFields.length === 0) return;
+
+    const idx = orderedFields.findIndex((f) => f.key === key);
 
     if (idx === -1) return;
-    if ((direction === "up" && idx === 0) || (direction === "down" && idx === currentOrder.length - 1)) return;
+    if ((direction === "up" && idx === 0) || (direction === "down" && idx === orderedFields.length - 1)) return;
 
-    const newOrder = [...currentOrder];
+    const newOrder = orderedFields.map((f) => f.key);
     const targetIdx = direction === "up" ? idx - 1 : idx + 1;
     [newOrder[idx], newOrder[targetIdx]] = [newOrder[targetIdx], newOrder[idx]];
 
     updateSettings({ selectedFields: newOrder });
-    addLog(`✅ ${key} liigutatud ${direction === "up" ? "üles" : "alla"}`, "success");
+    addLog(
+      `✅ "${key}" liigutatud ${direction === "up" ? "üles ⬆️" : "alla ⬇️"}`,
+      "success"
+    );
   };
 
   // ✅ Toggle field
@@ -493,20 +515,15 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     addLog("🔍 KONTROLL - VALITUD VÄLJAD JA OBJEKTID", "info");
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
-    // ✅ Järjekord salvestatud seadetes
-    const savedOrder = settings.selectedFields;
-    const selectedFields = savedOrder.length > 0
-      ? savedOrder
-        .map((k) => allFields.find((f) => f.key === k && f.selected))
-        .filter(Boolean) as PropertyField[]
-      : allFields.filter((f) => f.selected);
+    // ✅ Hangi valitud väljad õiges järjekorras
+    const selectedFields = getOrderedSelectedFields();
 
     if (selectedFields.length === 0) {
       addLog("❌ VIGA: Valitud väljad puuduvad!", "error");
       return;
     }
 
-    addLog(`\n✅ 1. VALITUD VÄLJAD - JÄRJEKORD:`, "success");
+    addLog(`\n✅ 1. VALITUD VÄLJAD - JÄRJEKORD (${selectedFields.length}):`, "success");
     selectedFields.forEach((f, idx) => {
       addLog(`      ${idx + 1}. ${f.label}`, "debug");
     });
@@ -516,10 +533,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       return;
     }
 
-    addLog(`\n✅ 2. VALITUD OBJEKTID (3D vaates):`, "success");
+    addLog(`\n✅ 2. VALITUD OBJEKTID 3D VAATES (${selectedData.length}):`, "success");
     selectedData.slice(0, 5).forEach((row, idx) => {
       const fieldValues = selectedFields.map((f) => row[f.key] || "-").join(" | ");
-      addLog(`      ${idx + 1}. ${row.ObjectId}: ${fieldValues}`, "debug");
+      addLog(`      ${idx + 1}. ID ${row.ObjectId}: ${fieldValues}`, "debug");
     });
     if (selectedData.length > 5) {
       addLog(`      ... ja ${selectedData.length - 5} veel`, "debug");
@@ -528,10 +545,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     addLog(`\n✅ 3. EELVAADE - MARKUP TEKST:`, "success");
     addLog(`      "${previewMarkup}"`, "debug");
 
-    addLog(`\n✅ KONTROLL LÕPETATUD - Võib hakata markupeid looma!`, "success");
+    addLog(`\n✅ KONTROLL LÕPETATUD - Looma markupeid ${selectedData.length} objektile!`, "success");
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
-    // ✅ Nüüd loe reaalselt markupid
+    // ✅ Nüüd loe reaalselt markupid KÕIGILE VALITUD OBJEKTIDELE
     setIsLoading(true);
     try {
       const markupsToCreate: any[] = [];
@@ -544,7 +561,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       let bBoxes: any[] = [];
       try {
         bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, objectIds);
-        addLog(`✅ Saadud ${bBoxes.length} BBox-i`, "success");
+        addLog(`✅ Saadud ${bBoxes.length} BBox-i (${objectIds.length} objektile)`, "success");
       } catch (err: any) {
         addLog(`⚠️ BBox viga: ${err?.message}`, "warn");
         bBoxes = objectIds.map((id) => ({
@@ -553,13 +570,18 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         }));
       }
 
+      let successCount = 0;
+
       for (let idx = 0; idx < selectedData.length; idx++) {
         const row = selectedData[idx];
         const objectId = Number(row.ObjectId);
 
         try {
           const bBox = bBoxes.find((b) => b.id === objectId);
-          if (!bBox) continue;
+          if (!bBox) {
+            addLog(`   ⚠️ ${idx + 1}. ID ${objectId}: BBox puudub`, "warn");
+            continue;
+          }
 
           const bb = bBox.boundingBox;
           const midPoint = {
@@ -582,7 +604,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             }
           }
 
-          if (values.length === 0) continue;
+          if (values.length === 0) {
+            addLog(`   ⚠️ ${idx + 1}. ID ${objectId}: andmeid valitud väljadele pole`, "warn");
+            continue;
+          }
 
           const text = values.join(settings.delimiter);
 
@@ -593,20 +618,24 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             color: MARKUP_COLOR,
           });
 
+          successCount++;
+
           if (idx < 3) {
-            addLog(`   ✅ ${idx + 1}. "${text.substring(0, 40)}"`, "debug");
+            addLog(`   ✅ ${idx + 1}. ID ${objectId}: "${text.substring(0, 50)}"`, "debug");
           }
         } catch (err: any) {
-          addLog(`   ❌ ObjectId ${objectId}: ${err?.message}`, "error");
+          addLog(`   ❌ ${idx + 1}. ID ${objectId}: ${err?.message}`, "error");
         }
       }
+
+      addLog(`\n📊 ETTEVALMISTUS VALMIS: ${successCount}/${selectedData.length} objektil on andmed`, "success");
 
       if (markupsToCreate.length === 0) {
         addLog("❌ Ühtegi märgupit ei saadud luua", "error");
         return;
       }
 
-      addLog(`\n📤 Saadetak API-le: ${markupsToCreate.length} märgupit`, "debug");
+      addLog(`\n📤 SAATMINE API-LE: ${markupsToCreate.length} märgupit`, "debug");
 
       const result = await api.markup?.addTextMarkup?.(markupsToCreate);
       const createdIds: number[] = [];
@@ -629,7 +658,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       setIsLoading(false);
       addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
-  }, [allFields, selectedData, settings, previewMarkup, api, addLog]);
+  }, [getOrderedSelectedFields, selectedData, settings.delimiter, previewMarkup, api, addLog]);
 
   const handleRemoveAllMarkups = useCallback(async () => {
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
@@ -842,10 +871,12 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
                 <div style={{ paddingLeft: 4 }}>
                   {groupFields.map((field, idx) => {
-                    const fieldOrder = settings.selectedFields.length > 0 ? settings.selectedFields : allFields.map((f) => f.key);
-                    const fieldIdx = fieldOrder.indexOf(field.key);
+                    // ✅ Nooled ainult VALITUD väljadele, õiges järjekorras
+                    const orderedSelected = getOrderedSelectedFields();
+                    const fieldIdx = orderedSelected.findIndex((f) => f.key === field.key);
                     const isFirst = fieldIdx === 0;
-                    const isLast = fieldIdx === fieldOrder.length - 1;
+                    const isLast = fieldIdx === orderedSelected.length - 1;
+                    const isInOrder = fieldIdx !== -1;  // Field on valitud
 
                     return (
                       <div
@@ -881,11 +912,12 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                         {/* Label */}
                         <code style={{ color: "#0066cc", fontSize: 8, fontWeight: 500, flex: 1 }}>{field.label}</code>
 
-                        {/* ✅ Nooled üles/alla */}
-                        <div style={{ display: "flex", gap: 2 }}>
+                        {/* ✅ Nooled üles/alla - ainult VALITUD väljadele */}
+                        <div style={{ display: "flex", gap: 2, visibility: isInOrder ? "visible" : "hidden" }}>
                           {!isFirst && (
                             <button
                               onClick={() => moveField(field.key, "up")}
+                              title="Liiguta üles"
                               style={{
                                 padding: "2px 4px",
                                 fontSize: 8,
@@ -901,6 +933,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                           {!isLast && (
                             <button
                               onClick={() => moveField(field.key, "down")}
+                              title="Liiguta alla"
                               style={{
                                 padding: "2px 4px",
                                 fontSize: 8,
