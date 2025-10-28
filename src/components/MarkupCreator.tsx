@@ -32,7 +32,7 @@ interface LogEntry {
   details?: string;
 }
 
-const COMPONENT_VERSION = "5.1.0";
+const COMPONENT_VERSION = "5.2.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 
 const normalizeColor = (color: string): string => {
@@ -125,35 +125,176 @@ export default function MarkupCreator({
     };
   }, [addLog]);
 
-  // ✅ AUTO-LOAD Assembly Exporter andmed
+  // ✅ REAL-TIME: Kuula 3D vaates valimisi - automaatne andmete laadimise
   useEffect(() => {
+    if (!api?.selection) return;
+
+    const loadSelectionData = async () => {
+      try {
+        // 1️⃣ Hangi valitud objektid otse 3D vaatelt
+        const selectedFromViewer = await api.selection.getSelectedObjects?.();
+        
+        if (!selectedFromViewer || selectedFromViewer.length === 0) {
+          addLog("⏳ Oodates valimist 3D vaates...", "info");
+          setSelectedIds([]);
+          setRowsData([]);
+          setFields([]);
+          return;
+        }
+
+        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+        addLog("🎯 REAL-TIME VALIMISE TUVASTAMINE", "info");
+        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+
+        // 2️⃣ Kontrolli allRows ja allKeys (Assembly Exporter andmebaas)
+        addLog("\n1️⃣ ANDMETE KONTROLLIMINE:", "debug");
+
+        if (!allKeys || allKeys.length === 0) {
+          addLog("   ⚠️ allKeys puuduvad - Assembly Exporter andmeid pole!", "warn");
+          return;
+        }
+        addLog(`   ✅ allKeys: ${allKeys.length} võtit`, "success");
+
+        if (!allRows || allRows.length === 0) {
+          addLog("   ⚠️ allRows puuduvad - Assembly Exporter andmeid pole!", "warn");
+          return;
+        }
+        addLog(`   ✅ allRows: ${allRows.length} rida`, "success");
+
+        addLog(`   ✅ 3D vaates valitud: ${selectedFromViewer.length} objekti`, "success");
+
+        // 3️⃣ Leida valitud objektide andmed
+        addLog("\n2️⃣ VALITUD OBJEKTIDE ANDMETE LEIDMINE:", "debug");
+
+        const selectedIds: number[] = [];
+        const matchingRows: Array<{ [key: string]: string }> = [];
+
+        selectedFromViewer.forEach((selection: any, idx: number) => {
+          // Hangi ObjectId eri API struktuuri variantidest
+          const objId = 
+            selection.objectId ||
+            selection.id ||
+            selection?.object?.objectId ||
+            Number(selection);
+
+          if (objId) {
+            selectedIds.push(Number(objId));
+
+            // Leida rida mis vastab ObjectId-le
+            const row = allRows.find((r) => Number(r.ObjectId) === Number(objId));
+            if (row) {
+              matchingRows.push(row);
+              addLog(`   ✅ ${idx + 1}. ObjectId ${objId}: ${row.Name || "?"}`, "debug");
+            } else {
+              addLog(`   ⚠️ ${idx + 1}. ObjectId ${objId}: Rida andmebaasist ei leitud`, "warn");
+            }
+          }
+        });
+
+        addLog(`\n   📊 Leitud: ${matchingRows.length}/${selectedFromViewer.length}`, "success");
+
+        if (matchingRows.length === 0) {
+          addLog("   ⚠️ Valitud objektidele andmeid ei leitud", "warn");
+          setSelectedIds(selectedIds);
+          setRowsData([]);
+          setFields([]);
+          return;
+        }
+
+        setSelectedIds(selectedIds);
+        setRowsData(matchingRows);
+
+        // 4️⃣ Väljadega täitmine
+        addLog("\n3️⃣ VÄLJADEGA TÄITMINE:", "debug");
+
+        const groups = groupKeys(allKeys);
+        let groupOrder = ["Standard", "Tekla_Assembly", "Nordec_Dalux", "IfcElementAssembly", "AssemblyBaseQuantities", "Other"];
+
+        addLog(`   📊 Grupid: ${groupOrder.length}`, "debug");
+
+        const newFields: PropertyField[] = [];
+        let fieldsWithData = 0;
+
+        groupOrder.forEach((groupName) => {
+          const groupKeys = groups.get(groupName) || [];
+          groupKeys.forEach((key) => {
+            const isStandard = [
+              "Name",
+              "Type",
+              "Tekla_Assembly.AssemblyCast_unit_Mark",
+              "Tekla_Assembly.AssemblyCast_unit_top_elevation",
+            ].includes(key);
+
+            // Kontrolli kas väljal on andmeid
+            const hasData = matchingRows.some((row) => {
+              const val = row[key];
+              return val && val.trim() !== "";
+            });
+
+            if (hasData) fieldsWithData++;
+
+            newFields.push({
+              key,
+              label: key,
+              selected: isStandard,
+              group: groupName,
+              hasData,
+            });
+          });
+        });
+
+        addLog(`   ✅ Väljad loodud: ${newFields.length}`, "success");
+        addLog(`      Väljad andmetega: ${fieldsWithData}/${newFields.length}`, "debug");
+        addLog(`      Vaikimisi valitud: ${newFields.filter((f) => f.selected).length} välja`, "debug");
+
+        setStats({
+          totalRows: matchingRows.length,
+          totalKeys: allKeys.length,
+          groupsCount: groups.size,
+          fieldsWithData,
+        });
+
+        if (mountedRef.current) {
+          setFields(newFields);
+        }
+
+        addLog("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+        addLog("✅ REAL-TIME LAADIMISE LÕPETATUD", "success", "Valmis märgupiteks!");
+        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+      } catch (err: any) {
+        addLog("❌ REAL-TIME valimise laadimine ebaõnnestus", "error", err?.message);
+      }
+    };
+
+    // ✅ Kuula valimise muutusi
+    const handleSelectionChanged = () => {
+      loadSelectionData();
+    };
+
+    // Registreeri listener
+    api.selection.addOnSelectionChanged?.(handleSelectionChanged);
+
+    // Hangi andmed kohe (initsialiseerimiseks)
+    loadSelectionData();
+
+    // Cleanup
+    return () => {
+      api.selection.removeOnSelectionChanged?.(handleSelectionChanged);
+    };
+  }, [api, allRows, allKeys, addLog]);
+
+  // ✅ FALLBACK: kui props muutuvad (Assembly Exporter režiim)
+  useEffect(() => {
+    if (!selectedObjects || selectedObjects.length === 0) return;
+    if (!allRows || allRows.length === 0) return;
+
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("📥 ASSEMBLY EXPORTER ANDMETE AUTOMAATNE LAADIMISE", "info");
+    addLog("📥 ASSEMBLY EXPORTER ANDMETE LAADIMISE", "info");
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
-    // 1️⃣ Kontrolli andmeid
-    addLog("\n1️⃣ ANDMETE KONTROLLIMINE:", "debug");
-
-    if (!allKeys || allKeys.length === 0) {
-      addLog("   ⚠️ allKeys puuduvad", "warn");
-      return;
-    }
-    addLog(`   ✅ allKeys: ${allKeys.length} võtit`, "success");
-
-    if (!allRows || allRows.length === 0) {
-      addLog("   ⚠️ allRows puuduvad", "warn");
-      return;
-    }
-    addLog(`   ✅ allRows: ${allRows.length} rida`, "success");
-
-    if (!selectedObjects || selectedObjects.length === 0) {
-      addLog("   ⚠️ selectedObjects puuduvad", "warn");
-      return;
-    }
-    addLog(`   ✅ selectedObjects: ${selectedObjects.length} objekti`, "success");
-
-    // 2️⃣ Leida valitud objektide andmed
-    addLog("\n2️⃣ VALITUD OBJEKTIDE ANDMETE LEIDMINE:", "debug");
+    addLog(`\n1️⃣ selectedObjects: ${selectedObjects.length} objekti`, "debug");
+    addLog(`   allRows: ${allRows.length} rida`, "debug");
+    addLog(`   allKeys: ${allKeys.length} võtit`, "debug");
 
     const selectedIds: number[] = [];
     const matchingRows: Array<{ [key: string]: string }> = [];
@@ -163,37 +304,21 @@ export default function MarkupCreator({
       if (objId) {
         selectedIds.push(objId);
 
-        // Leida rida mis vastab
         const row = allRows.find((r) => Number(r.ObjectId) === objId);
         if (row) {
           matchingRows.push(row);
           addLog(`   ✅ ${idx + 1}. ObjectId ${objId}: ${row.Name || "?"}`, "debug");
-        } else {
-          addLog(`   ⚠️ ${idx + 1}. ObjectId ${objId}: Rida ei leitud`, "warn");
         }
       }
     });
 
-    addLog(`\n   📊 Leitud: ${matchingRows.length}/${selectedObjects.length}`, "success");
-
-    if (matchingRows.length === 0) {
-      addLog("   ❌ Ühtegi rida ei leitud", "error");
-      return;
-    }
+    if (matchingRows.length === 0) return;
 
     setSelectedIds(selectedIds);
     setRowsData(matchingRows);
 
-    // 3️⃣ Väljadega täitmine
-    addLog("\n3️⃣ VÄLJADEGA TÄITMINE:", "debug");
-
     const groups = groupKeys(allKeys);
     let groupOrder = ["Standard", "Tekla_Assembly", "Nordec_Dalux", "IfcElementAssembly", "AssemblyBaseQuantities", "Other"];
-
-    addLog(`   📊 Grupid: ${groupOrder.length}`, "debug");
-    groups.forEach((keys, groupName) => {
-      addLog(`      ${groupName}: ${keys.length} välja`, "debug");
-    });
 
     const newFields: PropertyField[] = [];
     let fieldsWithData = 0;
@@ -208,7 +333,6 @@ export default function MarkupCreator({
           "Tekla_Assembly.AssemblyCast_unit_top_elevation",
         ].includes(key);
 
-        // Kontrolli kas väljal on andmeid
         const hasData = matchingRows.some((row) => {
           const val = row[key];
           return val && val.trim() !== "";
@@ -226,10 +350,6 @@ export default function MarkupCreator({
       });
     });
 
-    addLog(`   ✅ Väljad loodud: ${newFields.length}`, "success");
-    addLog(`      Väljad andmetega: ${fieldsWithData}/${newFields.length}`, "debug");
-    addLog(`      Vaikimisi valitud: ${newFields.filter((f) => f.selected).length} välja`, "debug");
-
     setStats({
       totalRows: matchingRows.length,
       totalKeys: allKeys.length,
@@ -241,9 +361,7 @@ export default function MarkupCreator({
       setFields(newFields);
     }
 
-    addLog("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("✅ LAADIMISE LÕPETATUD", "success", "Valmis märgupiteks!");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+    addLog("✅ ASSEMBLY EXPORTER LAADIMISE LÕPETATUD", "success");
   }, [selectedObjects, allRows, allKeys, addLog]);
 
   const toggleField = useCallback((key: string) => {
