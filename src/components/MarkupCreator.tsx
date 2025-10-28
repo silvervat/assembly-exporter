@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[]; // ✅ Salvestatav väljude järjekord
 }
 
-const COMPONENT_VERSION = "7.3.0";
+const COMPONENT_VERSION = "7.3.1";
 const MARKUP_COLOR = "FF0000";
 
 const DEFAULTS: Settings = {
@@ -722,8 +722,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     } catch (err: any) {
       addLog(`❌ VIGA: ${err?.message}`, "error");
       addLog(`\n💡 Võimalikud lahendused:`, "warn");
-      addLog(`   - Kontrollida kas API `getTextMarkups` on saadaval`, "debug");
-      addLog(`   - Kontrollida kas API `removeMarkups` on saadaval`, "debug");
+      addLog(`   - Kontrollida kas API getTextMarkups on saadaval`, "debug");
+      addLog(`   - Kontrollida kas API removeMarkups on saadaval`, "debug");
       addLog(`   - Proovida käsitsi markupite kustutamist Trimble'is`, "debug");
     } finally {
       setIsLoading(false);
