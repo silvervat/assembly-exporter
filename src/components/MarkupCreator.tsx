@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[]; // ✅ Salvestatav väljude järjekord
 }
 
-const COMPONENT_VERSION = "7.0.0";
+const COMPONENT_VERSION = "7.1.0";
 const MARKUP_COLOR = "FF0000";
 
 const DEFAULTS: Settings = {
@@ -631,20 +631,60 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     }
   }, [allFields, selectedData, settings, previewMarkup, api, addLog]);
 
-  const handleRemoveMarkups = useCallback(async () => {
-    if (markupIds.length === 0) return;
+  const handleRemoveAllMarkups = useCallback(async () => {
+    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+    addLog("🗑️ KÕIGIDE MARKUPITE KUSTUTAMINE MUDELIS", "info");
+    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
     setIsLoading(true);
     try {
-      await api.markup?.removeMarkups?.(markupIds);
+      addLog("🔍 Otsitakse kõik markupid mudelis...", "debug");
+
+      // ✅ Hangi kõik markupid
+      const allMarkups = await api.markup?.getTextMarkups?.();
+
+      if (!allMarkups || allMarkups.length === 0) {
+        addLog("ℹ️ Markupeid mudelis pole", "warn");
+        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+        setIsLoading(false);
+        return;
+      }
+
+      const allIds = allMarkups.map((m: any) => m?.id).filter((id: any) => id != null);
+      addLog(`✅ Leitud ${allIds.length} märgupit:`, "success");
+      allIds.slice(0, 10).forEach((id: number, idx: number) => {
+        addLog(`   ${idx + 1}. ID: ${id}`, "debug");
+      });
+      if (allIds.length > 10) {
+        addLog(`   ... ja ${allIds.length - 10} veel`, "debug");
+      }
+
+      if (allIds.length === 0) {
+        addLog("ℹ️ ID-sid ei leitud", "warn");
+        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+        setIsLoading(false);
+        return;
+      }
+
+      addLog(`\n📤 Kustutatakse ${allIds.length} märgupit API-st...`, "debug");
+
+      const result = await api.markup?.removeMarkups?.(allIds);
+
+      addLog(`✅ API vastus: ${typeof result}`, "debug");
+      addLog(`\n✅ KUSTUTAMINE ÕNNESTUS! ${allIds.length} märgupit kustutatakse 🎉`, "success");
+
       setMarkupIds([]);
-      addLog("✅ Markupid kustutatud", "success");
     } catch (err: any) {
-      addLog("❌ Kustutamine ebaõnnestus", "error");
+      addLog(`❌ VIGA: ${err?.message}`, "error");
+      addLog(`\n💡 Võimalikud lahendused:`, "warn");
+      addLog(`   - Kontrollida kas API `getTextMarkups` on saadaval`, "debug");
+      addLog(`   - Kontrollida kas API `removeMarkups` on saadaval`, "debug");
+      addLog(`   - Proovida käsitsi markupite kustutamist Trimble'is`, "debug");
     } finally {
       setIsLoading(false);
+      addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
-  }, [markupIds, api, addLog]);
+  }, [api, addLog]);
 
   const groupedFields = useMemo(() => {
     const groups = new Map<string, PropertyField[]>();
@@ -669,9 +709,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         backgroundColor: "#f5f5f5",
       }}
     >
-      {/* HEADER */}
-      <div style={{ marginBottom: 8 }}>
-        <h2 style={{ margin: "0 0 4px 0", fontSize: 14, fontWeight: 700 }}>🎨 Märgupite Ehitaja v{COMPONENT_VERSION}</h2>
+      {/* HEADER - MINIMEERITUD */}
+      <div style={{ marginBottom: 8, textAlign: "center" }}>
         <div style={{ fontSize: 9, color: "#666" }}>
           📊 Objektid: {stats.totalObjects} | Väljad: {stats.fieldsWithData}/{allFields.length} | Valitud: {selectedCount}
         </div>
@@ -739,21 +778,22 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           </button>
 
           <button
-            onClick={handleRemoveMarkups}
-            disabled={markupIds.length === 0 || isLoading}
+            onClick={handleRemoveAllMarkups}
+            disabled={isLoading}
             style={{
               flex: 1,
               padding: "6px 8px",
-              backgroundColor: markupIds.length === 0 || isLoading ? "#ccc" : "#d32f2f",
+              backgroundColor: isLoading ? "#ccc" : "#d32f2f",
               color: "white",
               border: "none",
               borderRadius: 3,
-              cursor: markupIds.length === 0 || isLoading ? "not-allowed" : "pointer",
+              cursor: isLoading ? "not-allowed" : "pointer",
               fontSize: 9,
               fontWeight: 600,
             }}
+            title="Kustuta KÕik markupid mudelis"
           >
-            🗑️ Kustuta
+            🗑️ Kustuta kõik
           </button>
         </div>
 
@@ -884,12 +924,12 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </div>
       </div>
 
-      {/* LOG */}
+      {/* LOG - VALGE TAUST */}
       <div
         style={{
-          backgroundColor: "#1a1a1a",
-          color: "#00ff00",
-          border: "1px solid #00ff00",
+          backgroundColor: "#ffffff",
+          color: "#333",
+          border: "1px solid #ddd",
           borderRadius: 3,
           overflow: "hidden",
           fontFamily: "monospace",
@@ -903,35 +943,63 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         <div
           style={{
             padding: "4px 8px",
-            backgroundColor: "#0a0a0a",
-            borderBottom: showDebugLog ? "1px solid #00ff00" : "none",
+            backgroundColor: "#f5f5f5",
+            borderBottom: showDebugLog ? "1px solid #ddd" : "none",
             cursor: "pointer",
             fontWeight: "bold",
             userSelect: "none",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
           }}
           onClick={() => setShowDebugLog(!showDebugLog)}
         >
-          {showDebugLog ? "▼" : "▶"} 🔍 LOG ({logs.length})
+          <span>{showDebugLog ? "▼" : "▶"} 📋 LOG ({logs.length})</span>
+          {showDebugLog && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const logText = logs.map((l) => `[${l.timestamp}] ${l.message}`).join("\n");
+                navigator.clipboard.writeText(logText);
+                addLog("✅ LOG kopeeritud lõikelauale", "success");
+              }}
+              style={{
+                padding: "2px 6px",
+                fontSize: 8,
+                backgroundColor: "#e0e0e0",
+                border: "none",
+                borderRadius: 2,
+                cursor: "pointer",
+              }}
+            >
+              📋 Kopeeri
+            </button>
+          )}
         </div>
 
         {showDebugLog && (
-          <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px", backgroundColor: "#000" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px", backgroundColor: "#fafafa" }}>
             {logs.map((log, idx) => {
               const colors: Record<string, string> = {
-                success: "#00ff00",
-                error: "#ff3333",
-                warn: "#ffaa00",
-                info: "#00ccff",
-                debug: "#888888",
+                success: "#2e7d32",
+                error: "#c62828",
+                warn: "#f57f17",
+                info: "#0277bd",
+                debug: "#666666",
               };
               return (
-                <div key={idx} style={{ marginBottom: 0, color: colors[log.level] || "#00ff00" }}>
+                <div key={idx} style={{ marginBottom: 1, color: colors[log.level] || "#333" }}>
                   [{log.timestamp}] {log.message}
                 </div>
               );
             })}
           </div>
         )}
+      </div>
+
+      {/* JALUS */}
+      <div style={{ marginTop: 8, textAlign: "center", fontSize: 8, color: "#999" }}>
+        MARKUP GENERATOR V7 • {BUILD_DATE}
       </div>
     </div>
   );
