@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, ReactNode } from "react";
 
 export interface MarkupCreatorProps {
   api: any;
@@ -28,10 +28,9 @@ interface Settings {
   selectedFields: string[];
 }
 
-// ✅ PARANDUS 1: Versiooni uuendamine ja MARKUP_COLOR formaat
-const COMPONENT_VERSION = "8.3.0";
+const COMPONENT_VERSION = "8.4.0";
 const BUILD_DATE = new Date().toISOString().split("T")[0];
-const MARKUP_COLOR = "#FF0000"; // ✅ PARANDATUD: hex formaat
+const MARKUP_COLOR = "#FF0000";
 
 const DEFAULTS: Settings = {
   delimiter: " | ",
@@ -57,9 +56,10 @@ const translations = {
     version: "MARKUP GENERATOR {version} • {date}",
     dragHint: "Drag-drop või ↑↓ nupud järjestuse muutmiseks",
     objectsSelected: "✅ {count} objekti | Väljad: {fields}",
-    // ✅ PARANDUS 2: Uued translations auto-refresh'ile
     autoRefresh: "🔄 Auto",
     autoRefreshTooltip: "Laadi andmed automaatselt valiku muutumisel",
+    apiNotReady: "⚠️ API pole valmis. Ootame...",
+    apiError: "❌ API viga: {error}",
   },
   en: {
     selectObjects: "Select objects in 3D view...",
@@ -79,96 +79,59 @@ const translations = {
     version: "MARKUP GENERATOR {version} • {date}",
     dragHint: "Drag-drop or ↑↓ buttons to reorder",
     objectsSelected: "✅ {count} objects | Fields: {fields}",
-    // ✅ PARANDUS 2: Uued translations auto-refresh'ile
     autoRefresh: "🔄 Auto",
     autoRefreshTooltip: "Auto-load data when selection changes",
+    apiNotReady: "⚠️ API not ready. Waiting...",
+    apiError: "❌ API error: {error}",
   },
 };
 
 type Language = "et" | "en";
 
-const GUIDE_TEXT = {
-  et: `
-📖 KASUTAMISE JUHEND
+// ✅ ERROR BOUNDARY - Valdab React render errors
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
 
-1️⃣ VALI OBJEKTID 3D VAATES
-   • Klõpsa objektile 3D mudeli sees
-   • Andmeid laadida automaatselt (kui 🔄 Auto on sisse lülitatud)
+class MarkupCreatorErrorBoundary extends React.Component<
+  { children: ReactNode },
+  ErrorBoundaryState
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
 
-2️⃣ VALI OMADUSED
-   • Märgi linnukesed omaduste tüüpide juures
-   • Need andmed näidatakse markupis
+  static getDerivedStateFromError(error: Error) {
+    console.error("[ErrorBoundary] React render error:", error);
+    return { hasError: true, error };
+  }
 
-3️⃣ MUUDA JÄRJESTUST
-   • Lohista omadust hiire abil
-   • Kasuta ↑↓ nooli järjestuse muutmiseks
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("[ErrorBoundary] Error caught:", error);
+    console.error("[ErrorBoundary] Component stack:", errorInfo.componentStack);
+  }
 
-4️⃣ MUUDA ERALDAJAT
-   • Avaldamisale taga "Eraldaja: " rida
-   • Näitab kuidas andmete kihid lahutakse
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          padding: 12,
+          backgroundColor: "#ffebee",
+          border: "1px solid #c62828",
+          borderRadius: 4,
+          color: "#c62828",
+          fontSize: 10,
+        }}>
+          <strong>❌ Render Error:</strong> {this.state.error?.message}
+        </div>
+      );
+    }
 
-5️⃣ LOO MARKUPID
-   • Klõpsa "➕ Loo" nuppu
-   • Markupid kuvatakse automaatselt 3D mudeli sees
-
-6️⃣ AUTO-UUENDUS (UUS!)
-   • Klõpsa "🔄 Auto" toggle'i
-   • Andmeid laaditakse automaatselt, kui valid 3D objekti
-
-7️⃣ KÄSITSI UUENDUS
-   • Klõpsa "🔄 Uuenda" nuppu (Auto välja lülitatud)
-   • Laadib kõik saadaolevad andmed ja valitud väljad
-
-8️⃣ KUSTUTA MARKUPID
-   • Klõpsa "🗑️" nuppu
-   • Kõik markupid mudelis kustutatakse
-
-💡 NÄPUNÄITED:
-   • "🔄 Auto" - andmeid uuendatakse automaatselt
-   • Eraldaja määrab kuidas andmed kuvada
-   • Logi näitab mis juhtub (ava LOG)
-  `,
-  en: `
-📖 USER GUIDE
-
-1️⃣ SELECT OBJECTS IN 3D VIEW
-   • Click object in 3D model
-   • Data loads automatically (if 🔄 Auto is enabled)
-
-2️⃣ SELECT PROPERTIES
-   • Check property type checkboxes
-   • These will show in markup
-
-3️⃣ CHANGE ORDER
-   • Drag property with mouse
-   • Use ↑↓ arrows to reorder
-
-4️⃣ CHANGE DELIMITER
-   • Found at bottom "Delimiter: " line
-   • Shows how data layers are separated
-
-5️⃣ CREATE MARKUPS
-   • Click "➕ Create" button
-   • Markups appear automatically in 3D model
-
-6️⃣ AUTO-REFRESH (NEW!)
-   • Click "🔄 Auto" toggle
-   • Data loads automatically when you select 3D object
-
-7️⃣ MANUAL REFRESH
-   • Click "🔄 Refresh" button (Auto disabled)
-   • Loads all available data and selected fields
-
-8️⃣ DELETE MARKUPS
-   • Click "🗑️" button
-   • All markups in model deleted
-
-💡 TIPS:
-   • "🔄 Auto" - data updates automatically
-   • Delimiter determines how data displays
-   • Log shows what's happening (open LOG)
-  `,
-};
+    return this.props.children;
+  }
+}
 
 function useSettings() {
   const [settings, setSettings] = useState<Settings>(() => {
@@ -177,7 +140,8 @@ function useSettings() {
       if (!raw) return DEFAULTS;
       const parsed = JSON.parse(raw) as Partial<Settings>;
       return { ...DEFAULTS, ...parsed };
-    } catch {
+    } catch (err) {
+      console.warn("[useSettings] localStorage error:", err);
       return DEFAULTS;
     }
   });
@@ -187,8 +151,8 @@ function useSettings() {
       const next = { ...prev, ...patch };
       try {
         window.localStorage?.setItem?.("markupCreatorSettings", JSON.stringify(next));
-      } catch {
-        // Silent
+      } catch (err) {
+        console.warn("[useSettings] localStorage save error:", err);
       }
       return next;
     });
@@ -210,35 +174,60 @@ function classifyGuid(guid: string): "IFC" | "MS" | "OTHER" {
   return "OTHER";
 }
 
-async function getPresentationLayerString(api: any, modelId: string, runtimeId: number): Promise<string> {
+// ✅ SAFE API CALL - Valdab network errors ja API failures
+async function safeApiCall<T>(
+  fn: () => Promise<T>,
+  defaultValue: T,
+  context: string
+): Promise<T> {
   try {
-    const layers = await api?.viewer?.getPresentationLayers?.(modelId, [runtimeId]);
-    if (Array.isArray(layers) && layers.length > 0 && Array.isArray(layers[0])) {
-      return layers[0].map((l: any) => String(l?.name || l)).join(" | ");
+    return await fn();
+  } catch (err: any) {
+    console.error(`[SafeApiCall] ${context} failed:`, err);
+    // Kui 404 viga - silent fail, ei kasta exception
+    if (err?.status === 404 || err?.message?.includes("404")) {
+      console.warn(`[SafeApiCall] 404 resource missing in ${context}`);
+      return defaultValue;
     }
-  } catch (err) {
-    console.warn("[getPresentationLayerString]", err);
+    return defaultValue;
   }
-  return "";
+}
+
+async function getPresentationLayerString(api: any, modelId: string, runtimeId: number): Promise<string> {
+  return safeApiCall(
+    async () => {
+      const layers = await api?.viewer?.getPresentationLayers?.(modelId, [runtimeId]);
+      if (Array.isArray(layers) && layers.length > 0 && Array.isArray(layers[0])) {
+        return layers[0].map((l: any) => String(l?.name || l)).join(" | ");
+      }
+      return "";
+    },
+    "",
+    "getPresentationLayerString"
+  );
 }
 
 async function getReferenceObjectInfo(api: any, modelId: string, runtimeId: number) {
   const result = { fileName: "", fileFormat: "", commonType: "", guidIfc: "", guidMs: "" };
-  try {
-    const refObj = await api?.viewer?.getReferenceObject?.(modelId, runtimeId);
-    if (!refObj) return result;
-    if (refObj?.file?.name) result.fileName = String(refObj.file.name);
-    if (refObj?.fileFormat) result.fileFormat = String(refObj.fileFormat);
-    if (refObj?.commonType) result.commonType = String(refObj.commonType);
-    if (refObj?.guid) {
-      const cls = classifyGuid(refObj.guid);
-      if (cls === "IFC") result.guidIfc = refObj.guid;
-      if (cls === "MS") result.guidMs = refObj.guid;
-    }
-  } catch (err) {
-    console.warn("[getReferenceObjectInfo]", err);
-  }
-  return result;
+  
+  return safeApiCall(
+    async () => {
+      const refObj = await api?.viewer?.getReferenceObject?.(modelId, runtimeId);
+      if (!refObj) return result;
+      
+      if (refObj?.file?.name) result.fileName = String(refObj.file.name);
+      if (refObj?.fileFormat) result.fileFormat = String(refObj.fileFormat);
+      if (refObj?.commonType) result.commonType = String(refObj.commonType);
+      if (refObj?.guid) {
+        const cls = classifyGuid(refObj.guid);
+        if (cls === "IFC") result.guidIfc = refObj.guid;
+        if (cls === "MS") result.guidMs = refObj.guid;
+      }
+      return result;
+    },
+    result,
+    "getReferenceObjectInfo"
+  );
 }
 
 async function flattenProps(
@@ -263,14 +252,18 @@ async function flattenProps(
   const keyCounts = new Map<string, number>();
 
   const push = (group: string, name: string, val: unknown) => {
-    const g = sanitizeKey(group);
-    const n = sanitizeKey(name);
-    const baseKey = g ? `${g}.${n}` : n;
-    let key = baseKey;
-    let count = keyCounts.get(baseKey) || 0;
-    if (count > 0) key = `${baseKey}_${count}`;
-    keyCounts.set(baseKey, count + 1);
-    propMap.set(key, String(val ?? ""));
+    try {
+      const g = sanitizeKey(group);
+      const n = sanitizeKey(name);
+      const baseKey = g ? `${g}.${n}` : n;
+      let key = baseKey;
+      let count = keyCounts.get(baseKey) || 0;
+      if (count > 0) key = `${baseKey}_${count}`;
+      keyCounts.set(baseKey, count + 1);
+      propMap.set(key, String(val ?? ""));
+    } catch (err) {
+      console.warn("[push] error:", err);
+    }
   };
 
   try {
@@ -350,6 +343,66 @@ function getMidPoint(row: Row): { x: number; y: number; z: number } {
   return { x: 0, y: 0, z: 0 };
 }
 
+// ✅ API AVAILABILITY CHECK - Valdab API initialization errors
+function useApiAvailability(api: any) {
+  const [apiReady, setApiReady] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!api) {
+      setApiReady(false);
+      setApiError("API pole määratud");
+      return;
+    }
+
+    // ✅ Kontrollime, kas kõik vajalikud methods on olemas
+    const requiredMethods = [
+      "api.viewer",
+      "api.viewer.getSelectedObjects",
+      "api.viewer.getObjectProperties",
+      "api.markup.addTextMarkup",
+    ];
+
+    try {
+      let allPresent = true;
+
+      if (!api?.viewer) {
+        allPresent = false;
+        console.warn("[useApiAvailability] api.viewer puudub");
+      }
+
+      if (!api?.viewer?.getSelectedObjects) {
+        allPresent = false;
+        console.warn("[useApiAvailability] api.viewer.getSelectedObjects puudub");
+      }
+
+      if (!api?.viewer?.getObjectProperties) {
+        allPresent = false;
+        console.warn("[useApiAvailability] api.viewer.getObjectProperties puudub");
+      }
+
+      if (!api?.markup?.addTextMarkup) {
+        allPresent = false;
+        console.warn("[useApiAvailability] api.markup.addTextMarkup puudub");
+      }
+
+      if (allPresent) {
+        setApiReady(true);
+        setApiError(null);
+      } else {
+        setApiReady(false);
+        setApiError("Mõned API methods puuduvad");
+      }
+    } catch (err: any) {
+      console.error("[useApiAvailability] Error checking API:", err);
+      setApiReady(false);
+      setApiError(err.message);
+    }
+  }, [api]);
+
+  return { apiReady, apiError };
+}
+
 export function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   const [language, setLanguage] = useState<Language>("et");
   const [settings, updateSettings] = useSettings();
@@ -359,32 +412,42 @@ export function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   const [allFields, setAllFields] = useState<PropertyField[]>([]);
   const [draggedField, setDraggedField] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-
-  // ✅ PARANDUS 3: Uued state'd auto-refresh'ile
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
   const [lastSelectionTime, setLastSelectionTime] = useState(0);
 
+  // ✅ API AVAILABILITY CHECK
+  const { apiReady, apiError } = useApiAvailability(api);
+
   const t = useMemo(() => translations[language], [language]);
 
   const addLog = useCallback((message: string, level: LogEntry["level"] = "info") => {
-    const now = new Date();
-    const timestamp = now.toLocaleTimeString("et-EE");
-    console.log(`[${timestamp}] [${level}] ${message}`);
-    setLogs((prev) => {
-      const next = [...prev, { timestamp, level, message }];
-      return next.slice(-50);
-    });
+    try {
+      const now = new Date();
+      const timestamp = now.toLocaleTimeString("et-EE");
+      console.log(`[${timestamp}] [${level}] ${message}`);
+      setLogs((prev) => {
+        const next = [...prev, { timestamp, level, message }];
+        return next.slice(-50);
+      });
+    } catch (err) {
+      console.error("[addLog] error:", err);
+    }
   }, []);
 
   const updatePreview = useCallback(() => {
-    // Loogiline, et this uuendab eelvaadet
+    // Update preview logic
   }, []);
 
-  // ✅ PARANDUS 4: Auto-refresh event listener
+  // ✅ AUTO-REFRESH WITH BETTER ERROR HANDLING
   useEffect(() => {
+    if (!apiReady) {
+      console.warn("[AutoRefresh] API pole valmis");
+      return;
+    }
+
     if (!api?.viewer) {
-      console.warn("[AutoRefresh] API pole veel valmis");
+      console.warn("[AutoRefresh] api.viewer pole olemas");
       return;
     }
 
@@ -396,58 +459,74 @@ export function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     console.log("[AutoRefresh] Listener registreerimine...");
 
     const handleSelectionChanged = async (eventName: string, eventData: any) => {
-      console.log("[SelectionChanged Event]", { eventName, eventData });
-
-      // 🔥 DEBOUNCE: ära laadi kui teine uuendus tuli 200ms jooksul
-      const now = Date.now();
-      const timeSinceLastLoad = now - lastSelectionTime;
-
-      if (timeSinceLastLoad < 200) {
-        console.log(
-          `[SelectionChanged] Debounced (${timeSinceLastLoad}ms < 200ms)`
-        );
-        return;
-      }
-
-      console.log(
-        `[SelectionChanged] Laadima (${timeSinceLastLoad}ms seit viimastst)`
-      );
-      setLastSelectionTime(now);
-
-      // ✅ Laadi andmeid automaatselt
-      setIsAutoRefreshing(true);
       try {
-        await loadSelectionData();
-        addLog(`🔄 Automaatselt uuendatud`, "info");
+        console.log("[SelectionChanged Event]", { eventName, eventData });
+
+        const now = Date.now();
+        const timeSinceLastLoad = now - lastSelectionTime;
+
+        if (timeSinceLastLoad < 200) {
+          console.log(`[SelectionChanged] Debounced (${timeSinceLastLoad}ms < 200ms)`);
+          return;
+        }
+
+        console.log(`[SelectionChanged] Laadima (${timeSinceLastLoad}ms)`);
+        setLastSelectionTime(now);
+
+        setIsAutoRefreshing(true);
+        try {
+          await loadSelectionData();
+          addLog(`🔄 Automaatselt uuendatud`, "info");
+        } catch (err: any) {
+          console.error("[AutoRefresh] Load error:", err);
+          addLog(`⚠️ Auto-laadimise viga: ${err.message}`, "warn");
+        } finally {
+          setIsAutoRefreshing(false);
+        }
       } catch (err: any) {
-        console.error("[AutoRefresh] Viga:", err);
-        addLog(`⚠️ Auto-laadimise viga: ${err.message}`, "warn");
-      } finally {
-        setIsAutoRefreshing(false);
+        console.error("[handleSelectionChanged] Outer error:", err);
       }
     };
 
-    // ✅ REGISTREERI EVENT LISTENER
-    const unsubscribe = api.viewer?.on?.(
-      "Viewer.SelectionChanged",
-      handleSelectionChanged
-    );
+    let unsubscribe: any = null;
+
+    try {
+      // ✅ SAFE LISTENER REGISTRATION
+      if (typeof api.viewer.on === "function") {
+        unsubscribe = api.viewer.on("Viewer.SelectionChanged", handleSelectionChanged);
+      } else {
+        console.warn("[AutoRefresh] api.viewer.on pole function");
+      }
+    } catch (err: any) {
+      console.error("[AutoRefresh] Listener registration error:", err);
+      addLog(`❌ Event listener registreerimise viga: ${err.message}`, "error");
+    }
 
     console.log("[AutoRefresh] Listener registreeritud");
 
-    // ✅ CLEANUP: eemalda listener komponendi lõpus
     return () => {
-      console.log("[AutoRefresh] Listener eemaldatakse");
-      if (typeof unsubscribe === "function") {
-        unsubscribe();
+      try {
+        console.log("[AutoRefresh] Listener eemaldatakse");
+        if (typeof unsubscribe === "function") {
+          unsubscribe();
+        }
+      } catch (err: any) {
+        console.error("[AutoRefresh] Cleanup error:", err);
       }
     };
-  }, [api, autoRefreshEnabled, lastSelectionTime, loadSelectionData, addLog]);
+  }, [api, apiReady, autoRefreshEnabled, lastSelectionTime, loadSelectionData, addLog]);
 
-  // ✅ PARANDUS 5: Parandatud loadSelectionData (lisa updatePreview!)
+  // ✅ SAFE SELECTION DATA LOADING
   const loadSelectionData = useCallback(async () => {
-    if (!api?.viewer) {
+    if (!apiReady) {
       console.warn("[LoadSelectionData] API pole valmis");
+      addLog("⚠️ API pole valmis", "warn");
+      return;
+    }
+
+    if (!api?.viewer?.getSelectedObjects) {
+      console.warn("[LoadSelectionData] getSelectedObjects pole olemas");
+      addLog("❌ API method puudub", "error");
       return;
     }
 
@@ -455,31 +534,40 @@ export function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       addLog("🔄 Andmeid laadimas...", "info");
       console.log("[LoadSelectionData] Algus...");
 
-      // 1. Lae valitud objektid
-      const selected = await api.viewer?.getSelectedObjects?.();
+      const selected = await safeApiCall(
+        () => api.viewer.getSelectedObjects(),
+        [],
+        "getSelectedObjects"
+      );
+
       console.log("[LoadSelectionData] Valitud objektid:", selected);
 
       if (!selected?.length) {
         setSelectedData([]);
         setAllFields([]);
-        updatePreview(); // ✅ LISA see!
+        updatePreview();
         addLog("ℹ️ Objekte pole valitud", "info");
         return;
       }
 
-      // 2. Kogu omadused igale objektile
       const rows: Row[] = [];
       const fieldMap = new Map<string, PropertyField>();
       const modelNameById = new Map<string, string>();
 
       try {
-        const proj = await api.project?.getProject?.();
-        const models = proj?.models || [];
-        for (const m of models) {
-          if (m?.id) modelNameById.set(m.id, m.name || m.id);
+        const proj = await safeApiCall(
+          () => api.project?.getProject?.(),
+          null,
+          "getProject"
+        );
+
+        if (proj?.models) {
+          for (const m of proj.models) {
+            if (m?.id) modelNameById.set(m.id, m.name || m.id);
+          }
         }
       } catch (e) {
-        console.warn("[LoadSelectionData] Mudeli nimed ebaõnnestus", e);
+        console.warn("[LoadSelectionData] Project fetch failed", e);
       }
 
       const projectName = api.project?.name || "Unknown";
@@ -489,7 +577,6 @@ export function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           const row = await flattenProps(obj, "modelId", projectName, modelNameById, api);
           rows.push(row);
 
-          // Täida fieldMap - millised väljad saadaval
           for (const key of Object.keys(row)) {
             if (!fieldMap.has(key) && row[key]) {
               const parts = key.split(".");
@@ -504,105 +591,108 @@ export function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             }
           }
         } catch (e) {
-          console.warn("[LoadSelectionData] Objekti laadimise viga:", e);
+          console.warn("[LoadSelectionData] Object processing error:", e);
         }
       }
 
-      // 3. Konverdi fieldMap massiiviks
       const newFields = Array.from(fieldMap.values());
 
-      // 4. Salvesta state'sse
       setSelectedData(rows);
       setAllFields(newFields);
-
-      // ✅ KÕIGE OLULISEM: Uuenda eelvaadet!
       updatePreview();
 
       addLog(
         `✅ Laaditud: ${rows.length} objekti, ${newFields.length} välja`,
         "success"
       );
-      console.log("[LoadSelectionData] Õnnestus", { rows, newFields });
+      console.log("[LoadSelectionData] Success", { rows, newFields });
     } catch (err: any) {
-      console.error("[LoadSelectionData] Viga:", err);
+      console.error("[LoadSelectionData] Fatal error:", err);
       addLog(
         `❌ Andmete laadimine ebaõnnestus: ${err.message}`,
         "error"
       );
       if (onError) onError(err.message);
     }
-  }, [api, settings.selectedFields, updatePreview, addLog, onError]);
+  }, [api, apiReady, settings.selectedFields, updatePreview, addLog, onError]);
 
-  // ✅ PARANDUS 6: Parandatud createMarkups (EEMALDA loadSelectionData kutsed!)
+  // ✅ SAFE MARKUP CREATION
   const createMarkups = useCallback(async () => {
+    if (!apiReady) {
+      addLog("❌ API pole valmis", "error");
+      return;
+    }
+
+    if (!api?.markup?.addTextMarkup) {
+      addLog("❌ Markup API puudub", "error");
+      return;
+    }
+
     const selectedFields = getOrderedSelectedFields();
 
-    // ✅ Kontrolli, kas väljad on olemas
     if (selectedFields.length === 0) {
       addLog("❌ Väljad puuduvad – vali esmalt väljad", "error");
       return;
     }
 
-    // ✅ Kontrolli, kas objektid on valitud
     if (selectedData.length === 0) {
       addLog("❌ Objektid puuduvad – vali esmalt objektid 3D vaates", "error");
       return;
     }
 
     setIsLoading(true);
-    let successCount = 0;
 
     try {
-      // Ehita markupit andmeid kasutades
       const markups = selectedData
         .map((row) => {
-          // Kogu valitud väljad
-          const values = selectedFields
-            .map((f) => {
-              const val = row[f.key];
-              return typeof val === "string" ? val.trim() : String(val || "");
-            })
-            .filter((v) => v.length > 0);
+          try {
+            const values = selectedFields
+              .map((f) => {
+                const val = row[f.key];
+                return typeof val === "string" ? val.trim() : String(val || "");
+              })
+              .filter((v) => v.length > 0);
 
-          // Kui andmeid pole, jäta vahele
-          if (!values.length) return null;
+            if (!values.length) return null;
 
-          // Arvuta markup positsioon (objekti keskkoht)
-          const midpoint = getMidPoint(row);
+            const midpoint = getMidPoint(row);
 
-          return {
-            text: values.join(settings.delimiter),
-            start: { ...midpoint },
-            end: { ...midpoint },
-            color: MARKUP_COLOR, // ✅ ÕIGE formaat!
-          };
+            return {
+              text: values.join(settings.delimiter),
+              start: { ...midpoint },
+              end: { ...midpoint },
+              color: MARKUP_COLOR,
+            };
+          } catch (err) {
+            console.warn("[createMarkups] Markup building error:", err);
+            return null;
+          }
         })
         .filter(Boolean);
 
-      // Kui ühtegi markup't ei ole, lõpeta
       if (!markups.length) {
         addLog("❌ Andmeid pole – kõik objektid olid tühjad", "error");
         return;
       }
 
-      // 🚀 Pane markupid 3D mudelile
-      const result = await api.markup?.addTextMarkup?.(markups);
+      const result = await safeApiCall(
+        () => api.markup.addTextMarkup(markups),
+        [],
+        "addTextMarkup"
+      );
 
-      // Loe, mitu õnnestus
-      successCount = Array.isArray(result)
+      const successCount = Array.isArray(result)
         ? result.filter((r) => r?.id).length
         : 0;
 
-      // ✅ Log resultat
       addLog(
         `✅ Loodud: ${successCount}/${selectedData.length} märkupit`,
         "success"
       );
 
-      // Log markupi näide
-      console.log("[CreateMarkups] Näide:", markups[0]);
+      console.log("[CreateMarkups] Success", { successCount, markups });
     } catch (err: any) {
-      console.error("[CreateMarkups] Viga:", err);
+      console.error("[CreateMarkups] Error:", err);
       addLog(
         `❌ Viga: ${err?.message || "Teadmata viga"}`,
         "error"
@@ -610,16 +700,25 @@ export function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedData, settings.delimiter, api, addLog, getOrderedSelectedFields]);
+  }, [selectedData, settings.delimiter, api, apiReady, addLog, getOrderedSelectedFields]);
 
   const removeAllMarkups = useCallback(async () => {
+    if (!apiReady) {
+      addLog("❌ API pole valmis", "error");
+      return;
+    }
+
     try {
-      await api.markup?.removeMarkups?.(undefined);
+      await safeApiCall(
+        () => api.markup?.removeMarkups?.(undefined),
+        undefined,
+        "removeMarkups"
+      );
       addLog("🗑️ Kõik markupid kustutatud", "success");
     } catch (err: any) {
       addLog(`❌ ${err.message}`, "error");
     }
-  }, [api, addLog]);
+  }, [api, apiReady, addLog]);
 
   const toggleField = useCallback(
     (key: string) => {
@@ -692,466 +791,421 @@ export function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     setDraggedField(null);
   };
 
-  return (
-    <div style={{
-      fontFamily: "system-ui, -apple-system, sans-serif",
-      fontSize: 10,
-      color: "#333",
-      padding: 12,
-      display: "flex",
-      flexDirection: "column",
-      gap: 12,
-      backgroundColor: "#fafbfc",
-      minHeight: "100vh",
-    }}>
-      {/* HEADER */}
+  // ✅ SHOW API STATUS
+  if (!apiReady && apiError) {
+    return (
       <div style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: 8,
-        borderBottom: "1px solid #e0e0e0",
-        paddingBottom: 8,
+        padding: 12,
+        backgroundColor: "#fff3e0",
+        border: "1px solid #f57c00",
+        borderRadius: 4,
+        color: "#f57c00",
+        fontSize: 10,
       }}>
-        <h3 style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#1976d2" }}>
-          {t.markupGenerator}
-        </h3>
-        <select
-          value={language}
-          onChange={(e) => setLanguage(e.target.value as Language)}
-          style={{
-            padding: "4px 6px",
-            fontSize: 9,
-            border: "1px solid #d0d0d0",
-            borderRadius: 3,
-            cursor: "pointer",
-          }}
-        >
-          <option value="et">🇪🇪 Eesti</option>
-          <option value="en">🇬🇧 English</option>
-        </select>
+        <strong>⚠️ {t.apiNotReady}</strong>
+        <div style={{ marginTop: 4, fontSize: 9, color: "#666" }}>
+          {apiError}
+        </div>
       </div>
+    );
+  }
 
-      {/* BUTTONS - PEAMINE SEKTSIOONI MUUDATUS! */}
+  return (
+    <MarkupCreatorErrorBoundary>
       <div style={{
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontSize: 10,
+        color: "#333",
+        padding: 12,
         display: "flex",
-        gap: 6,
-        flexWrap: "wrap",
-        alignItems: "center",
+        flexDirection: "column",
+        gap: 12,
+        backgroundColor: "#fafbfc",
+        minHeight: "100vh",
       }}>
-        {/* Uuenda nupp */}
-        <button
-          onClick={() => loadSelectionData()}
-          disabled={isAutoRefreshing}
-          title="Käsitsi andmete uuendamine"
-          style={{
-            flex: "1 1 100px",
-            padding: "6px 8px",
-            backgroundColor: isAutoRefreshing ? "#f0f0f0" : "#e3f2fd",
-            color: isAutoRefreshing ? "#999" : "#0066cc",
-            border: "1px solid #d0d0d0",
-            borderRadius: 3,
-            cursor: isAutoRefreshing ? "not-allowed" : "pointer",
-            fontSize: 10,
-            fontWeight: 500,
-            transition: "all 0.15s",
-            opacity: isAutoRefreshing ? 0.6 : 1,
-          }}
-        >
-          {isAutoRefreshing ? "🔄..." : t.refresh}
-        </button>
-
-        {/* ✅ AUTO-REFRESH TOGGLE (UUENDUS!) */}
-        <label
-          title={t.autoRefreshTooltip || "Automaatne andmete uuendamine"}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            padding: "6px 8px",
-            backgroundColor: autoRefreshEnabled ? "#e8f5e9" : "#fafafa",
-            border: "1px solid #d0d0d0",
-            borderRadius: 3,
-            cursor: "pointer",
-            userSelect: "none",
-            fontSize: 9,
-            fontWeight: 500,
-            transition: "all 0.15s",
-            flex: "1 1 100px",
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.backgroundColor = autoRefreshEnabled
-              ? "#c8e6c9"
-              : "#f0f0f0";
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.backgroundColor = autoRefreshEnabled
-              ? "#e8f5e9"
-              : "#fafafa";
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={autoRefreshEnabled}
-            onChange={(e) => {
-              setAutoRefreshEnabled(e.target.checked);
-              addLog(
-                e.target.checked
-                  ? "🔄 Auto-laadmine sisse lülitatud"
-                  : "⊘ Auto-laadmine välja lülitatud",
-                "info"
-              );
-            }}
+        {/* HEADER */}
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 8,
+          borderBottom: "1px solid #e0e0e0",
+          paddingBottom: 8,
+        }}>
+          <h3 style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#1976d2" }}>
+            {t.markupGenerator}
+          </h3>
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as Language)}
             style={{
+              padding: "4px 6px",
+              fontSize: 9,
+              border: "1px solid #d0d0d0",
+              borderRadius: 3,
               cursor: "pointer",
-              margin: 0,
-              width: 14,
-              height: 14,
-            }}
-          />
-          <span
-            style={{
-              color: autoRefreshEnabled ? "#2e7d32" : "#999",
             }}
           >
-            {t.autoRefresh || "🔄 Auto"}
-          </span>
-        </label>
+            <option value="et">🇪🇪 Eesti</option>
+            <option value="en">🇬🇧 English</option>
+          </select>
+        </div>
 
-        {/* Loo nupp */}
-        <button
-          onClick={() => createMarkups()}
-          disabled={isLoading || selectedData.length === 0}
-          style={{
-            flex: "1 1 100px",
-            padding: "6px 8px",
-            backgroundColor: isLoading ? "#f0f0f0" : "#fff",
-            border: "1px solid #d0d0d0",
+        {/* API STATUS */}
+        {apiError && (
+          <div style={{
+            backgroundColor: "#fff3e0",
+            border: "1px solid #f57c00",
+            padding: 6,
             borderRadius: 3,
-            cursor: isLoading || selectedData.length === 0 ? "not-allowed" : "pointer",
-            fontSize: 10,
-            fontWeight: 500,
-          }}
-        >
-          {isLoading ? t.loading : t.create}
-        </button>
-
-        {/* Kustuta nupp */}
-        <button
-          onClick={() => removeAllMarkups()}
-          title="Kõik markupid"
-          style={{
-            flex: "0 1 40px",
-            padding: "6px 8px",
-            backgroundColor: "#ffebee",
-            border: "1px solid #d0d0d0",
-            borderRadius: 3,
-            cursor: "pointer",
-            fontSize: 10,
-          }}
-        >
-          {t.removeAll}
-        </button>
-      </div>
-
-      {/* PROPERTIES SECTION */}
-      <div style={{
-        border: "1px solid #e0e0e0",
-        borderRadius: 4,
-        padding: 8,
-        backgroundColor: "#ffffff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
-      }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: 10, fontWeight: 600, color: "#555" }}>
-          {t.properties}
-        </h4>
-        {selectedData.length === 0 ? (
-          <div style={{ fontSize: 9, color: "#999", fontStyle: "italic" }}>
-            {t.selectObjects}
-          </div>
-        ) : (
-          <div style={{ fontSize: 8, color: "#0066cc", marginBottom: 6 }}>
-            {t.objectsSelected.replace("{count}", String(selectedData.length)).replace(
-              "{fields}",
-              String(getOrderedSelectedFields().length)
-            )}
+            fontSize: 9,
+            color: "#f57c00",
+          }}>
+            ⚠️ {apiError}
           </div>
         )}
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {groupedFields.map(([groupName, fields]) => (
-            <div key={groupName}>
-              <div style={{
-                fontSize: 9,
-                fontWeight: 600,
-                color: "#555",
-                marginBottom: 4,
-                paddingLeft: 4,
-              }}>
-                {groupName}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {fields.map((field) => {
-                  const isInOrder = settings.selectedFields.includes(field.key);
-                  const isFirst = isInOrder && settings.selectedFields[0] === field.key;
-                  const isLast = isInOrder && settings.selectedFields[settings.selectedFields.length - 1] === field.key;
+        {/* BUTTONS */}
+        <div style={{
+          display: "flex",
+          gap: 6,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}>
+          <button
+            onClick={() => loadSelectionData()}
+            disabled={isAutoRefreshing || !apiReady}
+            style={{
+              flex: "1 1 100px",
+              padding: "6px 8px",
+              backgroundColor: isAutoRefreshing ? "#f0f0f0" : "#e3f2fd",
+              color: isAutoRefreshing ? "#999" : "#0066cc",
+              border: "1px solid #d0d0d0",
+              borderRadius: 3,
+              cursor: isAutoRefreshing || !apiReady ? "not-allowed" : "pointer",
+              fontSize: 10,
+              fontWeight: 500,
+              transition: "all 0.15s",
+              opacity: isAutoRefreshing || !apiReady ? 0.6 : 1,
+            }}
+          >
+            {isAutoRefreshing ? "🔄..." : t.refresh}
+          </button>
 
-                  return (
-                    <div
-                      key={field.key}
-                      draggable={field.selected}
-                      onDragStart={(e) => handleDragStart(e, field.key)}
-                      onDragEnd={handleDragEnd}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 3,
-                        padding: 4,
-                        borderRadius: 3,
-                        border: field.selected ? "1px solid #1976d2" : draggedField === field.key ? "1px dashed #1976d2" : "1px solid #eef1f6",
-                        background: field.selected ? "#e3f2fd" : "#fff",
-                        opacity: field.hasData ? 1 : 0.6,
-                        cursor: field.selected ? "grab" : "default",
-                        transition: "all 0.15s",
-                      } as any}
-                    >
-                      <span style={{ fontSize: 9, color: field.selected ? "#1976d2" : "#ccc", userSelect: "none" }}>⋮⋮</span>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "6px 8px",
+              backgroundColor: autoRefreshEnabled ? "#e8f5e9" : "#fafafa",
+              border: "1px solid #d0d0d0",
+              borderRadius: 3,
+              cursor: "pointer",
+              userSelect: "none",
+              fontSize: 9,
+              fontWeight: 500,
+              transition: "all 0.15s",
+              flex: "1 1 100px",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={autoRefreshEnabled}
+              onChange={(e) => {
+                setAutoRefreshEnabled(e.target.checked);
+                addLog(
+                  e.target.checked
+                    ? "🔄 Auto-laadmine sisse lülitatud"
+                    : "⊘ Auto-laadmine välja lülitatud",
+                  "info"
+                );
+              }}
+              style={{
+                cursor: "pointer",
+                margin: 0,
+                width: 14,
+                height: 14,
+              }}
+              disabled={!apiReady}
+            />
+            <span style={{ color: autoRefreshEnabled ? "#2e7d32" : "#999" }}>
+              {t.autoRefresh}
+            </span>
+          </label>
 
-                      <input
-                        type="checkbox"
-                        checked={field.selected}
-                        onChange={() => toggleField(field.key)}
+          <button
+            onClick={() => createMarkups()}
+            disabled={isLoading || selectedData.length === 0 || !apiReady}
+            style={{
+              flex: "1 1 100px",
+              padding: "6px 8px",
+              backgroundColor: isLoading ? "#f0f0f0" : "#fff",
+              border: "1px solid #d0d0d0",
+              borderRadius: 3,
+              cursor: isLoading || selectedData.length === 0 || !apiReady ? "not-allowed" : "pointer",
+              fontSize: 10,
+              fontWeight: 500,
+            }}
+          >
+            {isLoading ? t.loading : t.create}
+          </button>
+
+          <button
+            onClick={() => removeAllMarkups()}
+            disabled={!apiReady}
+            style={{
+              flex: "0 1 40px",
+              padding: "6px 8px",
+              backgroundColor: "#ffebee",
+              border: "1px solid #d0d0d0",
+              borderRadius: 3,
+              cursor: !apiReady ? "not-allowed" : "pointer",
+              fontSize: 10,
+              opacity: !apiReady ? 0.6 : 1,
+            }}
+          >
+            {t.removeAll}
+          </button>
+        </div>
+
+        {/* PROPERTIES SECTION */}
+        <div style={{
+          border: "1px solid #e0e0e0",
+          borderRadius: 4,
+          padding: 8,
+          backgroundColor: "#ffffff",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+        }}>
+          <h4 style={{ margin: "0 0 8px 0", fontSize: 10, fontWeight: 600, color: "#555" }}>
+            {t.properties}
+          </h4>
+          {selectedData.length === 0 ? (
+            <div style={{ fontSize: 9, color: "#999", fontStyle: "italic" }}>
+              {t.selectObjects}
+            </div>
+          ) : (
+            <div style={{ fontSize: 8, color: "#0066cc", marginBottom: 6 }}>
+              {t.objectsSelected.replace("{count}", String(selectedData.length)).replace(
+                "{fields}",
+                String(getOrderedSelectedFields().length)
+              )}
+            </div>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {groupedFields.map(([groupName, fields]) => (
+              <div key={groupName}>
+                <div style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  color: "#555",
+                  marginBottom: 4,
+                  paddingLeft: 4,
+                }}>
+                  {groupName}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  {fields.map((field) => {
+                    const isInOrder = settings.selectedFields.includes(field.key);
+                    const isFirst = isInOrder && settings.selectedFields[0] === field.key;
+                    const isLast = isInOrder && settings.selectedFields[settings.selectedFields.length - 1] === field.key;
+
+                    return (
+                      <div
+                        key={field.key}
+                        draggable={field.selected}
+                        onDragStart={(e) => handleDragStart(e, field.key)}
+                        onDragEnd={handleDragEnd}
                         style={{
-                          cursor: "pointer",
-                          margin: 0,
-                          width: 14,
-                          height: 14,
-                        }}
-                      />
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 3,
+                          padding: 4,
+                          borderRadius: 3,
+                          border: field.selected ? "1px solid #1976d2" : draggedField === field.key ? "1px dashed #1976d2" : "1px solid #eef1f6",
+                          background: field.selected ? "#e3f2fd" : "#fff",
+                          opacity: field.hasData ? 1 : 0.6,
+                          cursor: field.selected ? "grab" : "default",
+                          transition: "all 0.15s",
+                        } as any}
+                      >
+                        <span style={{ fontSize: 9, color: field.selected ? "#1976d2" : "#ccc", userSelect: "none" }}>⋮⋮</span>
 
-                      <span style={{
-                        color: "#0066cc",
-                        fontSize: 9,
-                        fontWeight: 500,
-                        flex: 1,
-                        wordBreak: "break-word",
-                        lineHeight: "1.2",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}>
-                        {field.label}
-                      </span>
+                        <input
+                          type="checkbox"
+                          checked={field.selected}
+                          onChange={() => toggleField(field.key)}
+                          style={{
+                            cursor: "pointer",
+                            margin: 0,
+                            width: 14,
+                            height: 14,
+                          }}
+                        />
 
-                      <div style={{ display: "flex", gap: 2, visibility: isInOrder ? "visible" : "hidden" }}>
-                        {!isFirst && (
-                          <button
-                            onClick={() => moveField(field.key, "up")}
-                            title="Üles"
-                            style={{
-                              padding: "3px 5px",
-                              fontSize: 9,
-                              backgroundColor: "#f0f0f0",
-                              border: "1px solid #d0d0d0",
-                              borderRadius: 2,
-                              cursor: "pointer",
-                              transition: "all 0.15s",
-                            }}
-                            onMouseOver={(e) => {
-                              e.currentTarget.style.backgroundColor = "#1976d2";
-                              e.currentTarget.style.color = "white";
-                            }}
-                            onMouseOut={(e) => {
-                              e.currentTarget.style.backgroundColor = "#f0f0f0";
-                              e.currentTarget.style.color = "black";
-                            }}
-                          >
-                            ↑
-                          </button>
-                        )}
-                        {!isLast && (
-                          <button
-                            onClick={() => moveField(field.key, "down")}
-                            title="Alla"
-                            style={{
-                              padding: "3px 5px",
-                              fontSize: 9,
-                              backgroundColor: "#f0f0f0",
-                              border: "1px solid #d0d0d0",
-                              borderRadius: 2,
-                              cursor: "pointer",
-                              transition: "all 0.15s",
-                            }}
-                            onMouseOver={(e) => {
-                              e.currentTarget.style.backgroundColor = "#1976d2";
-                              e.currentTarget.style.color = "white";
-                            }}
-                            onMouseOut={(e) => {
-                              e.currentTarget.style.backgroundColor = "#f0f0f0";
-                              e.currentTarget.style.color = "black";
-                            }}
-                          >
-                            ↓
-                          </button>
-                        )}
+                        <span style={{
+                          color: "#0066cc",
+                          fontSize: 9,
+                          fontWeight: 500,
+                          flex: 1,
+                          wordBreak: "break-word",
+                          lineHeight: "1.2",
+                        }}>
+                          {field.label}
+                        </span>
+
+                        <div style={{ display: "flex", gap: 2, visibility: isInOrder ? "visible" : "hidden" }}>
+                          {!isFirst && (
+                            <button
+                              onClick={() => moveField(field.key, "up")}
+                              style={{
+                                padding: "3px 5px",
+                                fontSize: 9,
+                                backgroundColor: "#f0f0f0",
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 2,
+                                cursor: "pointer",
+                              }}
+                            >
+                              ↑
+                            </button>
+                          )}
+                          {!isLast && (
+                            <button
+                              onClick={() => moveField(field.key, "down")}
+                              style={{
+                                padding: "3px 5px",
+                                fontSize: 9,
+                                backgroundColor: "#f0f0f0",
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 2,
+                                cursor: "pointer",
+                              }}
+                            >
+                              ↓
+                            </button>
+                          )}
+                        </div>
                       </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* FOOTER WITH SETTINGS */}
+        <div style={{
+          border: "1px solid #e0e0e0",
+          borderRadius: 4,
+          padding: 8,
+          backgroundColor: "#ffffff",
+        }}>
+          <div style={{ marginBottom: 6 }}>
+            <label style={{
+              fontSize: 10,
+              fontWeight: 500,
+              color: "#555",
+              display: "block",
+              marginBottom: 2,
+            }}>
+              {t.delimiter}
+            </label>
+            <input
+              type="text"
+              value={settings.delimiter}
+              onChange={(e) => updateSettings({ delimiter: e.target.value })}
+              style={{
+                width: "100%",
+                padding: "5px 8px",
+                border: "1px solid #d0d0d0",
+                borderRadius: 3,
+                fontSize: 10,
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          <div>
+            <label style={{
+              fontSize: 10,
+              fontWeight: 500,
+              color: "#555",
+              display: "block",
+              marginBottom: 2,
+            }}>
+              {t.preview}
+            </label>
+            <div style={{
+              fontSize: 9,
+              color: previewMarkup ? "#333" : "#999",
+              fontFamily: "monospace",
+              backgroundColor: "#fafbfc",
+              padding: 6,
+              borderRadius: 3,
+              border: "1px solid #e0e0e0",
+              minHeight: 22,
+            }}>
+              {previewMarkup || t.noData}
+            </div>
+          </div>
+
+          {/* LOG */}
+          <div style={{ marginTop: 8 }}>
+            <div
+              style={{
+                padding: "4px 6px",
+                backgroundColor: "#f5f5f5",
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: 9,
+              }}
+              onClick={() => setShowDebugLog(!showDebugLog)}
+            >
+              {showDebugLog ? "▼" : "▶"} {t.log} ({logs.length})
+            </div>
+
+            {showDebugLog && (
+              <div style={{
+                overflowY: "auto",
+                padding: "4px 6px",
+                backgroundColor: "#fafafa",
+                maxHeight: 80,
+                fontSize: 8,
+                fontFamily: "monospace",
+              }}>
+                {logs.map((log, idx) => {
+                  const colors: Record<string, string> = {
+                    success: "#2e7d32",
+                    error: "#c62828",
+                    warn: "#f57f17",
+                    info: "#0277bd",
+                    debug: "#666666",
+                  };
+                  return (
+                    <div key={idx} style={{ marginBottom: 1, color: colors[log.level] || "#333" }}>
+                      [{log.timestamp}] {log.message}
                     </div>
                   );
                 })}
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* FOOTER WITH SETTINGS */}
-      <div style={{
-        border: "1px solid #e0e0e0",
-        borderRadius: 4,
-        padding: 8,
-        backgroundColor: "#ffffff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
-      }}>
-        <div style={{ marginBottom: 6 }}>
-          <label style={{
-            fontSize: 10,
-            fontWeight: 500,
-            color: "#555",
-            display: "block",
-            marginBottom: 2,
-          }}>
-            {t.delimiter}
-          </label>
-          <input
-            type="text"
-            value={settings.delimiter}
-            onChange={(e) => updateSettings({ delimiter: e.target.value })}
-            style={{
-              width: "100%",
-              padding: "5px 8px",
-              border: "1px solid #d0d0d0",
-              borderRadius: 3,
-              fontSize: 10,
-              boxSizing: "border-box",
-              fontFamily: "system-ui",
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = "#1976d2")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
-          />
-          <div style={{ fontSize: 8, color: "#999", marginTop: 2, fontStyle: "italic" }}>
-            Andmete kihtide eraldaja (näit: " | " näitab kihid eraldatult, "\n" näitab real)
-          </div>
-        </div>
-
-        <div>
-          <label style={{
-            fontSize: 10,
-            fontWeight: 500,
-            color: "#555",
-            display: "block",
-            marginBottom: 2,
-          }}>
-            {t.preview}
-          </label>
-          <div style={{
-            fontSize: 9,
-            color: previewMarkup ? "#333" : "#999",
-            fontFamily: "monospace",
-            backgroundColor: "#fafbfc",
-            padding: 6,
-            borderRadius: 3,
-            border: "1px solid #e0e0e0",
-            wordBreak: "break-all",
-            minHeight: 22,
-            maxHeight: 35,
-            overflowY: "auto",
-            lineHeight: "1.3",
-          }}>
-            {previewMarkup || t.noData}
-          </div>
-        </div>
-
-        {/* LOG */}
-        <div style={{ marginTop: 8 }}>
-          <div
-            style={{
-              padding: "4px 6px",
-              backgroundColor: "#f5f5f5",
-              borderBottom: showDebugLog ? "1px solid #e0e0e0" : "none",
-              cursor: "pointer",
-              fontWeight: 600,
-              userSelect: "none",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              fontSize: 9,
-              borderRadius: "3px 3px 0 0",
-              border: "1px solid #e0e0e0",
-            }}
-            onClick={() => setShowDebugLog(!showDebugLog)}
-          >
-            <span>{showDebugLog ? "▼" : "▶"} {t.log} ({logs.length})</span>
-            {showDebugLog && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigator.clipboard.writeText(logs.map((l) => `[${l.timestamp}] ${l.message}`).join("\n"));
-                  addLog("✅ Kopeeritud!", "success");
-                }}
-                style={{
-                  padding: "1px 4px",
-                  fontSize: 8,
-                  backgroundColor: "#e0e0e0",
-                  border: "none",
-                  borderRadius: 2,
-                  cursor: "pointer",
-                }}
-              >
-                📋
-              </button>
             )}
           </div>
+        </div>
 
-          {showDebugLog && (
-            <div style={{
-              overflowY: "auto",
-              padding: "4px 6px",
-              backgroundColor: "#fafafa",
-              maxHeight: 80,
-              fontSize: 8,
-              fontFamily: "monospace",
-              borderRadius: "0 0 3px 3px",
-              border: "1px solid #e0e0e0",
-              borderTop: "none",
-            }}>
-              {logs.map((log, idx) => {
-                const colors: Record<string, string> = {
-                  success: "#2e7d32",
-                  error: "#c62828",
-                  warn: "#f57f17",
-                  info: "#0277bd",
-                  debug: "#666666",
-                };
-                return (
-                  <div key={idx} style={{ marginBottom: 1, color: colors[log.level] || "#333" }}>
-                    [{log.timestamp}] {log.message}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+        {/* VERSION */}
+        <div style={{
+          textAlign: "center" as const,
+          fontSize: 8,
+          color: "#999",
+          fontWeight: 500,
+        }}>
+          v{COMPONENT_VERSION} • {BUILD_DATE}
         </div>
       </div>
-
-      {/* VERSION FOOTER */}
-      <div style={{
-        textAlign: "center" as const,
-        fontSize: 8,
-        color: "#999",
-        fontWeight: 500,
-      }}>
-        v{COMPONENT_VERSION} • {BUILD_DATE}
-      </div>
-    </div>
+    </MarkupCreatorErrorBoundary>
   );
 }
 
