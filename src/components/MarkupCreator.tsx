@@ -176,25 +176,11 @@ function classifyGuid(guid: string): "IFC" | "MS" | "OTHER" {
   return "OTHER";
 }
 
-async function getSelectedObjects(api: any) {
-  try {
-    const selected = await api?.viewer?.getSelectedObjects?.();
-    if (!selected || !Array.isArray(selected)) return [];
-
-    const result: Array<{ modelId: string; objects: any[] }> = [];
-    for (const item of selected) {
-      if (item?.modelId && item?.objects) {
-        result.push({
-          modelId: String(item.modelId),
-          objects: Array.isArray(item.objects) ? item.objects : [item.objects],
-        });
-      }
-    }
-    return result;
-  } catch (err) {
-    console.error("[getSelectedObjects] error:", err);
-    return [];
-  }
+async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
+  const viewer: any = api?.viewer;
+  const mos = await viewer?.getObjects?.({ selected: true });
+  if (!Array.isArray(mos) || !mos.length) return [];
+  return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
 }
 
 async function getProjectName(api: any) {
@@ -207,18 +193,25 @@ async function getProjectName(api: any) {
 }
 
 async function buildModelNameMap(api: any, modelIds: string[]) {
-  const nameMap = new Map<string, string>();
-  for (const modelId of modelIds) {
+  const map = new Map<string, string>();
+  try {
+    const list: any[] = await api?.viewer?.getModels?.();
+    for (const m of list || []) {
+      if (m?.id && m?.name) map.set(String(m.id), String(m.name));
+    }
+  } catch {
+    // Silent
+  }
+  for (const id of new Set(modelIds)) {
+    if (map.has(id)) continue;
     try {
-      const refObj = await api?.viewer?.getReferenceObject?.(modelId, 0);
-      if (refObj?.file?.name) {
-        nameMap.set(modelId, String(refObj.file.name));
-      }
+      const f = await api?.viewer?.getLoadedModel?.(id);
+      if (f?.filename || f?.name) map.set(id, String(f.filename || f.name));
     } catch {
-      // Silent fail
+      // Silent
     }
   }
-  return nameMap;
+  return map;
 }
 
 async function flattenProps(
@@ -577,47 +570,121 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     return groups;
   }, [allFields]);
 
-  const createMarkups = async () => {
-    if (!selectedData.length) {
-      addLog("❌ Andmeid ei ole", "error");
+  const createMarkups = useCallback(async () => {
+    // ESMALT uuenda andmed
+    await loadSelectionData();
+    
+    // Seejärel loo markupid
+    const selectedFields = getOrderedSelectedFields();
+
+    if (selectedFields.length === 0) {
+      addLog("❌ Valitud väljad puuduvad!", "error");
       return;
     }
 
-    const orderedFields = getOrderedSelectedFields();
-    if (orderedFields.length === 0) {
-      addLog("❌ Väljasid pole valitud", "error");
+    if (selectedData.length === 0) {
+      addLog("❌ Valitud objektid puuduvad!", "error");
       return;
     }
 
+    setIsLoading(true);
     try {
-      for (const row of selectedData) {
-        const markupText = orderedFields.map((f) => row[f.key] || "").join(settings.delimiter);
+      addLog("📊 Looma markupeid...", "info");
+      const modelId = selectedData[0]?.ModelId;
+      const objectIds = selectedData.map((row) => Number(row.ObjectId)).filter(Boolean);
 
-        if (markupText.trim()) {
-          const modelId = row.ModelId;
-          await api?.markup?.create?.({
-            modelId,
-            worldPosition: { x: 0, y: 0, z: 0 },
-            type: "text",
-            text: markupText,
-            color: MARKUP_COLOR,
-          });
-        }
+      let bBoxes: any[] = [];
+      try {
+        bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, objectIds);
+      } catch (err: any) {
+        bBoxes = objectIds.map((id) => ({
+          id,
+          boundingBox: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } },
+        }));
       }
-      addLog("✅ Markupid loodud", "success");
-    } catch (err: any) {
-      addLog(`❌ Markup viga: ${err?.message}`, "error");
-    }
-  };
 
-  const handleRemoveAllMarkups = async () => {
-    try {
-      await api?.markup?.deleteAll?.();
-      addLog("✅ Markupid kustutatud", "success");
+      const markupsToCreate: any[] = [];
+
+      for (const row of selectedData) {
+        const objectId = Number(row.ObjectId);
+        const bBox = bBoxes.find((b) => b.id === objectId);
+        if (!bBox) continue;
+
+        const bb = bBox.boundingBox;
+        const midPoint = {
+          x: (bb.min.x + bb.max.x) / 2,
+          y: (bb.min.y + bb.max.y) / 2,
+          z: (bb.min.z + bb.max.z) / 2,
+        };
+
+        const values: string[] = [];
+        for (const field of selectedFields) {
+          const value = row[field.key] || "";
+          if (value && String(value).trim()) {
+            values.push(String(value));
+          }
+        }
+
+        if (values.length === 0) continue;
+
+        markupsToCreate.push({
+          text: values.join(settings.delimiter),
+          start: { positionX: midPoint.x * 1000, positionY: midPoint.y * 1000, positionZ: midPoint.z * 1000 },
+          end: { positionX: midPoint.x * 1000, positionY: midPoint.y * 1000, positionZ: midPoint.z * 1000 },
+          color: MARKUP_COLOR,
+        });
+      }
+
+      if (markupsToCreate.length === 0) {
+        addLog("❌ Andmeid pole", "error");
+        return;
+      }
+
+      const result = await api.markup?.addTextMarkup?.(markupsToCreate);
+      const createdIds: number[] = [];
+
+      if (Array.isArray(result)) {
+        result.forEach((item: any) => {
+          if (typeof item === "object" && item?.id) createdIds.push(Number(item.id));
+          else if (typeof item === "number") createdIds.push(item);
+        });
+      }
+
+      if (createdIds.length > 0) {
+        addLog(`✅ ${createdIds.length} märgupit loodud! 🎉`, "success");
+      }
     } catch (err: any) {
-      addLog(`❌ Kustutamise viga: ${err?.message}`, "error");
+      addLog(`❌ Viga: ${err?.message}`, "error");
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }, [getOrderedSelectedFields, selectedData, settings.delimiter, api, addLog, loadSelectionData]);
+
+  const handleRemoveAllMarkups = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const allMarkups = await api.markup?.getTextMarkups?.();
+
+      if (!allMarkups || allMarkups.length === 0) {
+        addLog("ℹ️ Markupeid pole", "warn");
+        return;
+      }
+
+      const allIds = allMarkups.map((m: any) => m?.id).filter((id: any) => id != null);
+
+      if (allIds.length === 0) {
+        addLog("ℹ️ ID-sid ei leitud", "warn");
+        return;
+      }
+
+      await api.markup?.removeMarkups?.(allIds);
+      addLog(`✅ ${allIds.length} märgupit kustutatud! 🎉`, "success");
+    } catch (err: any) {
+      addLog(`❌ Viga: ${err?.message}`, "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [api, addLog]);
 
   return (
     <div style={{
