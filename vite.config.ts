@@ -9,15 +9,19 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       external: [
-        '@dnd-kit/core',
-        '@dnd-kit/sortable',
-        '@dnd-kit/utilities',
-        '@dnd-kit/accessibility',
-        'lucide-react'
+        // Removed @dnd-kit packages - now bundled in
       ]
     }
   },
-  optimizeDeps: { include: ["xlsx"] },
+  optimizeDeps: {
+    include: [
+      "xlsx",
+      "@dnd-kit/core",
+      "@dnd-kit/sortable",
+      "@dnd-kit/utilities",
+      "lucide-react"
+    ]
+  },
   resolve: {
     extensions: ['.js', '.jsx', '.ts', '.tsx'],
   },
