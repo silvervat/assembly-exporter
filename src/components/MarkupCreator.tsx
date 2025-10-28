@@ -36,7 +36,7 @@ const MARKUP_COLOR = "#FF0000"; // Väärtus õige formaadiga
 
 const DEFAULTS: Settings = {
   delimiter: " | ",
-  selectedFields: [],
+  selectedFields: ["TeklaAssembly.Assembly/CastunitMark"],  // ✅ Vaikimisi valitud
   autoRefreshEnabled: true,
   markupColor: "#FF0000",
 };
@@ -450,7 +450,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           if (settings.selectedFields && settings.selectedFields.length > 0) {
             isSelected = settings.selectedFields.includes(key);
           } else {
-            isSelected = key === "Tekla_Assembly.AssemblyCast_unit_Mark" && hasData;
+            // ✅ NUTIKAS: Kui pole veel valikuid, vaikimisi valida Castunit Mark kui saadaval
+            isSelected = key === "TeklaAssembly.Assembly/CastunitMark" && hasData;
           }
 
           newFields.push({
@@ -525,10 +526,11 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       listenerRegistered.current = true;
       addLog("✅ Auto-refresh aktiveeeritud", "success");
       
-      // Esimene laadimine viivitusega (API valmimisele)
+      // Esimene laadimine viivitusega (API valmimisele) - VAREM käivitamine
       const initialLoadTimer = setTimeout(() => {
+        addLog("🚀 Esialgne andmete laadimine (AUTO)", "info");
         loadSelectionData();
-      }, 500);
+      }, 200);  // ✅ 500ms → 200ms - kiirem laadimine
 
       return () => clearTimeout(initialLoadTimer);
     } catch (err) {
@@ -546,9 +548,9 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   }, [api, settings.autoRefreshEnabled, addLog, loadSelectionData]);
 
   // ✅ PERIOODILINE REFRESH - Iga 2 sekund kui auto on sees
+  // Ei kontrollita selectedData.length - käivitub alati!
   useEffect(() => {
     if (!settings.autoRefreshEnabled) return;
-    if (selectedData.length === 0) return;
 
     const interval = setInterval(() => {
       addLog("⏱️ Perioodiline uuendus (AUTO)", "info");
@@ -556,7 +558,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     }, 2000); // Iga 2 sekund
 
     return () => clearInterval(interval);
-  }, [settings.autoRefreshEnabled, selectedData.length, loadSelectionData, addLog]);
+  }, [settings.autoRefreshEnabled, loadSelectionData, addLog]);
 
   const selectedCount = allFields.filter((f) => f.selected).length;
 
