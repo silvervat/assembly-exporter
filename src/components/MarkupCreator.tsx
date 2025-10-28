@@ -3,11 +3,10 @@ import { AlertCircle, Plus, Trash2, RefreshCw, ChevronDown, ChevronUp, Copy, Tra
 
 export interface MarkupCreatorProps {
   api: any;
-  // Assembly Exporter struktuur: { modelId, ids: number[] }
   lastSelection?: Array<{
     modelId: string;
-    ids?: number[];  // Assembly Exporter meetod
-    objectId?: number;  // Alternatiivne struktuur
+    ids?: number[];
+    objectId?: number;
     name?: string;
     type?: string;
   }>;
@@ -29,7 +28,7 @@ interface LogEntry {
 }
 
 // VERSION INFO
-const COMPONENT_VERSION = "4.1.0";
+const COMPONENT_VERSION = "4.2.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 const API_VERSION = "0.3.12";
 
@@ -39,36 +38,71 @@ const normalizeColor = (color: string): string => {
   return "FF0000";
 };
 
-// ✅ Assembly Exporter lahendus: flattenProps
-const flattenProps = (properties: any[]): Map<string, string> => {
-  const result = new Map<string, string>();
+// ✅ Assembly Exporter meetod: flattenProps (kopeeritud Assembly Exporter'ist)
+const flattenProps = (
+  obj: any,
+  propMap: Map<string, string> = new Map()
+): Map<string, string> => {
+  const keyCounts = new Map<string, number>();
 
-  const push = (key: string, value: any) => {
-    const displayValue = value?.displayValue ?? value?.value ?? "";
-    const strValue = String(displayValue).trim();
-    if (strValue) result.set(key, strValue);
+  const sanitizeKey = (key: string): string => {
+    if (!key) return "Unknown";
+    return String(key)
+      .replace(/[+()]/g, ".")
+      .replace(/\s+/g, "_")
+      .substring(0, 100);
   };
 
-  if (!Array.isArray(properties)) return result;
+  const push = (group: string, name: string, val: unknown) => {
+    const g = sanitizeKey(group);
+    const n = sanitizeKey(name);
+    const baseKey = g ? `${g}.${n}` : n;
+    let key = baseKey;
+    const count = keyCounts.get(baseKey) || 0;
+    if (count > 0) key = `${baseKey}_${count}`;
+    keyCounts.set(baseKey, count + 1);
 
-  properties.forEach((propSet: any) => {
-    const setName = propSet?.name || "Unknown";
-    if (Array.isArray(propSet?.properties)) {
-      propSet.properties.forEach((prop: any) => {
-        const propName = prop?.name || "Unknown";
-        const key = `${setName}.${propName}`;
-        push(key, prop);
-      });
-    }
-  });
+    let v: unknown = val;
+    if (Array.isArray(v)) v = v.map((x) => (x == null ? "" : String(x))).join(" | ");
+    else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
+    const s = v == null ? "" : String(v);
+    if (s) propMap.set(key, s);
+  };
 
-  return result;
+  // Property setid (sh peidetud)
+  if (Array.isArray(obj?.properties)) {
+    obj.properties.forEach((propSet: any) => {
+      const setName = propSet?.name || "Unknown";
+      const setProps = propSet?.properties || [];
+      if (Array.isArray(setProps)) {
+        setProps.forEach((prop: any) => {
+          const value = prop?.displayValue ?? prop?.value;
+          const name = prop?.name || "Unknown";
+          push(setName, name, value);
+        });
+      }
+    });
+  } else if (typeof obj?.properties === "object" && obj.properties !== null) {
+    Object.entries(obj.properties).forEach(([key, val]) => push("Properties", key, val));
+  }
+
+  return propMap;
 };
 
-export default function MarkupCreator({ 
-  api, 
+// ✅ GUID klassifitseerimine (Assembly Exporter meetod)
+const classifyGuid = (guid: string): "IFC" | "MS" | "UNKNOWN" => {
+  if (!guid) return "UNKNOWN";
+  // IFC GUIDs on 36 chars, MS GUIDs on 32 chars
+  const g = String(guid).trim();
+  if (g.length === 36) return "IFC";
+  if (g.length === 32) return "MS";
+  return "UNKNOWN";
+};
+
+export default function MarkupCreator({
+  api,
   lastSelection = [],
-  onError 
+  onError,
 }: MarkupCreatorProps) {
   const [fields, setFields] = useState<PropertyField[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -76,40 +110,46 @@ export default function MarkupCreator({
   const [delimiter, setDelimiter] = useState(" | ");
   const [markupIds, setMarkupIds] = useState<number[]>([]);
   const [lastLoadTime, setLastLoadTime] = useState<string>("");
-  
+
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showDebugLog, setShowDebugLog] = useState(true);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  const [processedSelection, setProcessedSelection] = useState<Array<{
-    modelId: string;
-    objectId: number;
-    name?: string;
-    type?: string;
-  }>>([]);
+  const [processedSelection, setProcessedSelection] = useState<
+    Array<{
+      modelId: string;
+      objectId: number;
+      name?: string;
+      type?: string;
+    }>
+  >([]);
 
   const propsCache = useRef(new Map<string, any>());
   const bboxCache = useRef(new Map<string, any>());
+  const guidCache = useRef(new Map<string, { guidIfc: string; guidMs: string }>());
   const mountedRef = useRef(true);
 
-  const addLog = useCallback((message: string, level: "info" | "success" | "warn" | "error" | "debug" = "info", details?: string) => {
-    const now = new Date();
-    const timestamp = now.toLocaleTimeString("et-EE", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    
-    const entry: LogEntry = {
-      timestamp,
-      level,
-      message,
-      details,
-    };
+  const addLog = useCallback(
+    (message: string, level: "info" | "success" | "warn" | "error" | "debug" = "info", details?: string) => {
+      const now = new Date();
+      const timestamp = now.toLocaleTimeString("et-EE", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-    setLogs((prev) => {
-      const updated = [...prev, entry];
-      return updated.length > 400 ? updated.slice(-400) : updated;
-    });
+      const entry: LogEntry = {
+        timestamp,
+        level,
+        message,
+        details,
+      };
 
-    console.log(`[${timestamp}] ${message}`, details ? details : "");
-  }, []);
+      setLogs((prev) => {
+        const updated = [...prev, entry];
+        return updated.length > 400 ? updated.slice(-400) : updated;
+      });
+
+      console.log(`[${timestamp}] ${message}`, details ? details : "");
+    },
+    []
+  );
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -134,7 +174,6 @@ export default function MarkupCreator({
 
     addLog("📥 Assembly Exporter andmed saadud", "info", `${lastSelection.length} blokki`);
 
-    // Konverteeri Assembly Exporter struktuuri
     const converted: Array<{
       modelId: string;
       objectId: number;
@@ -143,15 +182,13 @@ export default function MarkupCreator({
     }> = [];
 
     lastSelection.forEach((selection: any, idx: number) => {
-      addLog(`\n📦 Block ${idx + 1}:`, "debug");
+      addLog(`📦 Block ${idx + 1}:`, "debug");
       addLog(`   modelId: ${selection.modelId}`, "debug");
-      
-      // Assembly Exporter struktuur: { modelId, ids }
+
       if (Array.isArray(selection.ids)) {
         addLog(`   ids.length: ${selection.ids.length}`, "debug");
-        
-        selection.ids.slice(0, 5).forEach((id: number, idIdx: number) => {
-          addLog(`      ${idIdx + 1}. objectId: ${id}`, "debug");
+
+        selection.ids.forEach((id: number) => {
           converted.push({
             modelId: selection.modelId,
             objectId: id,
@@ -159,32 +196,18 @@ export default function MarkupCreator({
             type: "Unknown",
           });
         });
-        
-        if (selection.ids.length > 5) {
-          addLog(`      ... ja veel ${selection.ids.length - 5}`, "debug");
-          selection.ids.slice(5).forEach((id: number) => {
-            converted.push({
-              modelId: selection.modelId,
-              objectId: id,
-              name: `Object ${id}`,
-              type: "Unknown",
-            });
-          });
-        }
       }
     });
 
-    addLog(`\n✅ Konverteeritud: ${converted.length} objekti`, "success");
+    addLog(`✅ Konverteeritud: ${converted.length} objekti`, "success");
     setProcessedSelection(converted);
 
-    // Auto-discover omadused
     if (converted.length > 0) {
       discoverFieldsFromSelection(converted);
     }
-
   }, [lastSelection, addLog]);
 
-  // ✅ KÕIK TRIMBLE API KUTSED
+  // ✅ Assembly Exporter flattenProps loogika
   const discoverFieldsFromSelection = async (selection: any[]) => {
     if (!selection || selection.length === 0) {
       setFields([]);
@@ -192,14 +215,14 @@ export default function MarkupCreator({
     }
 
     addLog("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog(`📥 OMADUSTE AVASTAMINE - ${selection.length} objekti`, "info");
+    addLog(`📥 ASSEMBLY EXPORTER FLATTENPROPS - ${selection.length} objekti`, "info");
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
     setIsLoading(true);
     try {
       const fieldSet = new Set<string>();
       const first = selection[0];
-      
+
       addLog(`\n🎯 ESIMENE OBJEKT (template):`, "debug");
       addLog(`   modelId: ${first.modelId}`, "debug");
       addLog(`   objectId: ${first.objectId}`, "debug");
@@ -210,143 +233,138 @@ export default function MarkupCreator({
       }
 
       const cacheKey = `${first.modelId}:${first.objectId}`;
-      let props = propsCache.current.get(cacheKey);
-      
-      // 2️⃣ getObjectProperties() - KRIITILNE
-      if (!props) {
-        addLog("\n2️⃣ KRIITILNE: api.viewer.getObjectProperties()", "info", "{ includeHidden: true }");
-        
+      let fullObj = propsCache.current.get(cacheKey);
+
+      // 1️⃣ getObjectProperties() - Assembly Exporter meetod
+      if (!fullObj) {
+        addLog("\n1️⃣ api.viewer.getObjectProperties() - { includeHidden: true }", "info");
+
         try {
           const result = await api.viewer.getObjectProperties(first.modelId, first.objectId, {
             includeHidden: true,
           });
-          
-          if (Array.isArray(result)) {
-            addLog(`   ✅ Tagastus Array[${result.length}]`, "success");
-            props = result[0] || { properties: [] };
-          } else {
-            addLog(`   ✅ Tagastus Object`, "success");
-            props = result || { properties: [] };
+
+          fullObj = Array.isArray(result) ? result[0] : result;
+          addLog(`   ✅ Saadud: ${fullObj ? "Object" : "null"}`, "success");
+
+          if (fullObj?.properties?.length) {
+            addLog(`   📋 Property sets: ${fullObj.properties.length}`, "debug");
           }
-          
-          if (props?.properties?.length) {
-            addLog(`   📋 Property sets: ${props.properties.length}`, "debug");
-          }
-          
         } catch (err: any) {
           addLog(`   ❌ Ebaõnnestus: ${err?.message}`, "error");
-          props = { properties: [] };
+          fullObj = { properties: [] };
         }
 
-        if (props) {
-          propsCache.current.set(cacheKey, props);
+        if (fullObj) {
+          propsCache.current.set(cacheKey, fullObj);
         }
       }
 
-      // 📋 Analyys flattenProps-ga
-      addLog("\n3️⃣ PROPERTY SETS ANALÜÜS (flattenProps)::", "info");
-      
-      const flatProps = flattenProps(props?.properties || []);
-      flatProps.forEach((value, key) => {
-        fieldSet.add(key);
-      });
+      // 2️⃣ flattenProps teisendamine (Assembly Exporter meetod)
+      addLog("\n2️⃣ flattenProps() - Property setid lameeks", "info");
 
-      if (flatProps.size > 0) {
-        addLog(`   ✅ Omadused: ${flatProps.size}`, "success");
-        
+      const propMap = flattenProps(fullObj || {});
+
+      if (propMap.size > 0) {
+        addLog(`   ✅ Omadused: ${propMap.size}`, "success");
+
         let count = 0;
-        flatProps.forEach((value, key) => {
+        propMap.forEach((value, key) => {
           if (count < 12) {
-            const displayValue = String(value).substring(0, 50);
+            const displayValue = String(value).substring(0, 40);
             addLog(`      ${count + 1}. ${key}: "${displayValue}"`, "debug");
           }
           count++;
         });
-        
+
         if (count > 12) {
           addLog(`      ... ja veel ${count - 12} omadust`, "debug");
         }
       }
 
-      // 4️⃣ getObjectMetadata()
-      addLog("\n4️⃣ TRIMBLE API: getObjectMetadata()", "info");
-      try {
-        const meta = await api.viewer.getObjectMetadata(first.modelId, first.objectId);
-        if (meta) {
-          addLog(`   ✅ Saadud`, "success");
-          if (meta.id) addLog(`      GUID_MS: ${meta.id}`, "debug");
-          if (meta.revision) addLog(`      revision: ${meta.revision}`, "debug");
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
-      }
+      // 3️⃣ GUID käsitlemine (Assembly Exporter meetod)
+      addLog("\n3️⃣ GUID Käsitlemine:", "info");
 
-      // 5️⃣ getObjectBoundingBox()
-      addLog("\n5️⃣ TRIMBLE API: getObjectBoundingBox()", "info");
-      try {
-        const bbox = await api.viewer.getObjectBoundingBox(first.modelId, first.objectId);
-        if (bbox) {
-          addLog(`   ✅ BBox saadud`, "success");
-          if (bbox.min && bbox.max) {
-            addLog(`      min: (${bbox.min.x.toFixed(2)}, ${bbox.min.y.toFixed(2)}, ${bbox.min.z.toFixed(2)})`, "debug");
-            addLog(`      max: (${bbox.max.x.toFixed(2)}, ${bbox.max.y.toFixed(2)}, ${bbox.max.z.toFixed(2)})`, "debug");
+      let guidIfc = "";
+      let guidMs = "";
+      const cacheGuid = guidCache.current.get(cacheKey);
+
+      if (cacheGuid) {
+        guidIfc = cacheGuid.guidIfc;
+        guidMs = cacheGuid.guidMs;
+        addLog(`   ✅ Cache'st: IFC=${guidIfc.substring(0, 10)}..., MS=${guidMs.substring(0, 10)}...`, "debug");
+      } else {
+        // Otsi propidest
+        for (const [k, v] of propMap) {
+          if (!/guid|globalid|tekla_guid|id_guid/i.test(k)) continue;
+          const cls = classifyGuid(v);
+          if (cls === "IFC" && !guidIfc) guidIfc = v;
+          if (cls === "MS" && !guidMs) guidMs = v;
+        }
+
+        if (guidIfc || guidMs) {
+          addLog(`   ✅ Propsidest: IFC=${guidIfc.substring(0, 10) || "puudub"}..., MS=${guidMs.substring(0, 10) || "puudub"}...`, "debug");
+        }
+
+        // 4️⃣ Metadata (Assembly Exporter meetod)
+        addLog("\n4️⃣ getObjectMetadata() - GUID_MS", "info");
+
+        try {
+          const metaArr = await api.viewer.getObjectMetadata(first.modelId, [first.objectId]);
+          const metaOne = Array.isArray(metaArr) ? metaArr[0] : metaArr;
+
+          if (metaOne?.globalId) {
+            const g = String(metaOne.globalId);
+            guidMs = guidMs || g;
+            addLog(`   ✅ Metadata globalId: ${g.substring(0, 10)}...`, "success");
+          } else {
+            addLog(`   ⚠️ Metadata puudub (normaalne IFC jaoks)`, "warn");
+          }
+        } catch (err: any) {
+          addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
+        }
+
+        // 5️⃣ IFC GUID fallback (Assembly Exporter meetod)
+        if (!guidIfc && first.objectId) {
+          addLog("\n5️⃣ convertToObjectIds() - IFC GUID fallback", "info");
+
+          try {
+            const externalIds = await api.viewer.convertToObjectIds(first.modelId, [first.objectId]);
+            const externalId = externalIds[0];
+
+            if (externalId && classifyGuid(externalId) === "IFC") {
+              guidIfc = externalId;
+              addLog(`   ✅ IFC GUID fallback: ${guidIfc.substring(0, 10)}...`, "success");
+            }
+          } catch (err: any) {
+            addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
           }
         }
-      } catch (err: any) {
-        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
+
+        guidCache.current.set(cacheKey, { guidIfc, guidMs });
       }
 
-      // 6️⃣ convertToObjectIds()
-      addLog("\n6️⃣ TRIMBLE API: convertToObjectIds() - IFC GUID", "info");
-      try {
-        const objectIds = await api.viewer.convertToObjectIds(first.modelId, [first.objectId]);
-        if (objectIds?.[0]) {
-          addLog(`   ✅ IFC GUID: ${objectIds[0]}`, "success");
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
-      }
+      // 6️⃣ Standard väljad
+      addLog("\n6️⃣ STANDARDVÄLJAD:", "info");
 
-      // 7️⃣ getLayers()
-      addLog("\n7️⃣ TRIMBLE API: getLayers()", "info");
-      try {
-        const layers = await api.viewer.getLayers(first.modelId);
-        if (Array.isArray(layers)) {
-          addLog(`   ✅ Layers: ${layers.length}`, "success");
-          layers.slice(0, 3).forEach((layer: any, idx: number) => {
-            addLog(`      ${idx + 1}. ${layer.name || layer.id}`, "debug");
-          });
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
-      }
+      const standardFields = [
+        "Name",
+        "Type",
+        "ObjectId",
+        "GUID_IFC",
+        "GUID_MS",
+        "ProductName",
+        "ProductDescription",
+        "ProductType",
+      ];
 
-      // 8️⃣ getPresentationLayers()
-      addLog("\n8️⃣ TRIMBLE API: getPresentationLayers()", "info");
-      try {
-        const presLayers = await api.viewer.getPresentationLayers(first.modelId);
-        if (Array.isArray(presLayers)) {
-          addLog(`   ✅ Presentation layers: ${presLayers.length}`, "success");
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // 9️⃣ getHierarchyChildren()
-      addLog("\n9️⃣ TRIMBLE API: getHierarchyChildren()", "info");
-      try {
-        const children = await api.viewer.getHierarchyChildren(first.modelId, [first.objectId], "product", false);
-        if (Array.isArray(children)) {
-          addLog(`   ✅ Children: ${children.length}`, "success");
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // Standard väljad
-      addLog("\n✅ STANDARDVÄLJAD:", "info");
-      ["Name", "Type", "ObjectId"].forEach(field => {
+      standardFields.forEach((field) => {
         fieldSet.add(field);
+      });
+
+      // 7️⃣ Kõik propidest leitud väljad
+      propMap.forEach((_, key) => {
+        fieldSet.add(key);
       });
 
       const newFields = Array.from(fieldSet)
@@ -354,7 +372,7 @@ export default function MarkupCreator({
         .map((key) => ({
           key,
           label: key,
-          selected: ["Name", "Type"].includes(key),
+          selected: ["Name", "Type", "GUID_MS"].includes(key),
         }));
 
       addLog(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`, "info");
@@ -380,6 +398,7 @@ export default function MarkupCreator({
   const getPropertyValue = useCallback(
     async (modelId: string, objectId: number, fieldKey: string): Promise<string> => {
       try {
+        // Standard väljad
         if (fieldKey === "Name") {
           return processedSelection.find((s) => s.modelId === modelId && s.objectId === objectId)?.name || "";
         }
@@ -390,6 +409,17 @@ export default function MarkupCreator({
           return String(objectId);
         }
 
+        // GUID väljad
+        if (fieldKey === "GUID_IFC" || fieldKey === "GUID_MS") {
+          const cacheKey = `${modelId}:${objectId}`;
+          const guidCache = guidCache.current.get(cacheKey);
+          if (guidCache) {
+            return fieldKey === "GUID_IFC" ? guidCache.guidIfc : guidCache.guidMs;
+          }
+          return "";
+        }
+
+        // Property väljad
         const cacheKey = `${modelId}:${objectId}`;
         let props = propsCache.current.get(cacheKey);
 
@@ -400,14 +430,7 @@ export default function MarkupCreator({
             });
             props = Array.isArray(result) ? result[0] : result;
           } catch {
-            try {
-              const results = await api.viewer.getObjectProperties(modelId, [objectId], {
-                includeHidden: true,
-              });
-              props = Array.isArray(results) ? results[0] : results;
-            } catch {
-              return "";
-            }
+            return "";
           }
 
           if (props) propsCache.current.set(cacheKey, props);
@@ -415,9 +438,10 @@ export default function MarkupCreator({
 
         if (!props?.properties || !Array.isArray(props.properties)) return "";
 
-        const flatProps = flattenProps(props.properties);
-        const fullKey = Array.from(flatProps.keys()).find(k => k.includes(fieldKey));
-        return flatProps.get(fullKey || fieldKey) || "";
+        const propMap = flattenProps(props);
+        const fullKey = Array.from(propMap.keys()).find((k) => k === fieldKey || k.includes(fieldKey));
+
+        return propMap.get(fullKey || fieldKey) || "";
       } catch {
         return "";
       }
@@ -473,7 +497,7 @@ export default function MarkupCreator({
     }
 
     setIsLoading(true);
-    addLog(`📍 Loeme ${processedSelection.length} märgupit...`, "info");
+    addLog(`📍 Loem ${processedSelection.length} märgupit...`, "info");
 
     try {
       const markupsToCreate: any[] = [];
@@ -619,7 +643,16 @@ export default function MarkupCreator({
   }, [logs, addLog]);
 
   return (
-    <div style={{ padding: 20, maxWidth: 900, fontFamily: "system-ui, -apple-system, sans-serif", display: "flex", flexDirection: "column", height: "100vh" }}>
+    <div
+      style={{
+        padding: 20,
+        maxWidth: 900,
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        display: "flex",
+        flexDirection: "column",
+        height: "100vh",
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h2 style={{ margin: 0, color: "#1a1a1a" }}>🎨 Märgupite Ehitaja</h2>
         <div style={{ fontSize: 11, color: "#999", textAlign: "right" }}>
@@ -652,7 +685,9 @@ export default function MarkupCreator({
                   <strong>#{i + 1}</strong> ID: {s.objectId}
                 </li>
               ))}
-              {processedSelection.length > 3 && <li style={{ color: "#666" }}>... ja veel {processedSelection.length - 3}</li>}
+              {processedSelection.length > 3 && (
+                <li style={{ color: "#666" }}>... ja veel {processedSelection.length - 3}</li>
+              )}
             </ul>
           )}
         </div>
@@ -766,9 +801,7 @@ export default function MarkupCreator({
             style={{
               padding: "12px 20px",
               backgroundColor:
-                isLoading || processedSelection.length === 0 || fields.filter((f) => f.selected).length === 0
-                  ? "#ccc"
-                  : "#1976d2",
+                isLoading || processedSelection.length === 0 || fields.filter((f) => f.selected).length === 0 ? "#ccc" : "#1976d2",
               color: "white",
               border: "none",
               borderRadius: 6,
@@ -830,7 +863,7 @@ export default function MarkupCreator({
         </div>
       </div>
 
-      {/* DEBUG LOG - JALUSES */}
+      {/* DEBUG LOG */}
       <div
         style={{
           backgroundColor: "#1a1a1a",
@@ -945,16 +978,18 @@ export default function MarkupCreator({
         )}
       </div>
 
-      {/* VERSION INFO JALUSES */}
-      <div style={{ 
-        fontSize: 10, 
-        color: "#999", 
-        textAlign: "center", 
-        marginTop: 10, 
-        paddingTop: 10, 
-        borderTop: "1px solid #e0e0e0" 
-      }}>
-        MarkupCreator v{COMPONENT_VERSION} | Assembly Exporter ühilduv | 9 Trimble API kutsed | Build: {BUILD_DATE}
+      {/* VERSION INFO */}
+      <div
+        style={{
+          fontSize: 10,
+          color: "#999",
+          textAlign: "center",
+          marginTop: 10,
+          paddingTop: 10,
+          borderTop: "1px solid #e0e0e0",
+        }}
+      >
+        MarkupCreator v{COMPONENT_VERSION} | Assembly Exporter flattenProps | GUID käsitlemine | Build: {BUILD_DATE}
       </div>
     </div>
   );
