@@ -28,8 +28,7 @@ interface Settings {
   selectedFields: string[];
 }
 
-// ========== CONSTANTS ==========
-const COMPONENT_VERSION = "8.0.0";
+const COMPONENT_VERSION = "8.2.0";
 const BUILD_DATE = new Date().toISOString().split("T")[0];
 const MARKUP_COLOR = "FF0000";
 
@@ -38,7 +37,6 @@ const DEFAULTS: Settings = {
   selectedFields: [],
 };
 
-// ========== TRANSLATIONS ==========
 const translations = {
   et: {
     selectObjects: "Vali objektid 3D vaates...",
@@ -47,18 +45,17 @@ const translations = {
     settings: "⚙️ Seaded",
     properties: "📋 Omadused",
     delimiter: "Eraldaja:",
-    preview: "👁️ Eelvaade",
+    preview: "Eelvaade:",
     noData: "(ei andmeid)",
     create: "➕ Loo",
-    removeAll: "🗑️ Kustuta kõik",
-    loading: "Töödelda...",
-    refresh: "🔄 Uuenda valik",
+    removeAll: "🗑️",
+    refresh: "🔄 Uuenda",
+    loading: "...",
     log: "📋 LOG",
+    guide: "ℹ️",
     version: "MARKUP GENERATOR {version} • {date}",
-    dragHint: "Punane värviga. Järjekord muudatav: drag-drop või ↑↓ nupud",
-    allMarkupsRemoved: "KUSTUTAMINE ÕNNESTUS! {count} märgupit kustutatakse 🎉",
-    noMarkups: "Markupeid mudelis pole",
-    objectsSelected: "Valitud: {count} objekti | Väljad: {fields}",
+    dragHint: "Drag-drop või ↑↓ nupud järjestuse muutmiseks",
+    objectsSelected: "✅ {count} objekti | Väljad: {fields}",
   },
   en: {
     selectObjects: "Select objects in 3D view...",
@@ -67,24 +64,97 @@ const translations = {
     settings: "⚙️ Settings",
     properties: "📋 Properties",
     delimiter: "Delimiter:",
-    preview: "👁️ Preview",
+    preview: "Preview:",
     noData: "(no data)",
     create: "➕ Create",
-    removeAll: "🗑️ Remove all",
-    loading: "Processing...",
-    refresh: "🔄 Refresh selection",
+    removeAll: "🗑️",
+    refresh: "🔄 Refresh",
+    loading: "...",
     log: "📋 LOG",
+    guide: "ℹ️",
     version: "MARKUP GENERATOR {version} • {date}",
-    dragHint: "Red color. Reorder: drag-drop or ↑↓ buttons",
-    allMarkupsRemoved: "DELETION SUCCESS! {count} markups deleted 🎉",
-    noMarkups: "No markups in model",
-    objectsSelected: "Selected: {count} objects | Fields: {fields}",
+    dragHint: "Drag-drop or ↑↓ buttons to reorder",
+    objectsSelected: "✅ {count} objects | Fields: {fields}",
   },
 };
 
 type Language = "et" | "en";
 
-// ========== SETTINGS HOOK ==========
+const GUIDE_TEXT = {
+  et: `
+📖 KASUTAMISE JUHEND
+
+1️⃣ VALI OBJEKTID 3D VAATES
+   • Klõpsa objektile 3D mudeli sees
+   • Markupid ilmuvad automaatselt siia
+
+2️⃣ VALI OMADUSED
+   • Märgi linnukesed omaduste tüüpide juures
+   • Need andmed näidatakse markupis
+
+3️⃣ MUUDA JÄRJESTUST
+   • Lohista omadust hiire abil
+   • Kasuta ↑↓ nooli järjestuse muutmiseks
+
+4️⃣ MUUDA ERALDAJAT
+   • Avaldamisale taga "Eraldaja: " rida
+   • Näitab kuidas andmete kihid lahutakse
+
+5️⃣ LOO MARKUPID
+   • Klõpsa "➕ Loo" nuppu
+   • Markupid kuvatakse automaatselt 3D mudeli sees
+
+6️⃣ VÄRSKENDA ANDMEID
+   • Klõpsa "🔄 Uuenda" nuppu
+   • Laadib kõik saadaolevad andmed ja valitud väljad
+
+7️⃣ KUSTUTA MARKUPID
+   • Klõpsa "🗑️" nuppu
+   • Kõik markupid mudelis kustutatakse
+
+💡 NÄPUNÄITED:
+   • Eraldaja määrab kuidas andmed kuvada
+   • Loo nupp uuendab enne loomist
+   • Logi näitab mis juhtub
+  `,
+  en: `
+📖 USER GUIDE
+
+1️⃣ SELECT OBJECTS IN 3D VIEW
+   • Click object in 3D model
+   • Properties appear automatically here
+
+2️⃣ SELECT PROPERTIES
+   • Check property type checkboxes
+   • These will show in markup
+
+3️⃣ CHANGE ORDER
+   • Drag property with mouse
+   • Use ↑↓ arrows to reorder
+
+4️⃣ CHANGE DELIMITER
+   • Found at bottom "Delimiter: " line
+   • Shows how data layers are separated
+
+5️⃣ CREATE MARKUPS
+   • Click "➕ Create" button
+   • Markups appear automatically in 3D model
+
+6️⃣ REFRESH DATA
+   • Click "🔄 Refresh" button
+   • Loads all available data and selected fields
+
+7️⃣ DELETE MARKUPS
+   • Click "🗑️" button
+   • All markups in model deleted
+
+💡 TIPS:
+   • Delimiter determines how data displays
+   • Create button refreshes before creating
+   • Log shows what's happening
+  `,
+};
+
 function useSettings() {
   const [settings, setSettings] = useState<Settings>(() => {
     try {
@@ -103,7 +173,7 @@ function useSettings() {
       try {
         window.localStorage?.setItem?.("markupCreatorSettings", JSON.stringify(next));
       } catch {
-        // Silent fail for incognito mode
+        // Silent
       }
       return next;
     });
@@ -112,12 +182,9 @@ function useSettings() {
   return [settings, update] as const;
 }
 
-// ========== UTILITY FUNCTIONS ==========
 function sanitizeKey(s: string): string {
   if (!s) return "";
-  return String(s)
-    .replace(/[\s\-_.+()[\]{}]/g, "")
-    .trim();
+  return String(s).replace(/[\s\-_.+()[\]{}]/g, "").trim();
 }
 
 function classifyGuid(guid: string): "IFC" | "MS" | "OTHER" {
@@ -135,7 +202,7 @@ async function getPresentationLayerString(api: any, modelId: string, runtimeId: 
       return layers[0].map((l: any) => String(l?.name || l)).join(" | ");
     }
   } catch (err) {
-    console.warn("[getPresentationLayerString] error:", err);
+    console.warn("[getPresentationLayerString]", err);
   }
   return "";
 }
@@ -154,7 +221,7 @@ async function getReferenceObjectInfo(api: any, modelId: string, runtimeId: numb
       if (cls === "MS") result.guidMs = refObj.guid;
     }
   } catch (err) {
-    console.warn("[getReferenceObjectInfo] error:", err);
+    console.warn("[getReferenceObjectInfo]", err);
   }
   return result;
 }
@@ -233,7 +300,7 @@ async function flattenProps(
       guidMs = guidMs || g;
     }
   } catch (err) {
-    console.warn("[flattenProps] getObjectMetadata failed:", err);
+    console.warn("[flattenProps]", err);
   }
 
   if (!guidIfc && obj.id) {
@@ -242,7 +309,7 @@ async function flattenProps(
       const externalId = externalIds[0];
       if (externalId && classifyGuid(externalId) === "IFC") guidIfc = externalId;
     } catch (err) {
-      console.warn("[flattenProps] convertToObjectIds failed:", err);
+      console.warn("[flattenProps]", err);
     }
   }
 
@@ -293,7 +360,7 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
       if (m?.id && m?.name) map.set(String(m.id), String(m.name));
     }
   } catch {
-    // Silent fail
+    // Silent
   }
   for (const id of new Set(modelIds)) {
     if (map.has(id)) continue;
@@ -302,7 +369,7 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
       const n = f?.name || f?.file?.name;
       if (n) map.set(id, String(n));
     } catch {
-      // Silent fail
+      // Silent
     }
   }
   return map;
@@ -334,237 +401,24 @@ const groupKeys = (keys: string[]): Map<string, string[]> => {
   return groups;
 };
 
-// ========== STYLES (Assembly Exporter style) ==========
-const styles = {
-  container: {
-    padding: 12,
-    fontFamily: "system-ui, -apple-system, sans-serif",
-    display: "flex",
-    flexDirection: "column" as const,
-    height: "100%",
-    backgroundColor: "#f5f5f5",
-    gap: 12,
-  },
-  header: {
-    fontSize: 13,
-    color: "#333",
-    fontWeight: 600,
-    textAlign: "center" as const,
-  },
-  section: {
-    border: "1px solid #e0e0e0",
-    borderRadius: 6,
-    padding: 12,
-    backgroundColor: "#ffffff",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-  },
-  heading: {
-    margin: "0 0 12px 0",
-    fontSize: 13,
-    fontWeight: 600,
-    color: "#333",
-  },
-  controls: {
-    display: "flex",
-    gap: 8,
-    marginBottom: 12,
-    flexWrap: "wrap" as const,
-  },
-  btn: {
-    flex: 1,
-    minWidth: 80,
-    padding: "10px 12px",
-    backgroundColor: "#1976d2",
-    color: "white",
-    border: "none",
-    borderRadius: 4,
-    cursor: "pointer",
-    fontSize: 12,
-    fontWeight: 600,
-    transition: "background-color 0.2s",
-  },
-  btnDisabled: {
-    backgroundColor: "#d0d0d0",
-    cursor: "not-allowed",
-  },
-  btnDanger: {
-    flex: 1,
-    minWidth: 60,
-    padding: "6px 8px",
-    backgroundColor: "#d32f2f",
-    color: "white",
-    border: "none",
-    borderRadius: 3,
-    cursor: "pointer",
-    fontSize: 9,
-    fontWeight: 600,
-  },
-  input: {
-    width: "100%",
-    padding: "8px 10px",
-    border: "1px solid #d0d0d0",
-    borderRadius: 4,
-    fontSize: 11,
-    boxSizing: "border-box" as const,
-    fontFamily: "system-ui, -apple-system, sans-serif",
-    transition: "border-color 0.2s",
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: 500,
-    display: "block" as const,
-    marginBottom: 6,
-    color: "#555",
-  },
-  preview: {
-    fontSize: 11,
-    color: "#333",
-    fontFamily: "monospace",
-    backgroundColor: "#fafbfc",
-    padding: 10,
-    borderRadius: 4,
-    border: "1px solid #e0e0e0",
-    wordBreak: "break-all" as const,
-    minHeight: 36,
-    maxHeight: 60,
-    overflowY: "auto" as const,
-    lineHeight: "1.4",
-  },
-  previewEmpty: {
-    color: "#999",
-  },
-  columnListNoscroll: {
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 4,
-    border: "1px solid #e6eaf0",
-    borderRadius: 6,
-    padding: 8,
-    background: "#fff",
-    maxHeight: 480,
-    overflow: "auto" as const,
-    flex: 1,
-    minHeight: 0,
-  },
-  columnItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-    padding: 6,
-    borderRadius: 6,
-    border: "1px solid #eef1f6",
-    background: "#fff",
-    cursor: "grab",
-  },
-  columnItemHighlight: {
-    boxShadow: "0 0 0 2px rgba(22,119,255,0.2)",
-  },
-  columnItemDragging: {
-    opacity: 0.5,
-  },
-  dragHandle: {
-    userSelect: "none" as const,
-    fontWeight: 600,
-    fontSize: 12,
-    color: "#1976d2",
-  },
-  miniBtn: {
-    padding: "4px 6px",
-    fontSize: 11,
-    backgroundColor: "#f0f0f0",
-    border: "1px solid #d0d0d0",
-    borderRadius: 4,
-    cursor: "pointer",
-    transition: "all 0.15s",
-  },
-  groupHeader: {
-    padding: "8px 10px",
-    backgroundColor: "#f5f5f5",
-    borderRadius: 4,
-    marginBottom: 6,
-    fontWeight: 600,
-    fontSize: 11,
-    color: "#333",
-    border: "1px solid #e0e0e0",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  hint: {
-    fontSize: 8,
-    color: "#666",
-    marginTop: 6,
-    padding: 6,
-    backgroundColor: "#f9f9f9",
-    borderRadius: 2,
-  },
-  logContainer: {
-    backgroundColor: "#ffffff",
-    color: "#333",
-    border: "1px solid #e0e0e0",
-    borderRadius: 6,
-    overflow: "hidden",
-    fontFamily: "monospace",
-    fontSize: 10,
-    display: "flex",
-    flexDirection: "column" as const,
-    boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-  },
-  logHeader: {
-    padding: "8px 12px",
-    backgroundColor: "#f5f5f5",
-    borderBottom: "1px solid #e0e0e0",
-    cursor: "pointer",
-    fontWeight: 600,
-    userSelect: "none" as const,
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    fontSize: 11,
-  },
-  logContent: {
-    flex: 1,
-    overflowY: "auto" as const,
-    padding: "4px 8px",
-    backgroundColor: "#fafafa",
-    maxHeight: 140,
-  },
-  logEntry: {
-    marginBottom: 1,
-    fontSize: 10,
-  },
-  footer: {
-    marginTop: 12,
-    paddingTop: 8,
-    borderTop: "1px solid #e0e0e0",
-    textAlign: "center" as const,
-    fontSize: 10,
-    color: "#999",
-    fontWeight: 500,
-  },
-};
-
-// ========== MAIN COMPONENT ==========
 export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
-  const [language, setLanguage] = useState<Language>("et");
+  const [language] = useState<Language>("et");
   const [settings, updateSettings] = useSettings();
   const [allFields, setAllFields] = useState<PropertyField[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [markupIds, setMarkupIds] = useState<number[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showDebugLog, setShowDebugLog] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const [selectedData, setSelectedData] = useState<Row[]>([]);
-  const [stats, setStats] = useState({ totalObjects: 0, totalKeys: 0, fieldsWithData: 0 });
   const [previewMarkup, setPreviewMarkup] = useState<string>("");
   const [draggedField, setDraggedField] = useState<string | null>(null);
-  const [highlightedColumn, setHighlightedColumn] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   const listenerRegistered = useRef(false);
 
   const t = translations[language];
+  const guideText = GUIDE_TEXT[language];
 
-  // ========== LOGGING ==========
   const addLog = useCallback(
     (message: string, level: "info" | "success" | "warn" | "error" | "debug" = "info") => {
       const now = new Date();
@@ -578,12 +432,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         const updated = [...prev, { timestamp, level, message }];
         return updated.length > 500 ? updated.slice(-500) : updated;
       });
-      console.log(`[${timestamp}] [${level.toUpperCase()}] ${message}`);
     },
     []
   );
 
-  // ========== LOAD SELECTION DATA - REUSABLE FUNCTION ==========
   const loadSelectionData = useCallback(async () => {
     if (!api?.viewer) {
       addLog("❌ API pole saadaval", "error");
@@ -592,7 +444,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
     try {
       setIsLoading(true);
-      addLog("🔄 Laadin valitud objektide andmeid...", "info");
+      addLog("🔄 Laadin andmeid...", "info");
 
       const selectedWithBasic = await getSelectedObjects(api);
       if (!selectedWithBasic || selectedWithBasic.length === 0) {
@@ -628,29 +480,21 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         addLog("❌ Andmeid ei leitud", "error");
         setSelectedData([]);
         setAllFields([]);
-        setPreviewMarkup("");
         return;
       }
 
       setSelectedData(allRows);
       addLog(`✅ Laaditud ${allRows.length} objekti`, "success");
 
-      // --- BUILD FIELDS ---
       const allKeys = Array.from(new Set(allRows.flatMap((r) => Object.keys(r)))).sort();
       const groups = groupKeys(allKeys);
       const groupOrder = ["Standard", "Tekla_Assembly", "Nordec_Dalux", "IfcElementAssembly", "AssemblyBaseQuantities", "Other"];
       const newFields: PropertyField[] = [];
-      let fieldsWithData = 0;
 
       groupOrder.forEach((groupName) => {
         const groupKeys = groups.get(groupName) || [];
         groupKeys.forEach((key) => {
-          const hasData = allRows.some((row) => {
-            const val = row[key];
-            return val && val.trim() !== "";
-          });
-
-          if (hasData) fieldsWithData++;
+          const hasData = allRows.some((row) => row[key]?.trim());
 
           let isSelected = false;
           if (settings.selectedFields && settings.selectedFields.length > 0) {
@@ -669,7 +513,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         });
       });
 
-      // ✅ Sort fields by savedFields order
       if (settings.selectedFields.length > 0) {
         newFields.sort((a, b) => {
           const idxA = settings.selectedFields.indexOf(a.key);
@@ -680,24 +523,17 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         });
       }
 
-      setStats({
-        totalObjects: allRows.length,
-        totalKeys: allKeys.length,
-        fieldsWithData,
-      });
-
       if (mountedRef.current) {
         setAllFields(newFields);
         addLog(`✅ Väljad uuendatud: ${newFields.filter((f) => f.selected).length} valitud`, "success");
       }
     } catch (err: any) {
-      addLog(`❌ Valimise laadimine ebaõnnestus: ${err?.message}`, "error");
+      addLog(`❌ Viga: ${err?.message}`, "error");
     } finally {
       setIsLoading(false);
     }
   }, [api, settings.selectedFields, addLog]);
 
-  // ========== LIFECYCLE & REAL-TIME LISTENING ==========
   useEffect(() => {
     addLog(`🚀 MarkupCreator v${COMPONENT_VERSION} laaditud`, "info");
     return () => {
@@ -705,7 +541,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     };
   }, [addLog]);
 
-  // ✅ REAL-TIME selection listening with proper cleanup
   useEffect(() => {
     if (!api?.viewer || listenerRegistered.current) return;
 
@@ -716,8 +551,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
     api.viewer.addOnSelectionChanged?.(handleSelectionChanged);
     listenerRegistered.current = true;
-
-    // Initial load
     loadSelectionData();
 
     return () => {
@@ -727,7 +560,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     };
   }, [api, loadSelectionData, addLog]);
 
-  // ========== FIELD ORDERING ==========
   const getOrderedSelectedFields = useCallback(() => {
     const selectedFields = allFields.filter((f) => f.selected);
     if (selectedFields.length === 0) return [];
@@ -741,10 +573,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     return selectedFields;
   }, [allFields, settings.selectedFields]);
 
-  // ========== PREVIEW UPDATE ==========
   const updatePreview = useCallback(() => {
     const selectedFields = getOrderedSelectedFields();
-
     if (selectedFields.length === 0 || selectedData.length === 0) {
       setPreviewMarkup("");
       return;
@@ -760,22 +590,19 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       }
     }
 
-    const preview = values.join(settings.delimiter);
-    setPreviewMarkup(preview);
+    setPreviewMarkup(values.join(settings.delimiter));
   }, [getOrderedSelectedFields, selectedData, settings.delimiter]);
 
   useEffect(() => {
     updatePreview();
   }, [updatePreview]);
 
-  // ========== DRAG-DROP HANDLERS ==========
   const handleDragStart = (field: PropertyField) => {
     setDraggedField(field.key);
   };
 
   const handleDragEnd = () => {
     setDraggedField(null);
-    setHighlightedColumn(null);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -808,10 +635,9 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
     updateSettings({ selectedFields: newOrder });
     setDraggedField(null);
-    addLog(`✅ "${draggedField}" liigutatud järjestuses`, "success");
+    addLog(`✅ Liigutatud`, "success");
   };
 
-  // ========== MOVE FIELD UP/DOWN ==========
   const moveField = (key: string, direction: "up" | "down") => {
     const orderedFields = getOrderedSelectedFields();
     if (orderedFields.length === 0) return;
@@ -826,10 +652,9 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     [newOrder[idx], newOrder[targetIdx]] = [newOrder[targetIdx], newOrder[idx]];
 
     updateSettings({ selectedFields: newOrder });
-    addLog(`✅ "${key}" liigutatud ${direction === "up" ? "üles ⬆️" : "alla ⬇️"}`, "success");
+    addLog(`✅ Liigutatud ${direction === "up" ? "↑" : "↓"}`, "success");
   };
 
-  // ========== TOGGLE FIELD ==========
   const toggleField = useCallback(
     (key: string) => {
       setAllFields((prev) => {
@@ -842,215 +667,122 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     [updateSettings]
   );
 
-  // ========== CREATE MARKUPS ==========
   const createMarkups = useCallback(async () => {
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("🔍 KONTROLL - VALITUD VÄLJAD JA OBJEKTID", "info");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-
+    // ESMALT uuenda andmed
+    await loadSelectionData();
+    
+    // Seejärel loo markupid
     const selectedFields = getOrderedSelectedFields();
 
     if (selectedFields.length === 0) {
-      addLog("❌ VIGA: Valitud väljad puuduvad!", "error");
+      addLog("❌ Valitud väljad puuduvad!", "error");
       return;
     }
-
-    addLog(`\n✅ 1. VALITUD VÄLJAD - JÄRJEKORD (${selectedFields.length}):`, "success");
-    selectedFields.forEach((f, idx) => {
-      addLog(`      ${idx + 1}. ${f.label}`, "debug");
-    });
 
     if (selectedData.length === 0) {
-      addLog("❌ VIGA: Valitud objektid puuduvad!", "error");
+      addLog("❌ Valitud objektid puuduvad!", "error");
       return;
     }
-
-    addLog(`\n✅ 2. VALITUD OBJEKTID 3D VAATES (${selectedData.length}):`, "success");
-    selectedData.slice(0, 5).forEach((row, idx) => {
-      const fieldValues = selectedFields.map((f) => row[f.key] || "-").join(" | ");
-      addLog(`      ${idx + 1}. ID ${row.ObjectId}: ${fieldValues}`, "debug");
-    });
-    if (selectedData.length > 5) {
-      addLog(`      ... ja ${selectedData.length - 5} veel`, "debug");
-    }
-
-    addLog(`\n✅ 3. EELVAADE - MARKUP TEKST:`, "success");
-    addLog(`      "${previewMarkup}"`, "debug");
-
-    addLog(`\n✅ KONTROLL LÕPETATUD - Looma markupeid ${selectedData.length} objektile!`, "success");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
     setIsLoading(true);
     try {
-      const markupsToCreate: any[] = [];
+      addLog("📊 Looma markupeid...", "info");
       const modelId = selectedData[0]?.ModelId;
-
-      addLog("\n🔧 MARKUPITE LOOMINE", "info");
-
       const objectIds = selectedData.map((row) => Number(row.ObjectId)).filter(Boolean);
 
       let bBoxes: any[] = [];
       try {
         bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, objectIds);
-        addLog(`✅ Saadud ${bBoxes.length} BBox-i (${objectIds.length} objektile)`, "success");
       } catch (err: any) {
-        addLog(`⚠️ BBox viga: ${err?.message}`, "warn");
         bBoxes = objectIds.map((id) => ({
           id,
           boundingBox: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } },
         }));
       }
 
-      let successCount = 0;
+      const markupsToCreate: any[] = [];
 
-      for (let idx = 0; idx < selectedData.length; idx++) {
-        const row = selectedData[idx];
+      for (const row of selectedData) {
         const objectId = Number(row.ObjectId);
+        const bBox = bBoxes.find((b) => b.id === objectId);
+        if (!bBox) continue;
 
-        try {
-          const bBox = bBoxes.find((b) => b.id === objectId);
-          if (!bBox) {
-            addLog(`   ⚠️ ${idx + 1}. ID ${objectId}: BBox puudub`, "warn");
-            continue;
+        const bb = bBox.boundingBox;
+        const midPoint = {
+          x: (bb.min.x + bb.max.x) / 2,
+          y: (bb.min.y + bb.max.y) / 2,
+          z: (bb.min.z + bb.max.z) / 2,
+        };
+
+        const values: string[] = [];
+        for (const field of selectedFields) {
+          const value = row[field.key] || "";
+          if (value && String(value).trim()) {
+            values.push(String(value));
           }
-
-          const bb = bBox.boundingBox;
-          const midPoint = {
-            x: (bb.min.x + bb.max.x) / 2,
-            y: (bb.min.y + bb.max.y) / 2,
-            z: (bb.min.z + bb.max.z) / 2,
-          };
-
-          const point = {
-            positionX: midPoint.x * 1000,
-            positionY: midPoint.y * 1000,
-            positionZ: midPoint.z * 1000,
-          };
-
-          const values: string[] = [];
-          for (const field of selectedFields) {
-            const value = row[field.key] || "";
-            if (value && String(value).trim()) {
-              values.push(String(value));
-            }
-          }
-
-          if (values.length === 0) {
-            addLog(`   ⚠️ ${idx + 1}. ID ${objectId}: andmeid valitud väljadele pole`, "warn");
-            continue;
-          }
-
-          const text = values.join(settings.delimiter);
-
-          markupsToCreate.push({
-            text,
-            start: point,
-            end: point,
-            color: MARKUP_COLOR,
-          });
-
-          successCount++;
-
-          if (idx < 3) {
-            addLog(`   ✅ ${idx + 1}. ID ${objectId}: "${text.substring(0, 50)}"`, "debug");
-          }
-        } catch (err: any) {
-          addLog(`   ❌ ${idx + 1}. ID ${objectId}: ${err?.message}`, "error");
         }
+
+        if (values.length === 0) continue;
+
+        markupsToCreate.push({
+          text: values.join(settings.delimiter),
+          start: { positionX: midPoint.x * 1000, positionY: midPoint.y * 1000, positionZ: midPoint.z * 1000 },
+          end: { positionX: midPoint.x * 1000, positionY: midPoint.y * 1000, positionZ: midPoint.z * 1000 },
+          color: MARKUP_COLOR,
+        });
       }
 
-      addLog(`\n📊 ETTEVALMISTUS VALMIS: ${successCount}/${selectedData.length} objektil on andmed`, "success");
-
       if (markupsToCreate.length === 0) {
-        addLog("❌ Ühtegi märgupit ei saadud luua", "error");
+        addLog("❌ Andmeid pole", "error");
         return;
       }
 
-      addLog(`\n📤 SAATMINE API-LE: ${markupsToCreate.length} märgupit`, "debug");
-
-      let result: any = [];
-      try {
-        result = await api.markup?.addTextMarkup?.(markupsToCreate);
-        if (!result) result = [];
-      } catch (err: any) {
-        addLog(`❌ API addTextMarkup viga: ${err?.message}`, "error");
-        throw err;
-      }
-
+      const result = await api.markup?.addTextMarkup?.(markupsToCreate);
       const createdIds: number[] = [];
 
       if (Array.isArray(result)) {
         result.forEach((item: any) => {
-          if (typeof item === "object" && item?.id) {
-            createdIds.push(Number(item.id));
-          } else if (typeof item === "number") {
-            createdIds.push(item);
-          }
+          if (typeof item === "object" && item?.id) createdIds.push(Number(item.id));
+          else if (typeof item === "number") createdIds.push(item);
         });
       }
 
       if (createdIds.length > 0) {
-        setMarkupIds(createdIds);
-        addLog(`\n✅ MARKUPID LOODUD: ${createdIds.length} märgupit! 🎉`, "success");
+        addLog(`✅ ${createdIds.length} märgupit loodud! 🎉`, "success");
       }
     } catch (err: any) {
       addLog(`❌ Viga: ${err?.message}`, "error");
     } finally {
       setIsLoading(false);
-      addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
-  }, [getOrderedSelectedFields, selectedData, settings.delimiter, previewMarkup, api, addLog]);
+  }, [getOrderedSelectedFields, selectedData, settings.delimiter, api, addLog, loadSelectionData]);
 
-  // ========== REMOVE ALL MARKUPS ==========
   const handleRemoveAllMarkups = useCallback(async () => {
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("🗑️ KÕIGIDE MARKUPITE KUSTUTAMINE MUDELIS", "info");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-
     setIsLoading(true);
     try {
-      addLog("🔍 Otsitakse kõik markupid mudelis...", "debug");
-
       const allMarkups = await api.markup?.getTextMarkups?.();
 
       if (!allMarkups || allMarkups.length === 0) {
-        addLog("ℹ️ Markupeid mudelis pole", "warn");
-        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+        addLog("ℹ️ Markupeid pole", "warn");
         return;
       }
 
       const allIds = allMarkups.map((m: any) => m?.id).filter((id: any) => id != null);
-      addLog(`✅ Leitud ${allIds.length} märgupit:`, "success");
-      allIds.slice(0, 10).forEach((id: number, idx: number) => {
-        addLog(`   ${idx + 1}. ID: ${id}`, "debug");
-      });
-      if (allIds.length > 10) {
-        addLog(`   ... ja ${allIds.length - 10} veel`, "debug");
-      }
 
       if (allIds.length === 0) {
         addLog("ℹ️ ID-sid ei leitud", "warn");
-        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
         return;
       }
 
-      addLog(`\n📤 Kustutatakse ${allIds.length} märgupit API-st...`, "debug");
-
-      const result = await api.markup?.removeMarkups?.(allIds);
-
-      addLog(`✅ API vastus: ${typeof result}`, "debug");
-      addLog(`\n✅ KUSTUTAMINE ÕNNESTUS! ${allIds.length} märgupit kustutatakse 🎉`, "success");
-
-      setMarkupIds([]);
+      await api.markup?.removeMarkups?.(allIds);
+      addLog(`✅ ${allIds.length} märgupit kustutatud! 🎉`, "success");
     } catch (err: any) {
-      addLog(`❌ VIGA: ${err?.message}`, "error");
+      addLog(`❌ Viga: ${err?.message}`, "error");
     } finally {
       setIsLoading(false);
-      addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
   }, [api, addLog]);
 
-  // ========== GROUPED FIELDS ==========
   const groupedFields = useMemo(() => {
     const groups = new Map<string, PropertyField[]>();
     allFields.forEach((field) => {
@@ -1063,124 +795,231 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
   const selectedCount = allFields.filter((f) => f.selected).length;
 
-  // ========== RENDER ==========
   return (
-    <div style={styles.container as any}>
-      {/* HEADER */}
-      <div style={styles.header}>
-        {selectedData.length > 0 ? (
-          <div style={{ color: "#2e7d32", fontWeight: 700 }}>
-            ✅ {t.objectsSelected.replace("{count}", String(selectedData.length)).replace("{fields}", String(selectedCount))}
-          </div>
-        ) : (
-          <div style={{ color: "#999" }}>⚪ {t.selectObjects}</div>
-        )}
+    <div style={{
+      padding: 12,
+      fontFamily: "system-ui, -apple-system, sans-serif",
+      display: "flex",
+      flexDirection: "column",
+      height: "100%",
+      backgroundColor: "#f5f5f5",
+      gap: 8,
+      position: "relative",
+    } as any}>
+      {/* GUIDE POPUP */}
+      {showGuide && (
+        <div style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: "#ffffff",
+          border: "1px solid #1976d2",
+          borderRadius: 6,
+          padding: 12,
+          zIndex: 1000,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          fontSize: 11,
+          lineHeight: "1.5",
+          color: "#333",
+          maxHeight: 350,
+          overflowY: "auto",
+          whiteSpace: "pre-wrap",
+        }}>
+          {guideText}
+          <button
+            onClick={() => setShowGuide(false)}
+            style={{
+              marginTop: 10,
+              padding: "6px 12px",
+              backgroundColor: "#1976d2",
+              color: "white",
+              border: "none",
+              borderRadius: 4,
+              cursor: "pointer",
+              fontSize: 10,
+              fontWeight: 600,
+            }}
+          >
+            Sulge
+          </button>
+        </div>
+      )}
+
+      {/* HEADER WITH GUIDE BUTTON */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+      }}>
+        <div style={{
+          fontSize: 12,
+          color: selectedData.length > 0 ? "#2e7d32" : "#999",
+          fontWeight: 600,
+          flex: 1,
+          textAlign: "center" as const,
+        }}>
+          {selectedData.length > 0 
+            ? `✅ ${selectedData.length} objekti | Väljad: ${selectedCount}`
+            : "⚪ Vali objektid 3D vaates..."
+          }
+        </div>
+
+        <button
+          onClick={() => setShowGuide(!showGuide)}
+          style={{
+            padding: "4px 8px",
+            backgroundColor: showGuide ? "#1976d2" : "#e0e0e0",
+            color: showGuide ? "white" : "#333",
+            border: "none",
+            borderRadius: 4,
+            cursor: "pointer",
+            fontSize: 12,
+            fontWeight: 600,
+            minWidth: 32,
+            height: 32,
+          }}
+          title="Näita juhendit"
+        >
+          {t.guide}
+        </button>
       </div>
 
-      {/* SETTINGS SECTION */}
-      <div style={styles.section as any}>
-        <h3 style={styles.heading}>{t.settings}</h3>
+      {/* ACTION BUTTONS - COMPACT */}
+      <div style={{
+        display: "flex",
+        gap: 6,
+        marginBottom: 8,
+      } as any}>
+        <button
+          onClick={createMarkups}
+          disabled={isLoading}
+          style={{
+            flex: 1,
+            padding: "7px 10px",
+            backgroundColor: isLoading ? "#d0d0d0" : "#1976d2",
+            color: "white",
+            border: "none",
+            borderRadius: 4,
+            cursor: isLoading ? "not-allowed" : "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+            transition: "background-color 0.2s",
+          }}
+          onMouseOver={(e) => {
+            if (!isLoading) e.currentTarget.style.backgroundColor = "#1565c0";
+          }}
+          onMouseOut={(e) => {
+            if (!isLoading) e.currentTarget.style.backgroundColor = "#1976d2";
+          }}
+          title="Uuenda andmed ja loo markupid"
+        >
+          {isLoading ? "..." : t.create}
+        </button>
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={styles.label}>{t.delimiter}</label>
-          <input
-            type="text"
-            value={settings.delimiter}
-            onChange={(e) => updateSettings({ delimiter: e.target.value })}
-            style={{
-              ...styles.input,
-              borderColor: "#d0d0d0",
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = "#1976d2")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
-          />
-        </div>
+        <button
+          onClick={() => loadSelectionData()}
+          disabled={isLoading}
+          style={{
+            flex: 1,
+            padding: "7px 10px",
+            backgroundColor: isLoading ? "#d0d0d0" : "#43a047",
+            color: "white",
+            border: "none",
+            borderRadius: 4,
+            cursor: isLoading ? "not-allowed" : "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+            transition: "background-color 0.2s",
+          }}
+          onMouseOver={(e) => {
+            if (!isLoading) e.currentTarget.style.backgroundColor = "#388e3c";
+          }}
+          onMouseOut={(e) => {
+            if (!isLoading) e.currentTarget.style.backgroundColor = "#43a047";
+          }}
+          title="Uuenda kõik andmed"
+        >
+          {isLoading ? "..." : t.refresh}
+        </button>
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={styles.label}>{t.preview}</label>
-          <div style={{ ...styles.preview, ...(previewMarkup ? {} : styles.previewEmpty) }}>
-            {previewMarkup || t.noData}
-          </div>
-        </div>
-
-        <div style={styles.controls as any}>
-          <button
-            onClick={createMarkups}
-            disabled={isLoading || selectedData.length === 0 || selectedCount === 0}
-            style={{
-              ...styles.btn,
-              ...(isLoading || selectedData.length === 0 || selectedCount === 0 ? styles.btnDisabled : {}),
-            }}
-            onMouseOver={(e) => {
-              if (!(isLoading || selectedData.length === 0 || selectedCount === 0)) {
-                e.currentTarget.style.backgroundColor = "#1565c0";
-              }
-            }}
-            onMouseOut={(e) => {
-              if (!(isLoading || selectedData.length === 0 || selectedCount === 0)) {
-                e.currentTarget.style.backgroundColor = "#1976d2";
-              }
-            }}
-          >
-            {isLoading ? t.loading : t.create}
-          </button>
-
-          <button
-            onClick={handleRemoveAllMarkups}
-            disabled={isLoading}
-            style={{
-              ...styles.btnDanger,
-              backgroundColor: isLoading ? "#ccc" : "#d32f2f",
-            }}
-            title="Kustuta KÕik markupid mudelis"
-          >
-            {t.removeAll}
-          </button>
-
-          <button
-            onClick={loadSelectionData}
-            disabled={isLoading}
-            style={{
-              ...styles.btn,
-              ...(isLoading ? styles.btnDisabled : {}),
-              backgroundColor: isLoading ? "#d0d0d0" : "#43a047",
-            }}
-          >
-            {isLoading ? t.loading : t.refresh}
-          </button>
-        </div>
-
-        <div style={styles.hint}>{t.dragHint}</div>
+        <button
+          onClick={handleRemoveAllMarkups}
+          disabled={isLoading}
+          style={{
+            padding: "7px 10px",
+            backgroundColor: isLoading ? "#ccc" : "#d32f2f",
+            color: "white",
+            border: "none",
+            borderRadius: 4,
+            cursor: isLoading ? "not-allowed" : "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+            minWidth: 50,
+          }}
+          title="Kustuta kõik markupid"
+        >
+          {isLoading ? "..." : t.removeAll}
+        </button>
       </div>
 
       {/* PROPERTIES SECTION */}
-      <div
-        style={{
-          ...styles.section,
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-        } as any}
-      >
-        <h3 style={styles.heading}>
-          {t.properties} ({selectedCount} valitud)
+      <div style={{
+        border: "1px solid #e0e0e0",
+        borderRadius: 4,
+        padding: 8,
+        backgroundColor: "#ffffff",
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+      } as any}>
+        <h3 style={{
+          margin: "0 0 8px 0",
+          fontSize: 12,
+          fontWeight: 600,
+          color: "#333",
+        }}>
+          {t.properties} ({selectedCount})
         </h3>
 
         <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           {allFields.length === 0 ? (
-            <p style={{ color: "#999", fontSize: 11, margin: 0 }}>{t.selectObjects}</p>
+            <p style={{ color: "#999", fontSize: 10, margin: 0 }}>{t.selectObjects}</p>
           ) : (
             Array.from(groupedFields.entries()).map(([groupName, groupFields]) => (
-              <div key={groupName} style={{ marginBottom: 12 }}>
-                <div style={styles.groupHeader as any}>
+              <div key={groupName} style={{ marginBottom: 8 }}>
+                <div style={{
+                  padding: "6px 8px",
+                  backgroundColor: "#f5f5f5",
+                  borderRadius: 3,
+                  marginBottom: 4,
+                  fontWeight: 600,
+                  fontSize: 10,
+                  color: "#333",
+                  border: "1px solid #e0e0e0",
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}>
                   <span>{groupName}</span>
-                  <span style={{ fontWeight: 500, color: "#666", fontSize: 10 }}>
+                  <span style={{ fontWeight: 500, color: "#666", fontSize: 9 }}>
                     {groupFields.filter((f) => f.selected).length}/{groupFields.length}
                   </span>
                 </div>
 
-                <div style={styles.columnListNoscroll as any}>
+                <div style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 3,
+                  border: "1px solid #e6eaf0",
+                  borderRadius: 4,
+                  padding: 4,
+                  background: "#fff",
+                  maxHeight: 300,
+                  overflow: "auto",
+                }}>
                   {groupFields.map((field) => {
                     const orderedSelected = getOrderedSelectedFields();
                     const fieldIdx = orderedSelected.findIndex((f) => f.key === field.key);
@@ -1197,15 +1036,19 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                         onDrop={() => handleDrop(field)}
                         onDragEnd={handleDragEnd}
                         style={{
-                          ...styles.columnItem,
-                          ...(field.selected ? { backgroundColor: "#e3f2fd", borderColor: "#1976d2" } : {}),
-                          ...(draggedField === field.key ? styles.columnItemHighlight : {}),
-                          ...(draggedField === field.key ? styles.columnItemDragging : {}),
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 3,
+                          padding: 4,
+                          borderRadius: 3,
+                          border: field.selected ? "1px solid #1976d2" : draggedField === field.key ? "1px dashed #1976d2" : "1px solid #eef1f6",
+                          background: field.selected ? "#e3f2fd" : "#fff",
                           opacity: field.hasData ? 1 : 0.6,
                           cursor: field.selected ? "grab" : "default",
+                          transition: "all 0.15s",
                         } as any}
                       >
-                        <span style={styles.dragHandle}>⋮⋮</span>
+                        <span style={{ fontSize: 9, color: field.selected ? "#1976d2" : "#ccc", userSelect: "none" }}>⋮⋮</span>
 
                         <input
                           type="checkbox"
@@ -1213,32 +1056,39 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                           onChange={() => toggleField(field.key)}
                           style={{
                             cursor: "pointer",
-                            transform: "scale(1)",
                             margin: 0,
-                            width: 16,
-                            height: 16,
+                            width: 14,
+                            height: 14,
                           }}
                         />
 
-                        <span
-                          style={{
-                            color: "#0066cc",
-                            fontSize: 11,
-                            fontWeight: 500,
-                            flex: 1,
-                            wordBreak: "break-word",
-                            lineHeight: "1.3",
-                          }}
-                        >
+                        <span style={{
+                          color: "#0066cc",
+                          fontSize: 9,
+                          fontWeight: 500,
+                          flex: 1,
+                          wordBreak: "break-word",
+                          lineHeight: "1.2",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}>
                           {field.label}
                         </span>
 
-                        <div style={{ display: "flex", gap: 4, visibility: isInOrder ? "visible" : "hidden" }}>
+                        <div style={{ display: "flex", gap: 2, visibility: isInOrder ? "visible" : "hidden" }}>
                           {!isFirst && (
                             <button
                               onClick={() => moveField(field.key, "up")}
-                              title="Liiguta üles"
-                              style={styles.miniBtn as any}
+                              title="Üles"
+                              style={{
+                                padding: "3px 5px",
+                                fontSize: 9,
+                                backgroundColor: "#f0f0f0",
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 2,
+                                cursor: "pointer",
+                                transition: "all 0.15s",
+                              }}
                               onMouseOver={(e) => {
                                 e.currentTarget.style.backgroundColor = "#1976d2";
                                 e.currentTarget.style.color = "white";
@@ -1254,8 +1104,16 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                           {!isLast && (
                             <button
                               onClick={() => moveField(field.key, "down")}
-                              title="Liiguta alla"
-                              style={styles.miniBtn as any}
+                              title="Alla"
+                              style={{
+                                padding: "3px 5px",
+                                fontSize: 9,
+                                backgroundColor: "#f0f0f0",
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 2,
+                                cursor: "pointer",
+                                transition: "all 0.15s",
+                              }}
                               onMouseOver={(e) => {
                                 e.currentTarget.style.backgroundColor = "#1976d2";
                                 e.currentTarget.style.color = "white";
@@ -1279,58 +1137,153 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </div>
       </div>
 
-      {/* LOG SECTION */}
-      <div style={styles.logContainer as any}>
-        <div
-          style={styles.logHeader as any}
-          onClick={() => setShowDebugLog(!showDebugLog)}
-        >
-          <span>{showDebugLog ? "▼" : "▶"} {t.log} ({logs.length})</span>
-          {showDebugLog && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const logText = logs.map((l) => `[${l.timestamp}] ${l.message}`).join("\n");
-                navigator.clipboard.writeText(logText);
-                addLog("✅ LOG kopeeritud lõikelauale", "success");
-              }}
-              style={{
-                padding: "2px 6px",
-                fontSize: 8,
-                backgroundColor: "#e0e0e0",
-                border: "none",
-                borderRadius: 2,
-                cursor: "pointer",
-              }}
-            >
-              📋 Kopeeri
-            </button>
-          )}
+      {/* FOOTER WITH SETTINGS */}
+      <div style={{
+        border: "1px solid #e0e0e0",
+        borderRadius: 4,
+        padding: 8,
+        backgroundColor: "#ffffff",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+      }}>
+        <div style={{ marginBottom: 6 }}>
+          <label style={{
+            fontSize: 10,
+            fontWeight: 500,
+            color: "#555",
+            display: "block",
+            marginBottom: 2,
+          }}>
+            {t.delimiter}
+          </label>
+          <input
+            type="text"
+            value={settings.delimiter}
+            onChange={(e) => updateSettings({ delimiter: e.target.value })}
+            style={{
+              width: "100%",
+              padding: "5px 8px",
+              border: "1px solid #d0d0d0",
+              borderRadius: 3,
+              fontSize: 10,
+              boxSizing: "border-box",
+              fontFamily: "system-ui",
+            }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "#1976d2")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
+          />
+          <div style={{ fontSize: 8, color: "#999", marginTop: 2, fontStyle: "italic" }}>
+            Andmete kihtide eraldaja (näit: " | " näitab kihid eraldatult, "\n" näitab real)
+          </div>
         </div>
 
-        {showDebugLog && (
-          <div style={styles.logContent as any}>
-            {logs.map((log, idx) => {
-              const colors: Record<string, string> = {
-                success: "#2e7d32",
-                error: "#c62828",
-                warn: "#f57f17",
-                info: "#0277bd",
-                debug: "#666666",
-              };
-              return (
-                <div key={idx} style={{ ...styles.logEntry, color: colors[log.level] || "#333" }}>
-                  [{log.timestamp}] {log.message}
-                </div>
-              );
-            })}
+        <div>
+          <label style={{
+            fontSize: 10,
+            fontWeight: 500,
+            color: "#555",
+            display: "block",
+            marginBottom: 2,
+          }}>
+            {t.preview}
+          </label>
+          <div style={{
+            fontSize: 9,
+            color: previewMarkup ? "#333" : "#999",
+            fontFamily: "monospace",
+            backgroundColor: "#fafbfc",
+            padding: 6,
+            borderRadius: 3,
+            border: "1px solid #e0e0e0",
+            wordBreak: "break-all",
+            minHeight: 22,
+            maxHeight: 35,
+            overflowY: "auto",
+            lineHeight: "1.3",
+          }}>
+            {previewMarkup || t.noData}
           </div>
-        )}
+        </div>
+
+        {/* LOG */}
+        <div style={{ marginTop: 8 }}>
+          <div
+            style={{
+              padding: "4px 6px",
+              backgroundColor: "#f5f5f5",
+              borderBottom: showDebugLog ? "1px solid #e0e0e0" : "none",
+              cursor: "pointer",
+              fontWeight: 600,
+              userSelect: "none",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              fontSize: 9,
+              borderRadius: "3px 3px 0 0",
+              border: "1px solid #e0e0e0",
+            }}
+            onClick={() => setShowDebugLog(!showDebugLog)}
+          >
+            <span>{showDebugLog ? "▼" : "▶"} {t.log} ({logs.length})</span>
+            {showDebugLog && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(logs.map((l) => `[${l.timestamp}] ${l.message}`).join("\n"));
+                  addLog("✅ Kopeeritud!", "success");
+                }}
+                style={{
+                  padding: "1px 4px",
+                  fontSize: 8,
+                  backgroundColor: "#e0e0e0",
+                  border: "none",
+                  borderRadius: 2,
+                  cursor: "pointer",
+                }}
+              >
+                📋
+              </button>
+            )}
+          </div>
+
+          {showDebugLog && (
+            <div style={{
+              overflowY: "auto",
+              padding: "4px 6px",
+              backgroundColor: "#fafafa",
+              maxHeight: 80,
+              fontSize: 8,
+              fontFamily: "monospace",
+              borderRadius: "0 0 3px 3px",
+              border: "1px solid #e0e0e0",
+              borderTop: "none",
+            }}>
+              {logs.map((log, idx) => {
+                const colors: Record<string, string> = {
+                  success: "#2e7d32",
+                  error: "#c62828",
+                  warn: "#f57f17",
+                  info: "#0277bd",
+                  debug: "#666666",
+                };
+                return (
+                  <div key={idx} style={{ marginBottom: 1, color: colors[log.level] || "#333" }}>
+                    [{log.timestamp}] {log.message}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* FOOTER */}
-      <div style={styles.footer}>
-        {t.version.replace("{version}", COMPONENT_VERSION).replace("{date}", BUILD_DATE)}
+      {/* VERSION FOOTER */}
+      <div style={{
+        textAlign: "center" as const,
+        fontSize: 8,
+        color: "#999",
+        fontWeight: 500,
+      }}>
+        v{COMPONENT_VERSION} • {BUILD_DATE}
       </div>
     </div>
   );
