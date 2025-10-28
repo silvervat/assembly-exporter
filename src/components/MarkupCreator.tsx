@@ -1,18 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { AlertCircle, Plus, Trash2, RefreshCw, ChevronDown, ChevronUp, Copy, Trash } from "lucide-react";
 
 export interface MarkupCreatorProps {
   api: any;
-  // ✅ Assembly Exporter andmed - AUTOMAATSELT
-  selectedObjects?: Array<{
-    objectId?: number;
-    modelId?: string;
-    [key: string]: any;
-  }>;
-  allRows?: Array<{
-    [key: string]: string;
-  }>;
-  allKeys?: string[];
   onError?: (error: string) => void;
 }
 
@@ -21,7 +10,6 @@ interface PropertyField {
   label: string;
   selected: boolean;
   group?: string;
-  value?: string;
   hasData?: boolean;
 }
 
@@ -32,14 +20,216 @@ interface LogEntry {
   details?: string;
 }
 
-const COMPONENT_VERSION = "5.2.0";
+interface Row {
+  [key: string]: string;
+}
+
+const COMPONENT_VERSION = "6.0.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 
-const normalizeColor = (color: string): string => {
-  let hex = color.replace(/^#/, "").toUpperCase();
-  if (hex.length === 6 && /^[0-9A-F]{6}$/.test(hex)) return hex;
-  return "FF0000";
-};
+// ✅ Samad funktsioonid kui Assembly Exporter'is
+
+function sanitizeKey(s: string): string {
+  if (!s) return "";
+  return String(s)
+    .replace(/[\s\-_.+()[\]{}]/g, "")
+    .trim();
+}
+
+function classifyGuid(guid: string): "IFC" | "MS" | "OTHER" {
+  if (!guid) return "OTHER";
+  const s = String(guid).toLowerCase();
+  if (/^[\da-f]{4}[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(s)) return "IFC";
+  if (/^\d{20,}$/.test(s)) return "MS";
+  return "OTHER";
+}
+
+async function getPresentationLayerString(api: any, modelId: string, runtimeId: number): Promise<string> {
+  try {
+    const layers = await api?.viewer?.getPresentationLayers?.(modelId, [runtimeId]);
+    if (Array.isArray(layers) && layers.length > 0 && Array.isArray(layers[0])) {
+      return layers[0].map((l: any) => String(l?.name || l)).join(" | ");
+    }
+  } catch {}
+  return "";
+}
+
+async function getReferenceObjectInfo(api: any, modelId: string, runtimeId: number) {
+  const result = { fileName: "", fileFormat: "", commonType: "", guidIfc: "", guidMs: "" };
+  try {
+    const refObj = await api?.viewer?.getReferenceObject?.(modelId, runtimeId);
+    if (!refObj) return result;
+    if (refObj?.file?.name) result.fileName = String(refObj.file.name);
+    if (refObj?.fileFormat) result.fileFormat = String(refObj.fileFormat);
+    if (refObj?.commonType) result.commonType = String(refObj.commonType);
+    if (refObj?.guid) {
+      const cls = classifyGuid(refObj.guid);
+      if (cls === "IFC") result.guidIfc = refObj.guid;
+      if (cls === "MS") result.guidMs = refObj.guid;
+    }
+  } catch {}
+  return result;
+}
+
+// ✅ flattenProps - Assembly Exporter loogika
+async function flattenProps(
+  obj: any,
+  modelId: string,
+  projectName: string,
+  modelNameById: Map<string, string>,
+  api: any,
+  addLog: (msg: string, level?: string) => void
+): Promise<Row> {
+  const out: Row = {
+    GUID: "",
+    GUID_IFC: "",
+    GUID_MS: "",
+    Project: String(projectName || ""),
+    ModelId: String(modelId),
+    FileName: modelNameById.get(modelId) || "",
+    Name: "",
+    Type: "Unknown",
+  };
+
+  const propMap = new Map<string, string>();
+  const keyCounts = new Map<string, number>();
+
+  const push = (group: string, name: string, val: unknown) => {
+    const g = sanitizeKey(group);
+    const n = sanitizeKey(name);
+    const baseKey = g ? `${g}.${n}` : n;
+    let key = baseKey;
+    const count = keyCounts.get(baseKey) || 0;
+    if (count > 0) key = `${baseKey}_${count}`;
+    keyCounts.set(baseKey, count + 1);
+    let v: unknown = val;
+    if (Array.isArray(v)) v = v.map((x) => (x == null ? "" : String(x))).join(" | ");
+    else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
+    const s = v == null ? "" : String(v);
+    propMap.set(key, s);
+    out[key] = s;
+  };
+
+  // Property setid
+  if (Array.isArray(obj?.properties)) {
+    obj.properties.forEach((propSet: any) => {
+      const setName = propSet?.name || "Unknown";
+      const setProps = propSet?.properties || [];
+      if (Array.isArray(setProps)) {
+        setProps.forEach((prop: any) => {
+          const value = prop?.displayValue ?? prop?.value;
+          const name = prop?.name || "Unknown";
+          push(setName, name, value);
+        });
+      }
+    });
+  }
+
+  // Standard väljad
+  if (obj?.id) out.ObjectId = String(obj.id);
+  if (obj?.name) out.Name = String(obj.name);
+  if (obj?.type) out.Type = String(obj.type);
+
+  // GUIDid
+  let guidIfc = "";
+  let guidMs = "";
+
+  for (const [k, v] of propMap) {
+    if (!/guid|globalid/i.test(k)) continue;
+    const cls = classifyGuid(v);
+    if (cls === "IFC" && !guidIfc) guidIfc = v;
+    if (cls === "MS" && !guidMs) guidMs = v;
+  }
+
+  // Metadata GUID_MS
+  try {
+    const metaArr = await api?.viewer?.getObjectMetadata?.(modelId, [obj?.id]);
+    const metaOne = Array.isArray(metaArr) ? metaArr[0] : metaArr;
+    if (metaOne?.globalId) {
+      const g = String(metaOne.globalId);
+      out.GUID_MS = out.GUID_MS || g;
+      guidMs = guidMs || g;
+    }
+  } catch {}
+
+  // IFC GUID fallback
+  if (!guidIfc && obj.id) {
+    try {
+      const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
+      const externalId = externalIds[0];
+      if (externalId && classifyGuid(externalId) === "IFC") guidIfc = externalId;
+    } catch {}
+  }
+
+  // Presentation Layers
+  if (![...propMap.keys()].some((k) => k.toLowerCase().startsWith("presentation_layers."))) {
+    const rid = Number(obj?.id);
+    if (Number.isFinite(rid)) {
+      const layerStr = await getPresentationLayerString(api, modelId, rid);
+      if (layerStr) {
+        const key = "Presentation_Layers.Layer";
+        propMap.set(key, layerStr);
+        out[key] = layerStr;
+      }
+    }
+  }
+
+  // Reference Object
+  const hasRefBlock = [...propMap.keys()].some((k) => k.toLowerCase().startsWith("referenceobject."));
+  if (!hasRefBlock) {
+    const rid = Number(obj?.id);
+    if (Number.isFinite(rid)) {
+      const ref = await getReferenceObjectInfo(api, modelId, rid);
+      if (ref.fileName) out["ReferenceObject.File_Name"] = ref.fileName;
+      if (ref.fileFormat) out["ReferenceObject.File_Format"] = ref.fileFormat;
+      if (ref.commonType) out["ReferenceObject.Common_Type"] = ref.commonType;
+      if (!guidIfc && ref.guidIfc) guidIfc = ref.guidIfc;
+      if (!guidMs && ref.guidMs) guidMs = ref.guidMs;
+    }
+  }
+
+  out.GUID_IFC = guidIfc;
+  out.GUID_MS = guidMs;
+  out.GUID = guidIfc || guidMs || "";
+
+  return out;
+}
+
+// ✅ getSelectedObjects - Assembly Exporter loogika
+async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
+  const viewer: any = api?.viewer;
+  const mos = await viewer?.getObjects?.({ selected: true });
+  if (!Array.isArray(mos) || !mos.length) return [];
+  return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
+}
+
+async function buildModelNameMap(api: any, modelIds: string[]) {
+  const map = new Map<string, string>();
+  try {
+    const list: any[] = await api?.viewer?.getModels?.();
+    for (const m of list || []) {
+      if (m?.id && m?.name) map.set(String(m.id), String(m.name));
+    }
+  } catch {}
+  for (const id of new Set(modelIds)) {
+    if (map.has(id)) continue;
+    try {
+      const f = await api?.viewer?.getLoadedModel?.(id);
+      const n = f?.name || f?.file?.name;
+      if (n) map.set(id, String(n));
+    } catch {}
+  }
+  return map;
+}
+
+async function getProjectName(api: any): Promise<string> {
+  try {
+    const proj = typeof api?.project?.getProject === "function" ? await api.project.getProject() : api?.project || {};
+    return String(proj?.name || "");
+  } catch {
+    return "";
+  }
+}
 
 const groupKeys = (keys: string[]): Map<string, string[]> => {
   const groups = new Map<string, string[]>();
@@ -61,13 +251,13 @@ const groupKeys = (keys: string[]): Map<string, string[]> => {
   return groups;
 };
 
-export default function MarkupCreator({
-  api,
-  selectedObjects = [],
-  allRows = [],
-  allKeys = [],
-  onError,
-}: MarkupCreatorProps) {
+const normalizeColor = (color: string): string => {
+  let hex = color.replace(/^#/, "").toUpperCase();
+  if (hex.length === 6 && /^[0-9A-F]{6}$/.test(hex)) return hex;
+  return "FF0000";
+};
+
+export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   const [fields, setFields] = useState<PropertyField[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [markupColor, setMarkupColor] = useState("FF0000");
@@ -78,11 +268,10 @@ export default function MarkupCreator({
   const [showDebugLog, setShowDebugLog] = useState(true);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  const [rowsData, setRowsData] = useState<Array<{ [key: string]: string }>>([]);
+  const [selectedData, setSelectedData] = useState<Row[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-
   const [stats, setStats] = useState({
-    totalRows: 0,
+    totalObjects: 0,
     totalKeys: 0,
     groupsCount: 0,
     fieldsWithData: 0,
@@ -90,6 +279,7 @@ export default function MarkupCreator({
 
   const bboxCache = useRef(new Map<string, any>());
   const mountedRef = useRef(true);
+  const listenerRegistered = useRef(false);
 
   const addLog = useCallback(
     (message: string, level: "info" | "success" | "warn" | "error" | "debug" = "info", details?: string) => {
@@ -120,97 +310,93 @@ export default function MarkupCreator({
   useEffect(() => {
     mountedRef.current = true;
     addLog(`🚀 MarkupCreator v${COMPONENT_VERSION} laaditud`, "info", `Build: ${BUILD_DATE}`);
+    addLog("⏳ Oodates valimist 3D vaates...", "info");
     return () => {
       mountedRef.current = false;
     };
   }, [addLog]);
 
-  // ✅ REAL-TIME: Kuula 3D vaates valimisi - automaatne andmete laadimise
+  // ✅ REAL-TIME: Kuula valimisi - Assembly Exporter loogika
   useEffect(() => {
-    if (!api?.selection) return;
+    if (!api?.viewer || listenerRegistered.current) return;
 
     const loadSelectionData = async () => {
       try {
-        // 1️⃣ Hangi valitud objektid otse 3D vaatelt
-        const selectedFromViewer = await api.selection.getSelectedObjects?.();
-        
-        if (!selectedFromViewer || selectedFromViewer.length === 0) {
-          addLog("⏳ Oodates valimist 3D vaates...", "info");
-          setSelectedIds([]);
-          setRowsData([]);
-          setFields([]);
-          return;
-        }
-
         addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
         addLog("🎯 REAL-TIME VALIMISE TUVASTAMINE", "info");
         addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
-        // 2️⃣ Kontrolli allRows ja allKeys (Assembly Exporter andmebaas)
-        addLog("\n1️⃣ ANDMETE KONTROLLIMINE:", "debug");
+        // 1️⃣ Hangi valitud objektid
+        addLog("\n1️⃣ VALITUD OBJEKTIDE LEIDMINE:", "debug");
+        const selectedWithBasic = await getSelectedObjects(api);
 
-        if (!allKeys || allKeys.length === 0) {
-          addLog("   ⚠️ allKeys puuduvad - Assembly Exporter andmeid pole!", "warn");
-          return;
-        }
-        addLog(`   ✅ allKeys: ${allKeys.length} võtit`, "success");
-
-        if (!allRows || allRows.length === 0) {
-          addLog("   ⚠️ allRows puuduvad - Assembly Exporter andmeid pole!", "warn");
-          return;
-        }
-        addLog(`   ✅ allRows: ${allRows.length} rida`, "success");
-
-        addLog(`   ✅ 3D vaates valitud: ${selectedFromViewer.length} objekti`, "success");
-
-        // 3️⃣ Leida valitud objektide andmed
-        addLog("\n2️⃣ VALITUD OBJEKTIDE ANDMETE LEIDMINE:", "debug");
-
-        const selectedIds: number[] = [];
-        const matchingRows: Array<{ [key: string]: string }> = [];
-
-        selectedFromViewer.forEach((selection: any, idx: number) => {
-          // Hangi ObjectId eri API struktuuri variantidest
-          const objId = 
-            selection.objectId ||
-            selection.id ||
-            selection?.object?.objectId ||
-            Number(selection);
-
-          if (objId) {
-            selectedIds.push(Number(objId));
-
-            // Leida rida mis vastab ObjectId-le
-            const row = allRows.find((r) => Number(r.ObjectId) === Number(objId));
-            if (row) {
-              matchingRows.push(row);
-              addLog(`   ✅ ${idx + 1}. ObjectId ${objId}: ${row.Name || "?"}`, "debug");
-            } else {
-              addLog(`   ⚠️ ${idx + 1}. ObjectId ${objId}: Rida andmebaasist ei leitud`, "warn");
-            }
+        if (!selectedWithBasic || selectedWithBasic.length === 0) {
+          if (selectedIds.length > 0) {
+            addLog("⏳ Valik tühjaks - oodates uut valimist...", "info");
+            setSelectedIds([]);
+            setSelectedData([]);
+            setFields([]);
           }
-        });
-
-        addLog(`\n   📊 Leitud: ${matchingRows.length}/${selectedFromViewer.length}`, "success");
-
-        if (matchingRows.length === 0) {
-          addLog("   ⚠️ Valitud objektidele andmeid ei leitud", "warn");
-          setSelectedIds(selectedIds);
-          setRowsData([]);
-          setFields([]);
           return;
         }
 
-        setSelectedIds(selectedIds);
-        setRowsData(matchingRows);
+        addLog(`   ✅ Leitud: ${selectedWithBasic.length} mudeli/mudeleid`, "success");
 
-        // 4️⃣ Väljadega täitmine
+        // 2️⃣ Hangi andmed Assembly Exporter loogikaga
+        addLog("\n2️⃣ ANDMETE HANKIMINE:", "debug");
+
+        const projectName = await getProjectName(api);
+        const modelIds = selectedWithBasic.map((s) => s.modelId);
+        const nameMap = await buildModelNameMap(api, modelIds);
+
+        const allRows: Row[] = [];
+        const allIds: number[] = [];
+
+        for (const selection of selectedWithBasic) {
+          const modelId = selection.modelId;
+          const objectRuntimeIds = selection.objects.map((o: any) => o?.id || o).filter(Boolean);
+
+          if (!objectRuntimeIds.length) continue;
+
+          addLog(`   🔍 Mudel ${modelId}: ${objectRuntimeIds.length} objekti`, "debug");
+
+          try {
+            // Hangi objektide andmed
+            const fullObjects = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
+
+            // Flatten properties
+            const flattened = await Promise.all(
+              fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api, addLog))
+            );
+
+            allRows.push(...flattened);
+            flattened.forEach((row) => {
+              const objId = Number(row.ObjectId);
+              if (objId && !allIds.includes(objId)) allIds.push(objId);
+            });
+
+            addLog(`      ✅ Laaditud: ${flattened.length} objekti`, "debug");
+          } catch (err: any) {
+            addLog(`      ❌ Viga: ${err?.message}`, "error");
+          }
+        }
+
+        if (allRows.length === 0) {
+          addLog("   ⚠️ Andmeid ei leitud", "warn");
+          return;
+        }
+
+        addLog(`\n   ✅ Kokku laaditud: ${allRows.length} objekti`, "success");
+
+        setSelectedIds(allIds);
+        setSelectedData(allRows);
+
+        // 3️⃣ Väljadega täitmine
         addLog("\n3️⃣ VÄLJADEGA TÄITMINE:", "debug");
 
+        const allKeys = Array.from(new Set(allRows.flatMap((r) => Object.keys(r)))).sort();
         const groups = groupKeys(allKeys);
         let groupOrder = ["Standard", "Tekla_Assembly", "Nordec_Dalux", "IfcElementAssembly", "AssemblyBaseQuantities", "Other"];
-
-        addLog(`   📊 Grupid: ${groupOrder.length}`, "debug");
 
         const newFields: PropertyField[] = [];
         let fieldsWithData = 0;
@@ -225,8 +411,7 @@ export default function MarkupCreator({
               "Tekla_Assembly.AssemblyCast_unit_top_elevation",
             ].includes(key);
 
-            // Kontrolli kas väljal on andmeid
-            const hasData = matchingRows.some((row) => {
+            const hasData = allRows.some((row) => {
               const val = row[key];
               return val && val.trim() !== "";
             });
@@ -248,7 +433,7 @@ export default function MarkupCreator({
         addLog(`      Vaikimisi valitud: ${newFields.filter((f) => f.selected).length} välja`, "debug");
 
         setStats({
-          totalRows: matchingRows.length,
+          totalObjects: allRows.length,
           totalKeys: allKeys.length,
           groupsCount: groups.size,
           fieldsWithData,
@@ -266,118 +451,35 @@ export default function MarkupCreator({
       }
     };
 
-    // ✅ Kuula valimise muutusi
+    // Kuula muutusi
     const handleSelectionChanged = () => {
       loadSelectionData();
     };
 
-    // Registreeri listener
-    api.selection.addOnSelectionChanged?.(handleSelectionChanged);
+    api.viewer.addOnSelectionChanged?.(handleSelectionChanged);
+    listenerRegistered.current = true;
 
-    // Hangi andmed kohe (initsialiseerimiseks)
+    // Kohe alguses
     loadSelectionData();
 
-    // Cleanup
     return () => {
-      api.selection.removeOnSelectionChanged?.(handleSelectionChanged);
+      api.viewer.removeOnSelectionChanged?.(handleSelectionChanged);
+      listenerRegistered.current = false;
     };
-  }, [api, allRows, allKeys, addLog]);
-
-  // ✅ FALLBACK: kui props muutuvad (Assembly Exporter režiim)
-  useEffect(() => {
-    if (!selectedObjects || selectedObjects.length === 0) return;
-    if (!allRows || allRows.length === 0) return;
-
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("📥 ASSEMBLY EXPORTER ANDMETE LAADIMISE", "info");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-
-    addLog(`\n1️⃣ selectedObjects: ${selectedObjects.length} objekti`, "debug");
-    addLog(`   allRows: ${allRows.length} rida`, "debug");
-    addLog(`   allKeys: ${allKeys.length} võtit`, "debug");
-
-    const selectedIds: number[] = [];
-    const matchingRows: Array<{ [key: string]: string }> = [];
-
-    selectedObjects.forEach((obj, idx) => {
-      const objId = obj.objectId || Number(obj.ObjectId);
-      if (objId) {
-        selectedIds.push(objId);
-
-        const row = allRows.find((r) => Number(r.ObjectId) === objId);
-        if (row) {
-          matchingRows.push(row);
-          addLog(`   ✅ ${idx + 1}. ObjectId ${objId}: ${row.Name || "?"}`, "debug");
-        }
-      }
-    });
-
-    if (matchingRows.length === 0) return;
-
-    setSelectedIds(selectedIds);
-    setRowsData(matchingRows);
-
-    const groups = groupKeys(allKeys);
-    let groupOrder = ["Standard", "Tekla_Assembly", "Nordec_Dalux", "IfcElementAssembly", "AssemblyBaseQuantities", "Other"];
-
-    const newFields: PropertyField[] = [];
-    let fieldsWithData = 0;
-
-    groupOrder.forEach((groupName) => {
-      const groupKeys = groups.get(groupName) || [];
-      groupKeys.forEach((key) => {
-        const isStandard = [
-          "Name",
-          "Type",
-          "Tekla_Assembly.AssemblyCast_unit_Mark",
-          "Tekla_Assembly.AssemblyCast_unit_top_elevation",
-        ].includes(key);
-
-        const hasData = matchingRows.some((row) => {
-          const val = row[key];
-          return val && val.trim() !== "";
-        });
-
-        if (hasData) fieldsWithData++;
-
-        newFields.push({
-          key,
-          label: key,
-          selected: isStandard,
-          group: groupName,
-          hasData,
-        });
-      });
-    });
-
-    setStats({
-      totalRows: matchingRows.length,
-      totalKeys: allKeys.length,
-      groupsCount: groups.size,
-      fieldsWithData,
-    });
-
-    if (mountedRef.current) {
-      setFields(newFields);
-    }
-
-    addLog("✅ ASSEMBLY EXPORTER LAADIMISE LÕPETATUD", "success");
-  }, [selectedObjects, allRows, allKeys, addLog]);
+  }, [api, addLog]);
 
   const toggleField = useCallback((key: string) => {
-    setFields((prev) =>
-      prev.map((f) => (f.key === key ? { ...f, selected: !f.selected } : f))
-    );
+    setFields((prev) => prev.map((f) => (f.key === key ? { ...f, selected: !f.selected } : f)));
   }, []);
 
-  const toggleGroup = useCallback((group: string) => {
-    const groupFields = fields.filter((f) => f.group === group);
-    const allSelected = groupFields.every((f) => f.selected);
-
-    setFields((prev) =>
-      prev.map((f) => (f.group === group ? { ...f, selected: !allSelected } : f))
-    );
-  }, [fields]);
+  const toggleGroup = useCallback(
+    (group: string) => {
+      const groupFields = fields.filter((f) => f.group === group);
+      const allSelected = groupFields.every((f) => f.selected);
+      setFields((prev) => prev.map((f) => (f.group === group ? { ...f, selected: !allSelected } : f)));
+    },
+    [fields]
+  );
 
   const getObjectBoundingBox = useCallback(
     async (modelId: string, objectId: number) => {
@@ -387,21 +489,13 @@ export default function MarkupCreator({
       }
 
       try {
-        try {
-          const bbox = await api.viewer.getObjectBoundingBox(modelId, objectId);
-          if (bbox) {
-            bboxCache.current.set(key, bbox);
-            return bbox;
-          }
-        } catch {
-          const bboxes = await api.viewer.getObjectBoundingBoxes(modelId, [objectId]);
-          if (Array.isArray(bboxes) && bboxes[0]) {
-            bboxCache.current.set(key, bboxes[0]);
-            return bboxes[0];
-          }
+        const bbox = await api.viewer?.getObjectBoundingBox?.(modelId, objectId);
+        if (bbox) {
+          bboxCache.current.set(key, bbox);
+          return bbox;
         }
       } catch (err: any) {
-        addLog(`⚠️ BBox päringu viga: ${err?.message}`, "warn");
+        addLog(`⚠️ BBox viga: ${err?.message}`, "warn");
       }
 
       return null;
@@ -416,22 +510,17 @@ export default function MarkupCreator({
 
     const selectedFields = fields.filter((f) => f.selected);
 
-    addLog(`\n1️⃣ VALIDEERIMINE:`, "debug");
     if (selectedFields.length === 0) {
-      addLog("   ❌ Valitud väljad puuduvad", "error");
+      addLog("❌ Valitud väljad puuduvad", "error");
       return;
     }
-    addLog(`   ✅ Valitud väljad: ${selectedFields.length}`, "success");
-
-    if (rowsData.length === 0) {
-      addLog("   ❌ Valitud read puuduvad", "error");
+    if (selectedData.length === 0) {
+      addLog("❌ Valitud andmed puuduvad", "error");
       return;
     }
-    addLog(`   ✅ Valitud read: ${rowsData.length}`, "success");
 
     setIsLoading(true);
-    addLog(`\n2️⃣ BBOXI JA TEKSTIGA KÄSITLEMINE:`, "debug");
-    addLog(`   Luues ${rowsData.length} märgupit...`, "info");
+    addLog(`\n📍 Luues ${selectedData.length} märgupit...`, "info");
 
     try {
       const markupsToCreate: any[] = [];
@@ -439,19 +528,13 @@ export default function MarkupCreator({
       let processed = 0;
       let skipped = 0;
 
-      // Leida ModelId esimesest reast
-      const modelId = rowsData[0]?.ModelId;
-      if (!modelId) {
-        addLog("   ❌ ModelId ei leitud", "error");
-        return;
-      }
+      const modelId = selectedData[0]?.ModelId;
 
-      for (let idx = 0; idx < rowsData.length; idx++) {
-        const row = rowsData[idx];
+      for (let idx = 0; idx < selectedData.length; idx++) {
+        const row = selectedData[idx];
         try {
           const objectId = Number(row.ObjectId);
           if (!objectId) {
-            addLog(`   ⚠️ ObjectId puudub reale ${idx + 1}`, "warn");
             skipped++;
             continue;
           }
@@ -500,7 +583,6 @@ export default function MarkupCreator({
           }
 
           if (values.length === 0) {
-            addLog(`   ⚠️ ${objectId}: Andmeid valitud väljadele pole`, "warn");
             skipped++;
             continue;
           }
@@ -530,81 +612,51 @@ export default function MarkupCreator({
           markupsToCreate.push(markupObj);
           processed++;
 
-          if (idx < 5 || idx % 5 === 0) {
-            addLog(`   ✅ ${objectId}: "${text.substring(0, 50)}"`, "debug");
+          if (idx < 3) {
+            addLog(`   ✅ ${objectId}: "${text.substring(0, 40)}"`, "debug");
           }
         } catch (err: any) {
-          addLog(`   ❌ Real ${idx + 1}: ${err?.message}`, "error");
           skipped++;
         }
       }
 
-      addLog(`\n   📊 Statustika: ${processed} valmis, ${skipped} vahele jäetud`, "info");
+      addLog(`\n📊 Statustika: ${processed} valmis, ${skipped} vahele jäetud`, "info");
 
       if (markupsToCreate.length === 0) {
-        addLog("   ❌ Ühtegi märgupit ei saadud luua", "error");
+        addLog("❌ Ühtegi märgupit ei saadud luua", "error");
         return;
       }
 
-      addLog(`\n3️⃣ API KUTSE: addTextMarkup()`, "debug");
-      addLog(`   Saadetak: ${markupsToCreate.length} märgupit`, "debug");
+      const result = await api.markup.addTextMarkup(markupsToCreate);
 
-      try {
-        const result = await api.markup.addTextMarkup(markupsToCreate);
-
-        if (Array.isArray(result)) {
-          if (result.length > 0) {
-            if (typeof result[0] === "number") {
-              createdIds.push(...result);
-            } else if (typeof result[0] === "object" && result[0]?.id) {
-              createdIds.push(...result.map((m: any) => m.id).filter(Boolean));
-            }
-          }
-        } else if (result?.id) {
-          createdIds.push(result.id);
+      if (Array.isArray(result)) {
+        if (result.length > 0 && typeof result[0] === "number") {
+          createdIds.push(...result);
         }
-
-        addLog(`   ✅ API vastus: ${createdIds.length} ID`, "success");
-      } catch (err1: any) {
-        addLog("   ❌ API kutse ebaõnnestus", "error", err1?.message);
       }
 
       if (createdIds.length > 0) {
         setMarkupIds(createdIds);
-        addLog(
-          `\n✅ MARKUPID LOODUD!`,
-          "success",
-          `${createdIds.length} märgupit - IDs: ${createdIds.slice(0, 3).join(", ")}${createdIds.length > 3 ? "..." : ""}`
-        );
+        addLog(`✅ MARKUPID LOODUD: ${createdIds.length} märgupit! 🎉`, "success");
       }
     } catch (err: any) {
-      addLog("❌ MARKUPITE LOOMINE EBAÕNNESTUS", "error", err?.message);
+      addLog("❌ Viga", "error", err?.message);
     } finally {
       setIsLoading(false);
       addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
-  }, [fields, rowsData, delimiter, markupColor, getObjectBoundingBox, addLog]);
+  }, [fields, selectedData, delimiter, markupColor, getObjectBoundingBox, addLog]);
 
   const handleRemoveMarkups = useCallback(async () => {
     if (markupIds.length === 0) return;
 
-    addLog(`🗑️ MARKUPITE KUSTUTAMINE - ${markupIds.length} märgupit`, "info");
-
     setIsLoading(true);
-
     try {
-      try {
-        await api.markup.removeMarkups(markupIds);
-        addLog("   ✅ removeMarkups() õnnestus", "success");
-      } catch {
-        await api.markup.removeTextMarkup(markupIds);
-        addLog("   ✅ removeTextMarkup() õnnestus", "success");
-      }
-
+      await api.markup.removeMarkups?.(markupIds);
       setMarkupIds([]);
       addLog("✅ Markupit kustutatud", "success");
     } catch (err: any) {
-      addLog("❌ Eemaldamine ebaõnnestus", "error", err?.message);
+      addLog("❌ Viga", "error", err?.message);
     } finally {
       setIsLoading(false);
     }
@@ -620,134 +672,72 @@ export default function MarkupCreator({
     return groups;
   }, [fields]);
 
-  const clearLogs = useCallback(() => {
-    setLogs([]);
-    addLog("🧹 DEBUG LOG PUHASTATUD", "info");
-  }, [addLog]);
-
-  const copyLogsToClipboard = useCallback(() => {
-    const text = logs
-      .map(
-        (log) =>
-          `[${log.timestamp}] ${log.level.toUpperCase()}: ${log.message}${log.details ? "\n                    " + log.details : ""}`
-      )
-      .join("\n");
-    navigator.clipboard.writeText(text);
-    addLog("✅ DEBUG LOG kopeeritud", "success");
-  }, [logs, addLog]);
-
   return (
     <div
       style={{
         padding: 20,
-        maxWidth: "100%",
         fontFamily: "system-ui, -apple-system, sans-serif",
         display: "flex",
         flexDirection: "column",
-        height: "100vh",
+        height: "100%",
         backgroundColor: "#f5f5f5",
+        overflowY: "auto",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h2 style={{ margin: 0, color: "#1a1a1a" }}>🎨 Märgupite Ehitaja v{COMPONENT_VERSION}</h2>
-        <div style={{ fontSize: 11, color: "#666", textAlign: "right" }}>
-          <div>📊 Read: {stats.totalRows} | Võtid: {stats.totalKeys} | Rühmad: {stats.groupsCount}</div>
-          <div>✅ Väljad andmetega: {stats.fieldsWithData}/{fields.length}</div>
+      <div style={{ marginBottom: 15 }}>
+        <h2 style={{ margin: "0 0 8px 0", fontSize: 16 }}>🎨 Märgupite Ehitaja v{COMPONENT_VERSION}</h2>
+        <div style={{ fontSize: 10, color: "#666" }}>
+          📊 Objektid: {stats.totalObjects} | Võtid: {stats.totalKeys} | Väljad andmetega: {stats.fieldsWithData}/{fields.length}
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 15, flex: 1, minHeight: 0 }}>
         {/* VASAKPOOLNE */}
-        <div>
-          <div
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              padding: 15,
-              backgroundColor: "white",
-              marginBottom: 20,
-            }}
-          >
-            <h3 style={{ margin: "0 0 10px 0", fontSize: 14 }}>📍 Valitud objektid</h3>
-            {selectedIds.length === 0 ? (
-              <div style={{ color: "#999", fontSize: 12 }}>Vali objektid Assembly Exporter'is</div>
-            ) : (
-              <div style={{ fontSize: 12 }}>
-                <div style={{ color: "#1976d2", fontWeight: "bold" }}>{selectedIds.length} objekti</div>
-                <ul style={{ margin: "8px 0 0 0", paddingLeft: 20, fontSize: 11 }}>
-                  {selectedIds.slice(0, 5).map((id, i) => {
-                    const row = rowsData.find((r) => Number(r.ObjectId) === id);
-                    return (
-                      <li key={i}>
-                        ID {id}: {row?.Name || "?"}
-                      </li>
-                    );
-                  })}
-                  {selectedIds.length > 5 && <li>... + {selectedIds.length - 5}</li>}
-                </ul>
-              </div>
-            )}
-          </div>
+        <div style={{ overflowY: "auto" }}>
+          <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 12, backgroundColor: "white", marginBottom: 12 }}>
+            <h3 style={{ margin: "0 0 8px 0", fontSize: 13 }}>⚙️ Seaded</h3>
 
-          <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 15, backgroundColor: "white" }}>
-            <h3 style={{ margin: "0 0 10px 0", fontSize: 14 }}>⚙️ Seaded</h3>
-
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: "bold" }}>Eraldaja:</label>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 10, fontWeight: "bold", display: "block", marginBottom: 4 }}>Eraldaja:</label>
               <input
                 type="text"
                 value={delimiter}
                 onChange={(e) => setDelimiter(e.target.value)}
-                style={{ width: "100%", padding: 8, border: "1px solid #ccc", borderRadius: 4, fontSize: 11, boxSizing: "border-box" }}
+                style={{ width: "100%", padding: 6, border: "1px solid #ccc", borderRadius: 3, fontSize: 10, boxSizing: "border-box" }}
               />
             </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: "bold" }}>Värv:</label>
-              <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 10, fontWeight: "bold", display: "block", marginBottom: 4 }}>Värv:</label>
+              <div style={{ display: "flex", gap: 6 }}>
                 <input
                   type="color"
                   value={"#" + normalizeColor(markupColor)}
                   onChange={(e) => setMarkupColor(e.target.value.replace(/^#/, "").toUpperCase())}
-                  style={{ width: 40, height: 36, border: "1px solid #ccc", borderRadius: 4, cursor: "pointer" }}
+                  style={{ width: 30, height: 30, border: "1px solid #ccc", borderRadius: 3, cursor: "pointer" }}
                 />
                 <input
                   type="text"
                   value={markupColor}
                   onChange={(e) => setMarkupColor(e.target.value.replace(/^#/, "").toUpperCase())}
-                  style={{
-                    flex: 1,
-                    padding: 8,
-                    border: "1px solid #ccc",
-                    borderRadius: 4,
-                    fontSize: 11,
-                    boxSizing: "border-box",
-                    fontFamily: "monospace",
-                  }}
+                  style={{ flex: 1, padding: 6, border: "1px solid #ccc", borderRadius: 3, fontSize: 10, boxSizing: "border-box", fontFamily: "monospace" }}
                 />
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8 }}>
               <button
-                type="button"
                 onClick={createMarkups}
-                disabled={isLoading || rowsData.length === 0 || fields.filter((f) => f.selected).length === 0}
+                disabled={isLoading || selectedData.length === 0 || fields.filter((f) => f.selected).length === 0}
                 style={{
                   flex: 1,
-                  padding: "10px 12px",
-                  backgroundColor:
-                    isLoading || rowsData.length === 0 || fields.filter((f) => f.selected).length === 0
-                      ? "#ccc"
-                      : "#1976d2",
+                  padding: "8px 10px",
+                  backgroundColor: isLoading || selectedData.length === 0 || fields.filter((f) => f.selected).length === 0 ? "#ccc" : "#1976d2",
                   color: "white",
                   border: "none",
-                  borderRadius: 4,
-                  cursor:
-                    isLoading || rowsData.length === 0 || fields.filter((f) => f.selected).length === 0
-                      ? "not-allowed"
-                      : "pointer",
-                  fontSize: 12,
+                  borderRadius: 3,
+                  cursor: isLoading ? "not-allowed" : "pointer",
+                  fontSize: 11,
                   fontWeight: "bold",
                 }}
               >
@@ -755,18 +745,17 @@ export default function MarkupCreator({
               </button>
 
               <button
-                type="button"
                 onClick={handleRemoveMarkups}
                 disabled={markupIds.length === 0 || isLoading}
                 style={{
                   flex: 1,
-                  padding: "10px 12px",
+                  padding: "8px 10px",
                   backgroundColor: markupIds.length === 0 || isLoading ? "#ccc" : "#d32f2f",
                   color: "white",
                   border: "none",
-                  borderRadius: 4,
+                  borderRadius: 3,
                   cursor: markupIds.length === 0 || isLoading ? "not-allowed" : "pointer",
-                  fontSize: 12,
+                  fontSize: 11,
                 }}
               >
                 🗑️ Kustuta
@@ -776,58 +765,57 @@ export default function MarkupCreator({
         </div>
 
         {/* PAREMPOOLNE */}
-        <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 15, backgroundColor: "white", overflowY: "auto" }}>
-          <h3 style={{ margin: "0 0 12px 0", fontSize: 14 }}>📋 Omadused ({fields.length})</h3>
+        <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 12, backgroundColor: "white", overflowY: "auto" }}>
+          <h3 style={{ margin: "0 0 10px 0", fontSize: 13 }}>📋 Omadused ({fields.length})</h3>
 
           {fields.length === 0 ? (
-            <p style={{ color: "#999", fontSize: 12 }}>Oodates andmete laadimist...</p>
+            <p style={{ color: "#999", fontSize: 10 }}>Vali objektid 3D vaates...</p>
           ) : (
             Array.from(groupedFields.entries()).map(([groupName, groupFields]) => (
-              <div key={groupName} style={{ marginBottom: 12 }}>
+              <div key={groupName} style={{ marginBottom: 10 }}>
                 <div
                   style={{
-                    padding: 8,
+                    padding: 6,
                     backgroundColor: "#f0f0f0",
-                    borderRadius: 4,
-                    marginBottom: 6,
+                    borderRadius: 3,
+                    marginBottom: 4,
                     cursor: "pointer",
                     fontWeight: "bold",
-                    fontSize: 11,
+                    fontSize: 10,
                     display: "flex",
                     justifyContent: "space-between",
                   }}
                   onClick={() => toggleGroup(groupName)}
                 >
                   <span>{groupName}</span>
-                  <span style={{ fontSize: 10, color: "#666" }}>
+                  <span style={{ fontSize: 9, color: "#666" }}>
                     {groupFields.filter((f) => f.selected).length}/{groupFields.length}
                   </span>
                 </div>
 
-                <div style={{ paddingLeft: 8 }}>
+                <div style={{ paddingLeft: 6 }}>
                   {groupFields.map((field) => (
                     <label
                       key={field.key}
                       style={{
                         display: "block",
-                        marginBottom: 6,
-                        padding: 6,
-                        borderRadius: 3,
+                        marginBottom: 4,
+                        padding: 4,
+                        borderRadius: 2,
                         backgroundColor: field.selected ? "#e3f2fd" : "transparent",
                         cursor: "pointer",
-                        fontSize: 11,
+                        fontSize: 10,
                         userSelect: "none",
-                        opacity: field.hasData ? 1 : 0.6,
+                        opacity: field.hasData ? 1 : 0.5,
                       }}
                     >
                       <input
                         type="checkbox"
                         checked={field.selected}
                         onChange={() => toggleField(field.key)}
-                        style={{ marginRight: 6, cursor: "pointer" }}
+                        style={{ marginRight: 4, cursor: "pointer" }}
                       />
-                      <code style={{ color: "#0066cc" }}>{field.label}</code>
-                      {!field.hasData && <span style={{ color: "#999", fontSize: 10 }}> (tühi)</span>}
+                      <code style={{ color: "#0066cc", fontSize: 9 }}>{field.label}</code>
                     </label>
                   ))}
                 </div>
@@ -840,96 +828,49 @@ export default function MarkupCreator({
       {/* DEBUG LOG */}
       <div
         style={{
+          marginTop: 12,
           backgroundColor: "#1a1a1a",
           color: "#00ff00",
           border: "2px solid #00ff00",
-          borderRadius: 6,
+          borderRadius: 4,
           overflow: "hidden",
           fontFamily: "monospace",
-          fontSize: 9,
+          fontSize: 8,
+          maxHeight: 180,
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         <div
           style={{
-            padding: "8px 12px",
+            padding: "6px 10px",
             backgroundColor: "#0a0a0a",
             borderBottom: "2px solid #00ff00",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
             cursor: "pointer",
+            fontWeight: "bold",
           }}
           onClick={() => setShowDebugLog(!showDebugLog)}
         >
-          <span style={{ fontWeight: "bold" }}>
-            {showDebugLog ? "▼" : "▶"} 🔍 DEBUG LOG ({logs.length})
-          </span>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                copyLogsToClipboard();
-              }}
-              style={{
-                background: "none",
-                border: "1px solid #00ff00",
-                color: "#00ff00",
-                padding: "2px 4px",
-                borderRadius: 2,
-                cursor: "pointer",
-                fontSize: 9,
-              }}
-            >
-              Kopeeri
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                clearLogs();
-              }}
-              style={{
-                background: "none",
-                border: "1px solid #ff3333",
-                color: "#ff3333",
-                padding: "2px 4px",
-                borderRadius: 2,
-                cursor: "pointer",
-                fontSize: 9,
-              }}
-            >
-              Puhasta
-            </button>
-          </div>
+          {showDebugLog ? "▼" : "▶"} 🔍 LOG ({logs.length})
         </div>
 
         {showDebugLog && (
-          <div style={{ maxHeight: 220, overflowY: "auto", padding: "8px 12px", backgroundColor: "#000" }}>
-            {logs.length === 0 ? (
-              <div style={{ color: "#666" }}>--- Logid ilmuvad siin ---</div>
-            ) : (
-              logs.map((log, idx) => {
-                const levelColors: Record<string, string> = {
-                  success: "#00ff00",
-                  error: "#ff3333",
-                  warn: "#ffaa00",
-                  info: "#00ccff",
-                  debug: "#888888",
-                };
+          <div style={{ flex: 1, overflowY: "auto", padding: "6px 10px", backgroundColor: "#000" }}>
+            {logs.map((log, idx) => {
+              const colors: Record<string, string> = {
+                success: "#00ff00",
+                error: "#ff3333",
+                warn: "#ffaa00",
+                info: "#00ccff",
+                debug: "#888888",
+              };
 
-                return (
-                  <div key={idx} style={{ marginBottom: 2 }}>
-                    <span style={{ color: levelColors[log.level] || "#00ff00" }}>
-                      [{log.timestamp}] {log.message}
-                    </span>
-                    {log.details && (
-                      <div style={{ color: "#666", marginLeft: 12, fontSize: 8, marginTop: 1 }}>
-                        → {log.details}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
+              return (
+                <div key={idx} style={{ marginBottom: 1, color: colors[log.level] || "#00ff00" }}>
+                  [{log.timestamp}] {log.message}
+                </div>
+              );
+            })}
             <div ref={logsEndRef} />
           </div>
         )}
