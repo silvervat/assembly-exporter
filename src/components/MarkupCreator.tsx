@@ -28,7 +28,7 @@ interface Settings {
   selectedFields: string[]; // ✅ Salvestatav väljude järjekord
 }
 
-const COMPONENT_VERSION = "7.2.0";
+const COMPONENT_VERSION = "7.3.0";
 const MARKUP_COLOR = "FF0000";
 
 const DEFAULTS: Settings = {
@@ -361,8 +361,18 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
             if (hasData) fieldsWithData++;
 
-            // ✅ Smart default: ainult AssemblyCast_unit_Mark
-            const isSelected = key === "Tekla_Assembly.AssemblyCast_unit_Mark" && hasData;
+            // ✅ Smart default: 
+            // 1. Kui localStorage'ss on savedFields, kasuta neid
+            // 2. Muidu default: ainult AssemblyCast_unit_Mark
+            let isSelected = false;
+            
+            if (settings.selectedFields && settings.selectedFields.length > 0) {
+              // ✅ Restore saved selection
+              isSelected = settings.selectedFields.includes(key);
+            } else {
+              // ✅ Default: ainult AssemblyCast_unit_Mark
+              isSelected = key === "Tekla_Assembly.AssemblyCast_unit_Mark" && hasData;
+            }
 
             newFields.push({
               key,
@@ -400,7 +410,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       api.viewer.removeOnSelectionChanged?.(handleSelectionChanged);
       listenerRegistered.current = false;
     };
-  }, [api, addLog]);
+  }, [api, addLog, settings]);
 
   // ✅ Arvuta eelvaade
   const updatePreview = useCallback(() => {
@@ -502,11 +512,17 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     );
   };
 
-  // ✅ Toggle field
+  // ✅ Toggle field - salvesta settings'sse
   const toggleField = (key: string) => {
-    setAllFields((prev) =>
-      prev.map((f) => (f.key === key ? { ...f, selected: !f.selected } : f))
-    );
+    setAllFields((prev) => {
+      const updated = prev.map((f) => (f.key === key ? { ...f, selected: !f.selected } : f));
+      
+      // ✅ Salvesta selectedFields
+      const newSelected = updated.filter((f) => f.selected).map((f) => f.key);
+      updateSettings({ selectedFields: newSelected });
+      
+      return updated;
+    });
   };
 
   // ✅ Kontroll enne LOO nuppu
