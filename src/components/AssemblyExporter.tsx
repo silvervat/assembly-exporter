@@ -1833,9 +1833,9 @@ export default function AssemblyExporter({ api }: Props) {
         <button style={{ ...c.tab, ...(tab === "export" ? c.tabActive : {}) }} onClick={() => setTab("export")}>
           {t.export}
         </button>
-        {/* <button style={{ ...c.tab, ...(tab === "markup" ? c.tabActive : {}) }} onClick={() => setTab("markup")}>
+        <button style={{ ...c.tab, ...(tab === "markup" ? c.tabActive : {}) }} onClick={() => setTab("markup")}>
           {t.markup}
-        </button> */}
+        </button>
         <button style={{ ...c.tab, ...(tab === "scan" ? c.tabActive : {}) }} onClick={() => setTab("scan")}>
           {t.scan}
         </button>
@@ -2237,7 +2237,6 @@ export default function AssemblyExporter({ api }: Props) {
             {exportMsg && <div style={c.note}>{exportMsg}</div>}
           </div>
         )}
-        {/* Markup tab disabled temporarily due to @dnd-kit dependencies
         {tab === "markup" && (
           <Suspense fallback={<div>Loading...</div>}>
             <MarkupCreator
@@ -2258,7 +2257,6 @@ export default function AssemblyExporter({ api }: Props) {
             />
           </Suspense>
         )}
-        */}
         {tab === "scan" && (
           <div style={c.section}>
             <h3 style={c.heading}>{t.scanTitle}</h3>
