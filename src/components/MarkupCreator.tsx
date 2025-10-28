@@ -27,6 +27,7 @@ interface Settings {
   delimiter: string;
   selectedFields: string[];
   autoRefreshEnabled: boolean;
+  markupColor?: string;
 }
 
 const COMPONENT_VERSION = "8.2 + AUTO";
@@ -37,6 +38,7 @@ const DEFAULTS: Settings = {
   delimiter: " | ",
   selectedFields: [],
   autoRefreshEnabled: true,
+  markupColor: "#FF0000",
 };
 
 const translations = {
@@ -222,7 +224,6 @@ async function flattenProps(
   api: any
 ): Promise<Row> {
   const out: Row = {
-    ObjectId: obj.id ? String(obj.id) : "",
     GUID: "",
     GUID_IFC: "",
     GUID_MS: "",
@@ -236,43 +237,75 @@ async function flattenProps(
   const propMap = new Map<string, string>();
   const keyCounts = new Map<string, number>();
 
-  const processProps = (props: any[], prefix = "") => {
-    if (!Array.isArray(props)) return;
-    for (const prop of props) {
-      if (typeof prop === "object" && prop !== null) {
-        const name = prop.name || prop.propertyName || prop.id;
-        const value = prop.value || prop.propertyValue || "";
-        if (name) {
-          const key = prefix ? `${prefix}.${name}` : name;
-          const clean = sanitizeKey(key);
-          if (clean) {
-            const count = (keyCounts.get(clean) || 0) + 1;
-            keyCounts.set(clean, count);
-            propMap.set(`${clean}__${count}`, String(value || ""));
-          }
-        }
-        if (prop.propertySet || prop.propertySets) {
-          processProps(prop.propertySet || prop.propertySets, prefix ? `${prefix}.${name}` : name);
-        }
-      }
-    }
+  const push = (group: string, name: string, val: unknown) => {
+    const g = sanitizeKey(group);
+    const n = sanitizeKey(name);
+    const baseKey = g ? `${g}.${n}` : n;
+    let key = baseKey;
+    const count = keyCounts.get(baseKey) || 0;
+    if (count > 0) key = `${baseKey}_${count}`;
+    keyCounts.set(baseKey, count + 1);
+    let v: unknown = val;
+    if (Array.isArray(v)) v = v.map((x) => (x == null ? "" : String(x))).join(" | ");
+    else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
+    const s = v == null ? "" : String(v);
+    propMap.set(key, s);
+    out[key] = s;
   };
 
-  processProps(obj.properties || []);
-
-  for (const [keyWithCount, value] of propMap.entries()) {
-    const key = keyWithCount.replace(/__\d+$/, "");
-    out[key] = value;
+  if (Array.isArray(obj?.properties)) {
+    obj.properties.forEach((propSet: any) => {
+      const setName = propSet?.name || "Unknown";
+      const setProps = propSet?.properties || [];
+      if (Array.isArray(setProps)) {
+        setProps.forEach((prop: any) => {
+          const value = prop?.displayValue ?? prop?.value;
+          const name = prop?.name || "Unknown";
+          push(setName, name, value);
+        });
+      }
+    });
   }
 
-  if (obj.name) out.Name = String(obj.name);
-  if (obj.type) out.Type = String(obj.type);
-  if (obj.guid) {
-    out.GUID = String(obj.guid);
-    const cls = classifyGuid(obj.guid);
-    if (cls === "IFC") out.GUID_IFC = obj.guid;
-    if (cls === "MS") out.GUID_MS = obj.guid;
+  if (obj?.id) out.ObjectId = String(obj.id);
+  if (obj?.name) out.Name = String(obj.name);
+  if (obj?.type) out.Type = String(obj.type);
+
+  let guidIfc = "";
+  let guidMs = "";
+
+  for (const [k, v] of propMap) {
+    if (!/guid|globalid/i.test(k)) continue;
+    const cls = classifyGuid(v);
+    if (cls === "IFC" && !guidIfc) guidIfc = v;
+    if (cls === "MS" && !guidMs) guidMs = v;
   }
+
+  try {
+    const metaArr = await api?.viewer?.getObjectMetadata?.(modelId, [obj?.id]);
+    const metaOne = Array.isArray(metaArr) ? metaArr[0] : metaArr;
+    if (metaOne?.globalId) {
+      const g = String(metaOne.globalId);
+      out.GUID_MS = out.GUID_MS || g;
+      guidMs = guidMs || g;
+    }
+  } catch (err) {
+    console.warn("[flattenProps] metadata:", err);
+  }
+
+  if (!guidIfc && obj.id) {
+    try {
+      const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
+      const externalId = externalIds[0];
+      if (externalId && classifyGuid(externalId) === "IFC") guidIfc = externalId;
+    } catch (err) {
+      console.warn("[flattenProps] convert:", err);
+    }
+  }
+
+  out.GUID = guidIfc || guidMs || obj.guid || "";
+  out.GUID_IFC = guidIfc;
+  out.GUID_MS = guidMs;
 
   return out;
 }
@@ -426,6 +459,16 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       }
 
       if (mountedRef.current) {
+        // Puhasta vana selectedFields (kui väli ei eksisteeri enam)
+        const allKeys = newFields.map((f) => f.key);
+        const validSelected = settings.selectedFields.filter((key) =>
+          allKeys.includes(key)
+        );
+        if (validSelected.length !== settings.selectedFields.length) {
+          updateSettings({ selectedFields: validSelected });
+          addLog("🧹 Vana väljad eemaldatud", "info");
+        }
+
         setAllFields(newFields);
         addLog(`✅ Väljad uuendatud: ${newFields.filter((f) => f.selected).length} valitud`, "success");
       }
@@ -631,11 +674,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           z: (bb.min.z + bb.max.z) / 2,
         };
 
-        const offset = 10; // mm
         const startPos = { 
           positionX: midPoint.x * 1000, 
           positionY: midPoint.y * 1000, 
-          positionZ: (midPoint.z + offset) * 1000 
+          positionZ: midPoint.z * 1000
         };
         const endPos = {
           positionX: midPoint.x * 1000,
@@ -657,7 +699,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           text: values.join(settings.delimiter),
           start: startPos,
           end: endPos,
-          color: MARKUP_COLOR,
+          color: settings.markupColor || MARKUP_COLOR,
         });
       }
 
@@ -1119,6 +1161,45 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           />
           <div style={{ fontSize: 8, color: "#999", marginTop: 2, fontStyle: "italic" }}>
             Andmete kihtide eraldaja (näit: " | " näitab kihid eraldatult, "\n" näitab real)
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 6 }}>
+          <label style={{
+            fontSize: 10,
+            fontWeight: 500,
+            color: "#555",
+            display: "block",
+            marginBottom: 4,
+          }}>
+            🎨 Markupi värv:
+          </label>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {[
+              { color: "#FF0000", label: "Punane" },
+              { color: "#00FF00", label: "Roheline" },
+              { color: "#0000FF", label: "Sinine" },
+              { color: "#FFFF00", label: "Kollane" },
+              { color: "#FF00FF", label: "Magenta" },
+              { color: "#00FFFF", label: "Cyan" },
+              { color: "#FFFFFF", label: "Valge" },
+              { color: "#000000", label: "Must" },
+            ].map((opt) => (
+              <button
+                key={opt.color}
+                onClick={() => updateSettings({ markupColor: opt.color })}
+                style={{
+                  width: 28,
+                  height: 28,
+                  backgroundColor: opt.color,
+                  border: settings.markupColor === opt.color ? "3px solid #333" : "1px solid #ccc",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  title: opt.label,
+                }}
+                title={opt.label}
+              />
+            ))}
           </div>
         </div>
 
