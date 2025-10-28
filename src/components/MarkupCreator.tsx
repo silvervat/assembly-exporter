@@ -141,11 +141,23 @@ function useSettings() {
   const [settings, setSettings] = useState<Settings>(() => {
     try {
       const raw = window.localStorage?.getItem?.("markupCreatorSettings");
-      if (!raw) return DEFAULTS;
+      if (!raw) {
+        console.debug("[useSettings] localStorage tühi, kasutan DEFAULTS");
+        return DEFAULTS;
+      }
       const parsed = JSON.parse(raw) as Partial<Settings>;
-      return { ...DEFAULTS, ...parsed };
+      // ✅ OLULINE: Veendu, et markupColor ALATI olemas (fallback)
+      const result = {
+        ...DEFAULTS,
+        ...parsed,
+        markupColor: parsed.markupColor ?? DEFAULTS.markupColor,
+      };
+      console.debug("[useSettings] Laaditud localStorage-ist:", {
+        markupColor: result.markupColor,
+      });
+      return result;
     } catch (err) {
-      console.warn("[useSettings] localStorage error:", err);
+      console.warn("[useSettings] localStorage lugemise viga:", err);
       return DEFAULTS;
     }
   });
@@ -155,8 +167,9 @@ function useSettings() {
       const next = { ...prev, ...patch };
       try {
         window.localStorage?.setItem?.("markupCreatorSettings", JSON.stringify(next));
+        console.debug("[useSettings] Salvestatud localStorage-i:", patch);
       } catch (err) {
-        console.warn("[useSettings] localStorage save error:", err);
+        console.warn("[useSettings] localStorage salvestamise viga:", err);
       }
       return next;
     });
@@ -1197,22 +1210,40 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
               { color: "#00FFFF", label: "Cyan" },
               { color: "#FFFFFF", label: "Valge" },
               { color: "#000000", label: "Must" },
-            ].map((opt) => (
-              <button
-                key={opt.color}
-                onClick={() => updateSettings({ markupColor: opt.color })}
-                style={{
-                  width: 28,
-                  height: 28,
-                  backgroundColor: opt.color,
-                  border: settings.markupColor === opt.color ? "3px solid #333" : "1px solid #ccc",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                  title: opt.label,
-                }}
-                title={opt.label}
-              />
-            ))}
+            ].map((opt) => {
+              const currentColor = settings.markupColor ?? MARKUP_COLOR;
+              const isSelected = currentColor === opt.color;
+              return (
+                <button
+                  key={opt.color}
+                  onClick={() => {
+                    updateSettings({ markupColor: opt.color });
+                    addLog(`🎨 Värv muudetud: ${opt.label}`, "info");
+                  }}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    backgroundColor: opt.color,
+                    border: isSelected ? "3px solid #333" : "2px solid #ddd",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    fontSize: 14,
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.15s ease",
+                    opacity: isSelected ? 1 : 0.7,
+                  }}
+                  title={opt.label}
+                >
+                  {isSelected && <span>✓</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 9, marginTop: 4, color: "#666" }}>
+            Valitud: <strong>{settings.markupColor ?? MARKUP_COLOR}</strong>
           </div>
         </div>
 
