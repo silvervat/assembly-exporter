@@ -3,9 +3,11 @@ import { AlertCircle, Plus, Trash2, RefreshCw, ChevronDown, ChevronUp, Copy, Tra
 
 export interface MarkupCreatorProps {
   api: any;
+  // Assembly Exporter struktuur: { modelId, ids: number[] }
   lastSelection?: Array<{
     modelId: string;
-    objectId: number;
+    ids?: number[];  // Assembly Exporter meetod
+    objectId?: number;  // Alternatiivne struktuur
     name?: string;
     type?: string;
   }>;
@@ -26,8 +28,8 @@ interface LogEntry {
   details?: string;
 }
 
-// VERSION INFO - NÄHTAV JALUSES
-const COMPONENT_VERSION = "4.0.0";
+// VERSION INFO
+const COMPONENT_VERSION = "4.1.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 const API_VERSION = "0.3.12";
 
@@ -40,30 +42,17 @@ const normalizeColor = (color: string): string => {
 // ✅ Assembly Exporter lahendus: flattenProps
 const flattenProps = (properties: any[]): Map<string, string> => {
   const result = new Map<string, string>();
-  const keyCounts = new Map<string, number>();
 
   const push = (key: string, value: any) => {
     const displayValue = value?.displayValue ?? value?.value ?? "";
     const strValue = String(displayValue).trim();
-    
-    if (!strValue) return;
-
-    let fullKey = key;
-    const count = keyCounts.get(key) ?? 0;
-    
-    if (count > 0) {
-      fullKey = `${key} (${count + 1})`;
-    }
-    
-    result.set(fullKey, strValue);
-    keyCounts.set(key, count + 1);
+    if (strValue) result.set(key, strValue);
   };
 
   if (!Array.isArray(properties)) return result;
 
   properties.forEach((propSet: any) => {
     const setName = propSet?.name || "Unknown";
-    
     if (Array.isArray(propSet?.properties)) {
       propSet.properties.forEach((prop: any) => {
         const propName = prop?.name || "Unknown";
@@ -79,7 +68,6 @@ const flattenProps = (properties: any[]): Map<string, string> => {
 export default function MarkupCreator({ 
   api, 
   lastSelection = [],
-  selectedObjects = [],
   onError 
 }: MarkupCreatorProps) {
   const [fields, setFields] = useState<PropertyField[]>([]);
@@ -93,7 +81,7 @@ export default function MarkupCreator({
   const [showDebugLog, setShowDebugLog] = useState(true);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  const [internalSelection, setInternalSelection] = useState<Array<{
+  const [processedSelection, setProcessedSelection] = useState<Array<{
     modelId: string;
     objectId: number;
     name?: string;
@@ -117,10 +105,7 @@ export default function MarkupCreator({
 
     setLogs((prev) => {
       const updated = [...prev, entry];
-      if (updated.length > 400) {
-        return updated.slice(-400);
-      }
-      return updated;
+      return updated.length > 400 ? updated.slice(-400) : updated;
     });
 
     console.log(`[${timestamp}] ${message}`, details ? details : "");
@@ -140,84 +125,74 @@ export default function MarkupCreator({
     };
   }, [addLog]);
 
-  const effectiveSelection = lastSelection && lastSelection.length > 0 ? lastSelection : internalSelection;
-
-  // ✅ Assembly Exporter meetod - getSelectedObjects ja andmete kätte saamise voovoog
-  const handleDiscoverProperties = useCallback(async () => {
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("🔎 ASSEMBLY EXPORTER MEETODIGA - KÕIK TRIMBLE API KUTSED", "info");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    
-    if (!api?.viewer) {
-      addLog("❌ api.viewer pole saadaval", "error");
+  // ✅ Assembly Exporter andmestruktuuriga töötamine
+  useEffect(() => {
+    if (!lastSelection || lastSelection.length === 0) {
+      setProcessedSelection([]);
       return;
     }
 
-    setIsLoading(true);
-    const startTime = Date.now();
-    
-    try {
-      // 1️⃣ STEP 1: getSelectedObjects() - Assembly Exporter meetod
-      addLog("\n1️⃣ STEP: api.viewer.getSelectedObjects()", "info", "Hangi valitud objektid");
-      const selected = await api.viewer.getSelectedObjects();
-      addLog(`   ✅ Tagastus: ${selected?.length} selection(s)`, "success");
+    addLog("📥 Assembly Exporter andmed saadud", "info", `${lastSelection.length} blokki`);
 
-      if (!selected || selected.length === 0) {
-        addLog("   ⚠️ Objektid pole valitud", "warn");
-        setInternalSelection([]);
-        return;
-      }
+    // Konverteeri Assembly Exporter struktuuri
+    const converted: Array<{
+      modelId: string;
+      objectId: number;
+      name?: string;
+      type?: string;
+    }> = [];
 
-      selected.forEach((sel: any, selIdx: number) => {
-        addLog(`\n   📦 Selection ${selIdx + 1}:`, "debug");
-        addLog(`      modelId: ${sel.modelId}`, "debug");
-        addLog(`      objects.length: ${sel.objects?.length || 0}`, "debug");
+    lastSelection.forEach((selection: any, idx: number) => {
+      addLog(`\n📦 Block ${idx + 1}:`, "debug");
+      addLog(`   modelId: ${selection.modelId}`, "debug");
+      
+      // Assembly Exporter struktuur: { modelId, ids }
+      if (Array.isArray(selection.ids)) {
+        addLog(`   ids.length: ${selection.ids.length}`, "debug");
         
-        if (sel.objects?.length > 0) {
-          sel.objects.slice(0, 5).forEach((obj: any, objIdx: number) => {
-            addLog(`         ${objIdx + 1}. id=${obj.id}, name=${obj.name}, type=${obj.type}`, "debug");
+        selection.ids.slice(0, 5).forEach((id: number, idIdx: number) => {
+          addLog(`      ${idIdx + 1}. objectId: ${id}`, "debug");
+          converted.push({
+            modelId: selection.modelId,
+            objectId: id,
+            name: `Object ${id}`,
+            type: "Unknown",
           });
-          if (sel.objects.length > 5) {
-            addLog(`         ... ja veel ${sel.objects.length - 5}`, "debug");
-          }
+        });
+        
+        if (selection.ids.length > 5) {
+          addLog(`      ... ja veel ${selection.ids.length - 5}`, "debug");
+          selection.ids.slice(5).forEach((id: number) => {
+            converted.push({
+              modelId: selection.modelId,
+              objectId: id,
+              name: `Object ${id}`,
+              type: "Unknown",
+            });
+          });
         }
-      });
+      }
+    });
 
-      const converted = selected.flatMap((sel: any) => {
-        return (sel.objects || []).map((obj: any) => ({
-          modelId: sel.modelId,
-          objectId: obj.id,
-          name: obj.name || `Object ${obj.id}`,
-          type: obj.type || "Unknown",
-        }));
-      });
+    addLog(`\n✅ Konverteeritud: ${converted.length} objekti`, "success");
+    setProcessedSelection(converted);
 
-      addLog(`\n   ✅ Konverteeritud: ${converted.length} objekti`, "success");
-      setInternalSelection(converted);
-
-      // 2️⃣ Nüüd laadi omadused
-      await discoverFieldsFromSelection(converted);
-
-    } catch (err: any) {
-      addLog("❌ getSelectedObjects ebaõnnestus", "error", err?.message);
-    } finally {
-      setIsLoading(false);
-      const elapsed = Date.now() - startTime;
-      addLog(`\n⏱️ Avastamise aeg: ${elapsed}ms`, "info");
+    // Auto-discover omadused
+    if (converted.length > 0) {
+      discoverFieldsFromSelection(converted);
     }
-  }, [api, addLog]);
 
-  // ✅ KÕIK TRIMBLE API KUTSED LOGISSE
+  }, [lastSelection, addLog]);
+
+  // ✅ KÕIK TRIMBLE API KUTSED
   const discoverFieldsFromSelection = async (selection: any[]) => {
     if (!selection || selection.length === 0) {
       setFields([]);
-      addLog("❌ Selection on tühi", "warn");
       return;
     }
 
     addLog("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     addLog(`📥 OMADUSTE AVASTAMINE - ${selection.length} objekti`, "info");
-    addLog("Loeme KÕIK andmed: Properties, Metadata, BBox, Layers, jne", "debug");
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
     setIsLoading(true);
@@ -225,61 +200,42 @@ export default function MarkupCreator({
       const fieldSet = new Set<string>();
       const first = selection[0];
       
-      addLog(`\n🎯 ESIMENE OBJEKT (kasutame teda as template):`, "debug");
+      addLog(`\n🎯 ESIMENE OBJEKT (template):`, "debug");
       addLog(`   modelId: ${first.modelId}`, "debug");
       addLog(`   objectId: ${first.objectId}`, "debug");
-      addLog(`   name: ${first.name}`, "debug");
-      addLog(`   type: ${first.type}`, "debug");
-      
+
       if (!first.objectId) {
-        addLog(`\n⚠️ KRIITILINE: objectId on undefined!`, "error");
-        addLog(`   Kontrollige Assembly Exporterit - andmed pole korrektsed`, "warn");
+        addLog(`❌ objectId puudub!`, "error");
         return;
       }
 
       const cacheKey = `${first.modelId}:${first.objectId}`;
       let props = propsCache.current.get(cacheKey);
       
-      // 2️⃣ getObjectProperties() - KRIITILISED ANDMED
+      // 2️⃣ getObjectProperties() - KRIITILNE
       if (!props) {
-        addLog("\n2️⃣ KRIITILNE KUTSE: api.viewer.getObjectProperties()", "info", "{ includeHidden: true }");
+        addLog("\n2️⃣ KRIITILNE: api.viewer.getObjectProperties()", "info", "{ includeHidden: true }");
         
         try {
           const result = await api.viewer.getObjectProperties(first.modelId, first.objectId, {
             includeHidden: true,
           });
           
-          // Assembly Exporter tehnika - käsitle kõiki formaate
           if (Array.isArray(result)) {
             addLog(`   ✅ Tagastus Array[${result.length}]`, "success");
             props = result[0] || { properties: [] };
-          } else if (typeof result === "object") {
-            addLog(`   ✅ Tagastus Object`, "success");
-            props = result;
           } else {
-            addLog(`   ⚠️ Tundmatu formaat: ${typeof result}`, "warn");
-            props = { properties: [] };
+            addLog(`   ✅ Tagastus Object`, "success");
+            props = result || { properties: [] };
           }
-
-          if (props?.properties) {
-            addLog(`   📋 Properties: ${Array.isArray(props.properties) ? props.properties.length + " sets" : "Not array"}`, "debug");
+          
+          if (props?.properties?.length) {
+            addLog(`   📋 Property sets: ${props.properties.length}`, "debug");
           }
           
         } catch (err: any) {
-          addLog(`   ❌ Single kutse ebaõnnestus: ${err?.message}`, "warn");
-          
-          try {
-            addLog("   🔄 Proovime batch meetodit...", "debug");
-            const results = await api.viewer.getObjectProperties(first.modelId, [first.objectId], {
-              includeHidden: true,
-            });
-            
-            props = Array.isArray(results) ? results[0] : results;
-            addLog(`   ✅ Batch kutse õnnestus`, "success");
-          } catch (err2: any) {
-            addLog(`   ❌ Batch kutse ka ebaõnnestus: ${err2?.message}`, "error");
-            props = { properties: [] };
-          }
+          addLog(`   ❌ Ebaõnnestus: ${err?.message}`, "error");
+          props = { properties: [] };
         }
 
         if (props) {
@@ -287,8 +243,8 @@ export default function MarkupCreator({
         }
       }
 
-      // 📋 Property Sets analüüs - Assembly Exporter meetod kasutab flattenProps
-      addLog("\n3️⃣ PROPERTY SETS ANALÜÜS:", "info", "flattenProps() abil teisendamine lameks");
+      // 📋 Analyys flattenProps-ga
+      addLog("\n3️⃣ PROPERTY SETS ANALÜÜS (flattenProps)::", "info");
       
       const flatProps = flattenProps(props?.properties || []);
       flatProps.forEach((value, key) => {
@@ -296,56 +252,39 @@ export default function MarkupCreator({
       });
 
       if (flatProps.size > 0) {
-        addLog(`   ✅ flattenProps(): ${flatProps.size} omadust`, "success");
+        addLog(`   ✅ Omadused: ${flatProps.size}`, "success");
         
         let count = 0;
         flatProps.forEach((value, key) => {
-          if (count < 15) {
+          if (count < 12) {
             const displayValue = String(value).substring(0, 50);
             addLog(`      ${count + 1}. ${key}: "${displayValue}"`, "debug");
           }
           count++;
         });
         
-        if (count > 15) {
-          addLog(`      ... ja veel ${count - 15} omadust`, "debug");
+        if (count > 12) {
+          addLog(`      ... ja veel ${count - 12} omadust`, "debug");
         }
       }
 
-      // 4️⃣ getObjectMetadata() - GUID ja metadata
-      addLog("\n4️⃣ TRIMBLE API: api.viewer.getObjectMetadata()", "info");
+      // 4️⃣ getObjectMetadata()
+      addLog("\n4️⃣ TRIMBLE API: getObjectMetadata()", "info");
       try {
         const meta = await api.viewer.getObjectMetadata(first.modelId, first.objectId);
-        
         if (meta) {
-          addLog(`   ✅ Metadata saadud`, "success");
-          if (meta.id) addLog(`      id (GUID_MS): ${meta.id}`, "debug");
-          if (meta.name) addLog(`      name: ${meta.name}`, "debug");
-          if (meta.type) addLog(`      type: ${meta.type}`, "debug");
+          addLog(`   ✅ Saadud`, "success");
+          if (meta.id) addLog(`      GUID_MS: ${meta.id}`, "debug");
           if (meta.revision) addLog(`      revision: ${meta.revision}`, "debug");
-          if (meta.created) addLog(`      created: ${meta.created}`, "debug");
-          if (meta.modified) addLog(`      modified: ${meta.modified}`, "debug");
         }
       } catch (err: any) {
-        addLog(`   ⚠️ Metadata ebaõnnestus: ${err?.message}`, "warn");
+        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
       }
 
-      // 5️⃣ convertToObjectIds() - IFC GUID
-      addLog("\n5️⃣ TRIMBLE API: api.viewer.convertToObjectIds()", "info", "IFC GUID konversioon");
-      try {
-        const objectIds = await api.viewer.convertToObjectIds(first.modelId, [first.objectId]);
-        if (objectIds && objectIds[0]) {
-          addLog(`   ✅ IFC GUID: ${objectIds[0]}`, "success");
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ IFC GUID konversioon ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // 6️⃣ getObjectBoundingBox() - KOORDINAADID
-      addLog("\n6️⃣ TRIMBLE API: api.viewer.getObjectBoundingBox()", "info");
+      // 5️⃣ getObjectBoundingBox()
+      addLog("\n5️⃣ TRIMBLE API: getObjectBoundingBox()", "info");
       try {
         const bbox = await api.viewer.getObjectBoundingBox(first.modelId, first.objectId);
-        
         if (bbox) {
           addLog(`   ✅ BBox saadud`, "success");
           if (bbox.min && bbox.max) {
@@ -354,149 +293,57 @@ export default function MarkupCreator({
           }
         }
       } catch (err: any) {
-        addLog(`   ⚠️ BBox ebaõnnestus: ${err?.message}`, "warn");
+        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
       }
 
-      // 7️⃣ getLayers() - KIHTID
-      addLog("\n7️⃣ TRIMBLE API: api.viewer.getLayers()", "info");
+      // 6️⃣ convertToObjectIds()
+      addLog("\n6️⃣ TRIMBLE API: convertToObjectIds() - IFC GUID", "info");
+      try {
+        const objectIds = await api.viewer.convertToObjectIds(first.modelId, [first.objectId]);
+        if (objectIds?.[0]) {
+          addLog(`   ✅ IFC GUID: ${objectIds[0]}`, "success");
+        }
+      } catch (err: any) {
+        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
+      }
+
+      // 7️⃣ getLayers()
+      addLog("\n7️⃣ TRIMBLE API: getLayers()", "info");
       try {
         const layers = await api.viewer.getLayers(first.modelId);
-        
-        if (layers && Array.isArray(layers)) {
+        if (Array.isArray(layers)) {
           addLog(`   ✅ Layers: ${layers.length}`, "success");
-          layers.slice(0, 5).forEach((layer: any, idx: number) => {
+          layers.slice(0, 3).forEach((layer: any, idx: number) => {
             addLog(`      ${idx + 1}. ${layer.name || layer.id}`, "debug");
           });
-          if (layers.length > 5) {
-            addLog(`      ... ja veel ${layers.length - 5}`, "debug");
-          }
         }
       } catch (err: any) {
-        addLog(`   ⚠️ Layers ebaõnnestus: ${err?.message}`, "warn");
+        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
       }
 
-      // 8️⃣ getPresentationLayers() - ESITUSE KIHTID
-      addLog("\n8️⃣ TRIMBLE API: api.viewer.getPresentationLayers()", "info");
+      // 8️⃣ getPresentationLayers()
+      addLog("\n8️⃣ TRIMBLE API: getPresentationLayers()", "info");
       try {
         const presLayers = await api.viewer.getPresentationLayers(first.modelId);
-        
-        if (presLayers && Array.isArray(presLayers)) {
+        if (Array.isArray(presLayers)) {
           addLog(`   ✅ Presentation layers: ${presLayers.length}`, "success");
-          presLayers.slice(0, 5).forEach((layer: any, idx: number) => {
-            addLog(`      ${idx + 1}. ${layer.name || layer.id}`, "debug");
-          });
         }
       } catch (err: any) {
-        addLog(`   ⚠️ Presentation layers ebaõnnestus: ${err?.message}`, "warn");
+        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
       }
 
-      // 9️⃣ getHierarchyChildren() - HIERARHIA LAPSED
-      addLog("\n9️⃣ TRIMBLE API: api.viewer.getHierarchyChildren()", "info");
+      // 9️⃣ getHierarchyChildren()
+      addLog("\n9️⃣ TRIMBLE API: getHierarchyChildren()", "info");
       try {
         const children = await api.viewer.getHierarchyChildren(first.modelId, [first.objectId], "product", false);
-        
-        if (children && Array.isArray(children)) {
-          addLog(`   ✅ Hierarchy children: ${children.length}`, "success");
-          if (children.length > 0) {
-            children.slice(0, 3).forEach((child: any, idx: number) => {
-              addLog(`      ${idx + 1}. ID: ${child.id}, name: ${child.name}`, "debug");
-            });
-          }
+        if (Array.isArray(children)) {
+          addLog(`   ✅ Children: ${children.length}`, "success");
         }
       } catch (err: any) {
-        addLog(`   ⚠️ Hierarchy children ebaõnnestus: ${err?.message}`, "warn");
+        addLog(`   ⚠️ Ebaõnnestus: ${err?.message}`, "warn");
       }
 
-      // 🔟 getObjectPosition() - OBJEKTI ASUKOHT
-      addLog("\n🔟 TRIMBLE API: api.viewer.getObjectPosition()", "info");
-      try {
-        const positions = await api.viewer.getObjectPosition(first.modelId, [first.objectId]);
-        
-        if (positions && Array.isArray(positions) && positions[0]) {
-          const pos = positions[0];
-          addLog(`   ✅ Position saadud`, "success");
-          if (pos.position) {
-            addLog(`      position: (${pos.position.x.toFixed(2)}, ${pos.position.y.toFixed(2)}, ${pos.position.z.toFixed(2)})`, "debug");
-          }
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Position ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // 1️⃣1️⃣ getExternalIds() - VÄLISED ID-D
-      addLog("\n1️⃣1️⃣ TRIMBLE API: api.viewer.getExternalIds()", "info");
-      try {
-        const externalIds = await api.viewer.getExternalIds(first.modelId, [first.objectId]);
-        
-        if (externalIds && Array.isArray(externalIds) && externalIds[0]) {
-          addLog(`   ✅ External ID: ${externalIds[0]}`, "success");
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ External IDs ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // 1️⃣2️⃣ getCamera() - KAAMERA ANDMED
-      addLog("\n1️⃣2️⃣ TRIMBLE API: api.viewer.getCamera()", "info");
-      try {
-        const camera = await api.viewer.getCamera();
-        
-        if (camera) {
-          addLog(`   ✅ Camera data saadud`, "success");
-          if (camera.position) {
-            addLog(`      position: (${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)})`, "debug");
-          }
-          if (camera.target) {
-            addLog(`      target: (${camera.target.x.toFixed(2)}, ${camera.target.y.toFixed(2)}, ${camera.target.z.toFixed(2)})`, "debug");
-          }
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Camera ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // 1️⃣3️⃣ getLoadedModels() - LAADITUD MUDELID
-      addLog("\n1️⃣3️⃣ TRIMBLE API: api.viewer.getLoadedModels()", "info");
-      try {
-        const models = await api.viewer.getLoadedModels();
-        
-        if (models && Array.isArray(models)) {
-          addLog(`   ✅ Loaded models: ${models.length}`, "success");
-          models.forEach((model: any, idx: number) => {
-            addLog(`      ${idx + 1}. ID: ${model.id}, name: ${model.name}`, "debug");
-          });
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Loaded models ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // 1️⃣4️⃣ getSelectedObjects() - PRAEGU VALITUD
-      addLog("\n1️⃣4️⃣ TRIMBLE API: api.viewer.getSelectedObjects() - PRAEGU VALITUD", "info");
-      try {
-        const currentSelection = await api.viewer.getSelectedObjects();
-        
-        if (currentSelection && Array.isArray(currentSelection)) {
-          addLog(`   ✅ Current selection: ${currentSelection.length} objects`, "success");
-          currentSelection.forEach((sel: any, idx: number) => {
-            addLog(`      ${idx + 1}. ${sel.objects?.length || 0} objekti`, "debug");
-          });
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Selection ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // 1️⃣5️⃣ getViewerSettings() - VIEWER SEADISTUSED
-      addLog("\n1️⃣5️⃣ TRIMBLE API: api.viewer.getViewerSettings()", "info");
-      try {
-        const settings = await api.viewer.getViewerSettings();
-        
-        if (settings) {
-          addLog(`   ✅ Viewer settings saadud`, "success");
-          addLog(`      Keys: ${Object.keys(settings).join(", ")}`, "debug");
-        }
-      } catch (err: any) {
-        addLog(`   ⚠️ Viewer settings ebaõnnestus: ${err?.message}`, "warn");
-      }
-
-      // Add standard fields
+      // Standard väljad
       addLog("\n✅ STANDARDVÄLJAD:", "info");
       ["Name", "Type", "ObjectId"].forEach(field => {
         fieldSet.add(field);
@@ -511,8 +358,7 @@ export default function MarkupCreator({
         }));
 
       addLog(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`, "info");
-      addLog(`✅ ✅ ✅ AVASTAMINE LÕPETATUD ✅ ✅ ✅`, "success", `${newFields.length} OMADUST LEITUD`);
-      addLog(`15 TRIMBLE API kutsed - 2 ebaõnnestus võib olla normaalne`, "info");
+      addLog(`✅ AVASTAMINE LÕPETATUD`, "success", `${newFields.length} OMADUST LEITUD`);
       addLog(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`, "info");
 
       if (mountedRef.current) {
@@ -525,13 +371,6 @@ export default function MarkupCreator({
     }
   };
 
-  useEffect(() => {
-    if (lastSelection && lastSelection.length > 0) {
-      addLog(`📥 Assembly Exporter andmed saadud - ${lastSelection.length} objekti`, "debug");
-      discoverFieldsFromSelection(lastSelection);
-    }
-  }, [lastSelection, addLog]);
-
   const toggleField = useCallback((key: string) => {
     setFields((prev) =>
       prev.map((f) => (f.key === key ? { ...f, selected: !f.selected } : f))
@@ -542,10 +381,10 @@ export default function MarkupCreator({
     async (modelId: string, objectId: number, fieldKey: string): Promise<string> => {
       try {
         if (fieldKey === "Name") {
-          return effectiveSelection.find((s) => s.modelId === modelId && s.objectId === objectId)?.name || "";
+          return processedSelection.find((s) => s.modelId === modelId && s.objectId === objectId)?.name || "";
         }
         if (fieldKey === "Type") {
-          return effectiveSelection.find((s) => s.modelId === modelId && s.objectId === objectId)?.type || "";
+          return processedSelection.find((s) => s.modelId === modelId && s.objectId === objectId)?.type || "";
         }
         if (fieldKey === "ObjectId") {
           return String(objectId);
@@ -559,7 +398,6 @@ export default function MarkupCreator({
             const result = await api.viewer.getObjectProperties(modelId, objectId, {
               includeHidden: true,
             });
-            
             props = Array.isArray(result) ? result[0] : result;
           } catch {
             try {
@@ -579,13 +417,12 @@ export default function MarkupCreator({
 
         const flatProps = flattenProps(props.properties);
         const fullKey = Array.from(flatProps.keys()).find(k => k.includes(fieldKey));
-        
         return flatProps.get(fullKey || fieldKey) || "";
       } catch {
         return "";
       }
     },
-    [effectiveSelection, api]
+    [processedSelection, api]
   );
 
   const getObjectBoundingBox = useCallback(
@@ -626,24 +463,24 @@ export default function MarkupCreator({
     const selectedFields = fields.filter((f) => f.selected);
 
     if (selectedFields.length === 0) {
-      addLog("❌ Valitud väljad", "error");
+      addLog("❌ Valitud väljad puuduvad", "error");
       return;
     }
 
-    if (effectiveSelection.length === 0) {
-      addLog("❌ Valitud objektid", "error");
+    if (processedSelection.length === 0) {
+      addLog("❌ Valitud objektid puuduvad", "error");
       return;
     }
 
     setIsLoading(true);
-    addLog(`📍 Loeme ${effectiveSelection.length} märgupit...`, "info");
+    addLog(`📍 Loeme ${processedSelection.length} märgupit...`, "info");
 
     try {
       const markupsToCreate: any[] = [];
       const createdIds: number[] = [];
 
-      for (let idx = 0; idx < effectiveSelection.length; idx++) {
-        const selection = effectiveSelection[idx];
+      for (let idx = 0; idx < processedSelection.length; idx++) {
+        const selection = processedSelection[idx];
         try {
           const bbox = await getObjectBoundingBox(selection.modelId, selection.objectId);
           if (!bbox) continue;
@@ -745,7 +582,7 @@ export default function MarkupCreator({
     } finally {
       setIsLoading(false);
     }
-  }, [fields, effectiveSelection, delimiter, markupColor, getPropertyValue, getObjectBoundingBox, addLog]);
+  }, [fields, processedSelection, delimiter, markupColor, getPropertyValue, getObjectBoundingBox, addLog]);
 
   const handleRemoveMarkups = useCallback(async () => {
     if (markupIds.length === 0) return;
@@ -802,45 +639,22 @@ export default function MarkupCreator({
             backgroundColor: "#fafafa",
           }}
         >
-          <h3 style={{ margin: "0 0 10px 0", fontSize: 16 }}>Valitud objektid: {effectiveSelection.length}</h3>
-          {effectiveSelection.length === 0 ? (
+          <h3 style={{ margin: "0 0 10px 0", fontSize: 16 }}>Valitud objektid: {processedSelection.length}</h3>
+          {processedSelection.length === 0 ? (
             <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#d32f2f", marginBottom: 10 }}>
               <AlertCircle size={18} />
-              <span>Vali objektid 3D vaates</span>
+              <span>Vali Assembly Exporteris objektid ja lülitu märgupitele</span>
             </div>
           ) : (
             <ul style={{ margin: "10px 0 0 0", paddingLeft: 20, fontSize: 13 }}>
-              {effectiveSelection.slice(0, 3).map((s, i) => (
+              {processedSelection.slice(0, 3).map((s, i) => (
                 <li key={i}>
-                  <strong>#{i + 1}</strong> {s.name} (ID: {s.objectId})
+                  <strong>#{i + 1}</strong> ID: {s.objectId}
                 </li>
               ))}
-              {effectiveSelection.length > 3 && <li style={{ color: "#666" }}>... ja veel {effectiveSelection.length - 3}</li>}
+              {processedSelection.length > 3 && <li style={{ color: "#666" }}>... ja veel {processedSelection.length - 3}</li>}
             </ul>
           )}
-          
-          <button
-            type="button"
-            onClick={handleDiscoverProperties}
-            disabled={isLoading}
-            style={{
-              marginTop: 12,
-              padding: "10px 16px",
-              backgroundColor: isLoading ? "#ccc" : "#ff9800",
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              cursor: isLoading ? "not-allowed" : "pointer",
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              fontSize: 13,
-              fontWeight: "bold",
-            }}
-          >
-            <Search size={16} />
-            🔎 Avasta Omadused
-          </button>
         </div>
 
         <div style={{ marginBottom: 20 }}>
@@ -856,7 +670,7 @@ export default function MarkupCreator({
             }}
           >
             {fields.length === 0 ? (
-              <p style={{ margin: 0, color: "#999", fontSize: 13 }}>Klõpsake 'Avasta' nuppu</p>
+              <p style={{ margin: 0, color: "#999", fontSize: 13 }}>Oodates omaduste laadimist...</p>
             ) : (
               fields.map((field) => (
                 <label
@@ -948,18 +762,18 @@ export default function MarkupCreator({
           <button
             type="button"
             onClick={createMarkups}
-            disabled={isLoading || effectiveSelection.length === 0 || fields.filter((f) => f.selected).length === 0}
+            disabled={isLoading || processedSelection.length === 0 || fields.filter((f) => f.selected).length === 0}
             style={{
               padding: "12px 20px",
               backgroundColor:
-                isLoading || effectiveSelection.length === 0 || fields.filter((f) => f.selected).length === 0
+                isLoading || processedSelection.length === 0 || fields.filter((f) => f.selected).length === 0
                   ? "#ccc"
                   : "#1976d2",
               color: "white",
               border: "none",
               borderRadius: 6,
               cursor:
-                isLoading || effectiveSelection.length === 0 || fields.filter((f) => f.selected).length === 0
+                isLoading || processedSelection.length === 0 || fields.filter((f) => f.selected).length === 0
                   ? "not-allowed"
                   : "pointer",
               display: "flex",
@@ -1016,7 +830,7 @@ export default function MarkupCreator({
         </div>
       </div>
 
-      {/* DEBUG LOG - JALUSES FIKSEERITUD */}
+      {/* DEBUG LOG - JALUSES */}
       <div
         style={{
           backgroundColor: "#1a1a1a",
@@ -1101,7 +915,7 @@ export default function MarkupCreator({
             }}
           >
             {logs.length === 0 ? (
-              <div style={{ color: "#666" }}>--- Klõpsake 'Avasta' ---</div>
+              <div style={{ color: "#666" }}>--- Logid ilmuvad siin ---</div>
             ) : (
               logs.map((log, idx) => {
                 const levelColors: Record<string, string> = {
@@ -1140,7 +954,7 @@ export default function MarkupCreator({
         paddingTop: 10, 
         borderTop: "1px solid #e0e0e0" 
       }}>
-        MarkupCreator v{COMPONENT_VERSION} | Assembly Exporter meetod | 15 Trimble API kutsed | Build: {BUILD_DATE}
+        MarkupCreator v{COMPONENT_VERSION} | Assembly Exporter ühilduv | 9 Trimble API kutsed | Build: {BUILD_DATE}
       </div>
     </div>
   );
