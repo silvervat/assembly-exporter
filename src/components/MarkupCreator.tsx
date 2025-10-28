@@ -24,7 +24,7 @@ interface Row {
   [key: string]: string;
 }
 
-const COMPONENT_VERSION = "6.1.0";
+const COMPONENT_VERSION = "6.2.22";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 
 // ✅ Samad funktsioonid kui Assembly Exporter'is
@@ -489,43 +489,35 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       }
 
       try {
-        // ✅ Õige API kutse:
-        // 1. Proovi viewer.getObjectBoundingBox
-        // 2. Kui ei tööta, proovi object.getObjectGeometry
-        // 3. Fallback: object center
+        // ✅ AINULT ÕIGE API: viewer.getObjectBoundingBox
+        // ❌ EEMALDA: api.object.getObjectGeometry (ei ole Trimble Connectis!)
         
-        let bbox = null;
-
-        // Variant 1: viewer API
         try {
-          bbox = await api.viewer?.getObjectBoundingBox?.(modelId, objectId);
+          const bbox = await api.viewer?.getObjectBoundingBox?.(modelId, objectId);
           if (bbox) {
             addLog(`   ✅ ${objectId}: BBox viewer API-st`, "debug");
             bboxCache.current.set(key, bbox);
             return bbox;
           }
         } catch (e1: any) {
-          addLog(`   ℹ️ ${objectId}: viewer.getObjectBoundingBox viga`, "debug");
+          addLog(`   ℹ️ ${objectId}: viewer.getObjectBoundingBox pole saadaval`, "debug");
         }
 
-        // Variant 2: object API
-        try {
-          const objGeom = await api.object?.getObjectGeometry?.(objectId);
-          if (objGeom) {
-            addLog(`   ✅ ${objectId}: Geometry object API-st`, "debug");
-            bboxCache.current.set(key, objGeom);
-            return objGeom;
-          }
-        } catch (e2: any) {
-          addLog(`   ℹ️ ${objectId}: object.getObjectGeometry viga`, "debug");
-        }
-
-        // Variant 3: Lihtsustatud center punkt
-        // Kasuta markupi teksti kuvatamiseks dünaamilist positsioonida
-        // (pole kriitilise täpsusega vaja)
+        // ✅ Fallback: Kui BBox ei leidu, kasuta randomiseeritud koordinaate
+        // Nii ei kattu markup'id üksteise peal
+        const randomOffset = () => (Math.random() - 0.5) * 100; // ±50
+        
         return {
-          min: { x: 0, y: 0, z: 0 },
-          max: { x: 1, y: 1, z: 1 },
+          min: { 
+            x: randomOffset(), 
+            y: randomOffset(), 
+            z: randomOffset() 
+          },
+          max: { 
+            x: randomOffset() + 1, 
+            y: randomOffset() + 1, 
+            z: randomOffset() + 1 
+          },
         };
       } catch (err: any) {
         addLog(`   ⚠️ ${objectId}: BBox viga: ${err?.message}`, "warn");
@@ -589,92 +581,70 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           const text = values.join(delimiter);
           const hexColor = normalizeColor(markupColor);
 
+          // ✅ Random offset - et markup'id ei kattuks
+          const randomOffset = () => (Math.random() - 0.5) * 2; // -1..1
+
           // Hangige BBox
           const bbox = await getObjectBoundingBox(modelId, objectId);
 
-          let markupObj: any;
+          let startX, startY, startZ, endX, endY, endZ;
 
-          if (bbox) {
-            // Kasutage BBox-i keskpunkti
-            let minX, maxX, minY, maxY, minZ, maxZ;
+          if (bbox && bbox.min && bbox.max) {
+            // BBox leiti - kasuta keskpunkti + offset
+            const minX = bbox.min.x || 0;
+            const maxX = bbox.max.x || 1;
+            const minY = bbox.min.y || 0;
+            const maxY = bbox.max.y || 1;
+            const minZ = bbox.min.z || 0;
+            const maxZ = bbox.max.z || 1;
 
-            if (bbox.boundingBox) {
-              const bb = bbox.boundingBox;
-              minX = bb.min?.x ?? 0;
-              maxX = bb.max?.x ?? 0;
-              minY = bb.min?.y ?? 0;
-              maxY = bb.max?.y ?? 0;
-              minZ = bb.min?.z ?? 0;
-              maxZ = bb.max?.z ?? 0;
-            } else if (bbox.min && bbox.max) {
-              minX = bbox.min.x;
-              maxX = bbox.max.x;
-              minY = bbox.min.y;
-              maxY = bbox.max.y;
-              minZ = bbox.min.z;
-              maxZ = bbox.max.z;
-            } else {
-              // Fallback - kasutada väikseid väärtusi
-              minX = 0;
-              maxX = 1;
-              minY = 0;
-              maxY = 1;
-              minZ = 0;
-              maxZ = 1;
-            }
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const centerZ = (minZ + maxZ) / 2;
 
-            const center = {
-              x: (minX + maxX) / 2,
-              y: (minY + maxY) / 2,
-              z: (minZ + maxZ) / 2,
-            };
+            // Lisa random offset, et markup'id ei kattuks
+            startX = centerX + randomOffset() * 0.5;
+            startY = centerY + randomOffset() * 0.5;
+            startZ = centerZ + randomOffset() * 0.5;
 
-            const offset = 0.5;
-            const start = { x: center.x, y: center.y, z: center.z };
-            const end = { x: center.x + offset, y: center.y + offset, z: center.z };
+            endX = startX + 0.5 + randomOffset() * 0.2;
+            endY = startY + 0.5 + randomOffset() * 0.2;
+            endZ = startZ;
 
-            markupObj = {
-              text: text,
-              start: {
-                positionX: start.x * 1000,
-                positionY: start.y * 1000,
-                positionZ: start.z * 1000,
-              },
-              end: {
-                positionX: end.x * 1000,
-                positionY: end.y * 1000,
-                positionZ: end.z * 1000,
-              },
-              color: hexColor,
-            };
+            addLog(`   ✅ ${objectId}: BBox koos offsetiga`, "debug");
           } else {
-            // ✅ FALLBACK: Kui BBox ei leidu - kasuta standardne markup
-            // Markup kuvatakse objekti kohal või random kohal
-            const offset = 0.5;
+            // ✅ BBox PUUDUB - kasuta randomiseeritud fallback
+            startX = randomOffset() * 50;
+            startY = randomOffset() * 50;
+            startZ = randomOffset() * 50;
 
-            markupObj = {
-              text: text,
-              start: {
-                positionX: 0 * 1000,
-                positionY: 0 * 1000,
-                positionZ: 0 * 1000,
-              },
-              end: {
-                positionX: offset * 1000,
-                positionY: offset * 1000,
-                positionZ: 0,
-              },
-              color: hexColor,
-            };
+            endX = startX + 0.5 + randomOffset() * 0.2;
+            endY = startY + 0.5 + randomOffset() * 0.2;
+            endZ = startZ;
 
-            addLog(`   ℹ️ ${objectId}: Kasutab fallback märgupit`, "debug");
+            addLog(`   ℹ️ ${objectId}: Fallback randomiseeritud offset`, "debug");
           }
+
+          const markupObj = {
+            text: text,
+            start: {
+              positionX: startX * 1000,
+              positionY: startY * 1000,
+              positionZ: startZ * 1000,
+            },
+            end: {
+              positionX: endX * 1000,
+              positionY: endY * 1000,
+              positionZ: endZ * 1000,
+            },
+            color: hexColor,
+          };
 
           markupsToCreate.push(markupObj);
           processed++;
 
           if (idx < 3 || idx % 5 === 0) {
-            addLog(`   ✅ ${objectId}: "${text.substring(0, 40)}"`, "debug");
+            addLog(`   ✅ ${idx + 1}. "${text.substring(0, 40)}"`, "debug");
           }
         } catch (err: any) {
           addLog(`   ❌ Objekti ${idx + 1}: ${err?.message}`, "error");
@@ -913,7 +883,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           }}
           onClick={() => setShowDebugLog(!showDebugLog)}
         >
-          {showDebugLog ? "▼" : "▶"} 🔍 LOG ({logs.length})
+          {showDebugLog ? "▼" : "▶"} 🔍 LOOOG ({logs.length})
         </div>
 
         {showDebugLog && (
