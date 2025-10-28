@@ -355,6 +355,20 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   const t = translations[language];
   const guideText = GUIDE_TEXT[language];
 
+  // ✅ PROPERTY NIMETUSE FORMATEERIMINE
+  // Näiteks: "TeklaAssembly.Assembly/CastunitMark" → "Tekla Assembly | Assembly Cast unit Mark"
+  const formatPropertyName = (key: string): string => {
+    if (!key) return key;
+    
+    let formatted = key
+      .replace(/\./g, ' | ')  // Punktid → |
+      .replace(/\//g, ' ')    // Kaldkriipsud → tühikud
+      .replace(/([a-z])([A-Z])/g, '$1 $2')  // camelCase → tühikud (Assembly/CastunitMark → Cast unit Mark)
+      .trim();
+    
+    return formatted;
+  };
+
   const addLog = useCallback(
     (message: string, level: "info" | "success" | "warn" | "error" | "debug" = "info") => {
       const now = new Date();
@@ -889,44 +903,13 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </button>
       </div>
 
-      {/* AUTO-REFRESH TOGGLE */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: 8,
-        backgroundColor: "#e8f5e9",
-        borderRadius: 4,
-        marginBottom: 4,
-      }}>
-        <input
-          type="checkbox"
-          checked={settings.autoRefreshEnabled ?? true}
-          onChange={(e) => updateSettings({ autoRefreshEnabled: e.target.checked })}
-          style={{ cursor: "pointer", width: 16, height: 16 }}
-          title={t.autoRefreshTooltip}
-        />
-        <label
-          style={{
-            cursor: "pointer",
-            fontSize: 11,
-            fontWeight: 500,
-            color: "#1b5e20",
-            flex: 1,
-          }}
-          title={t.autoRefreshTooltip}
-        >
-          {t.autoRefresh} {settings.autoRefreshEnabled ? "✅" : "❌"}
-        </label>
-      </div>
-
-      {/* ✅ PREVIEW - MOVED TO HEADER */}
+      {/* ✅ EELVAADE - PÄISES, LOO NUPU KOHAL */}
       <div style={{
         marginBottom: 8,
         padding: 8,
-        backgroundColor: "#fff9c4",
+        backgroundColor: "#f5f5f5",
         borderRadius: 4,
-        border: "1px solid #fbc02d",
+        border: "1px solid #e0e0e0",
       }}>
         <label style={{
           fontSize: 10,
@@ -935,18 +918,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           display: "block",
           marginBottom: 4,
         }}>
-          📋 {t.preview}
+          📋 Eelvaade:
         </label>
-        {selectedData.length > 1 && (
-          <div style={{
-            fontSize: 8,
-            color: "#d32f2f",
-            marginBottom: 4,
-            fontWeight: 500,
-          }}>
-            ⚠️ Näitab ainult esimest objekti ({selectedData.length} valitud)
-          </div>
-        )}
         <div style={{
           fontSize: 9,
           color: previewMarkup ? "#333" : "#999",
@@ -961,7 +934,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           overflowY: "auto",
           lineHeight: "1.3",
         }}>
-          {previewMarkup || t.noData}
+          {previewMarkup || "Eelvaade ilmub siia..."}
         </div>
       </div>
 
@@ -1225,7 +1198,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
                             overflow: "hidden",
                             textOverflow: "ellipsis",
                           }}>
-                            {field.label}
+                            {formatPropertyName(field.key)}
                           </span>
 
                           {isInOrder && (
@@ -1332,107 +1305,34 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           </div>
         </div>
 
-        <div style={{ marginBottom: 6 }}>
-          <label style={{
-            fontSize: 10,
-            fontWeight: 500,
-            color: "#555",
-            display: "block",
-            marginBottom: 4,
-          }}>
-            🎨 Markupi värv:
-          </label>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {[
-              { color: "#FF0000", label: "Punane" },
-              { color: "#00FF00", label: "Roheline" },
-              { color: "#0000FF", label: "Sinine" },
-              { color: "#FFFF00", label: "Kollane" },
-              { color: "#FF00FF", label: "Magenta" },
-              { color: "#00FFFF", label: "Cyan" },
-              { color: "#FFFFFF", label: "Valge" },
-              { color: "#000000", label: "Must" },
-            ].map((opt) => {
-              const currentColor = settings.markupColor ?? MARKUP_COLOR;
-              const isSelected = currentColor === opt.color;
-              return (
-                <button
-                  key={opt.color}
-                  onClick={() => {
-                    updateSettings({ markupColor: opt.color });
-                    addLog(`🎨 Värv muudetud: ${opt.label}`, "info");
-                  }}
-                  style={{
-                    width: 32,
-                    height: 32,
-                    backgroundColor: opt.color,
-                    border: isSelected ? "3px solid #333" : "2px solid #ddd",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontSize: 14,
-                    padding: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    transition: "all 0.15s ease",
-                    opacity: isSelected ? 1 : 0.7,
-                  }}
-                  onMouseOver={(e) => {
-                    e.currentTarget.style.transform = "scale(1.15)";
-                    e.currentTarget.style.boxShadow = "0 4px 8px rgba(0,0,0,0.3)";
-                  }}
-                  onMouseOut={(e) => {
-                    e.currentTarget.style.transform = "scale(1)";
-                    e.currentTarget.style.boxShadow = "none";
-                  }}
-                  title={opt.label}
-                >
-                  {isSelected && <span>✓</span>}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: 9, marginTop: 4, color: "#666" }}>
-            Valitud: <strong>{settings.markupColor ?? MARKUP_COLOR}</strong>
-          </div>
-        </div>
-
-        <div>
-          <label style={{
-            fontSize: 10,
-            fontWeight: 500,
-            color: "#555",
-            display: "block",
-            marginBottom: 2,
-          }}>
-            {t.preview}
-          </label>
-          {selectedData.length > 1 && (
-            <div style={{
-              fontSize: 8,
-              color: "#d32f2f",
-              marginBottom: 4,
+        {/* 🔄 AUTO-REFRESH TOGGLE - PEALE DELIMITER-I */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: 6,
+          marginBottom: 8,
+          borderRadius: 3,
+        }}>
+          <input
+            type="checkbox"
+            checked={settings.autoRefreshEnabled ?? true}
+            onChange={(e) => updateSettings({ autoRefreshEnabled: e.target.checked })}
+            style={{ cursor: "pointer", width: 14, height: 14 }}
+            title={t.autoRefreshTooltip}
+          />
+          <label
+            style={{
+              cursor: "pointer",
+              fontSize: 10,
               fontWeight: 500,
-            }}>
-              ⚠️ Eelvaade näitab ainult esimest objekti ({selectedData.length} valitud)
-            </div>
-          )}
-          <div style={{
-            fontSize: 9,
-            color: previewMarkup ? "#333" : "#999",
-            fontFamily: "monospace",
-            backgroundColor: "#fafbfc",
-            padding: 6,
-            borderRadius: 3,
-            border: "1px solid #e0e0e0",
-            wordBreak: "break-all",
-            minHeight: 22,
-            maxHeight: 35,
-            overflowY: "auto",
-            lineHeight: "1.3",
-          }}>
-            {previewMarkup || t.noData}
-          </div>
+              color: "#333",
+              flex: 1,
+            }}
+            title={t.autoRefreshTooltip}
+          >
+            {t.autoRefresh} {settings.autoRefreshEnabled ? "✅" : "❌"}
+          </label>
         </div>
 
         {/* LOG */}
