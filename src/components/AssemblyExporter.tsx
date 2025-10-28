@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, mem
 import * as XLSX from "xlsx";
 import React from "react";
 import { createPortal } from "react-dom";
-const MarkupCreator = lazy(() => import("./MarkupCreator")); // Uus markuppide komponent - lazy loaded
+import MarkupAdvanced from "./MarkupAdvanced"; // Auto-discover markup komponent
 type Language = "et" | "en";
 type Tab = "search" | "discover" | "export" | "markup" | "settings" | "about" | "scan" | "log";
 type Row = Record<string, string>;
@@ -2241,7 +2241,7 @@ export default function AssemblyExporter({ api }: Props) {
         )}
         {tab === "markup" && (
           <Suspense fallback={<div>Loading...</div>}>
-            <MarkupCreator
+            <MarkupAdvanced
               api={api}
               allKeys={allKeys}
               lastSelection={lastSelection}
