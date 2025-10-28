@@ -30,7 +30,7 @@ interface Settings {
   markupColor?: string;
 }
 
-const COMPONENT_VERSION = "8.2 + AUTO";
+const COMPONENT_VERSION = "9.00";
 const BUILD_DATE = new Date().toISOString().split("T")[0];
 const MARKUP_COLOR = "#FF0000"; // Väärtus õige formaadiga
 
@@ -529,6 +529,19 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       listenerRegistered.current = false;
     };
   }, [api, settings.autoRefreshEnabled, addLog, loadSelectionData]);
+
+  // ✅ PERIOODILINE REFRESH - Iga 2 sekund kui auto on sees
+  useEffect(() => {
+    if (!settings.autoRefreshEnabled) return;
+    if (selectedData.length === 0) return;
+
+    const interval = setInterval(() => {
+      addLog("⏱️ Perioodiline uuendus (AUTO)", "info");
+      loadSelectionData();
+    }, 2000); // Iga 2 sekund
+
+    return () => clearInterval(interval);
+  }, [settings.autoRefreshEnabled, selectedData.length, loadSelectionData, addLog]);
 
   const selectedCount = allFields.filter((f) => f.selected).length;
 
