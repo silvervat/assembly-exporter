@@ -31,7 +31,7 @@ interface Settings {
 
 const COMPONENT_VERSION = "8.2 + AUTO";
 const BUILD_DATE = new Date().toISOString().split("T")[0];
-const MARKUP_COLOR = "FF0000";
+const MARKUP_COLOR = "#FF0000"; // Väärtus õige formaadiga
 
 const DEFAULTS: Settings = {
   delimiter: " | ",
@@ -222,6 +222,7 @@ async function flattenProps(
   api: any
 ): Promise<Row> {
   const out: Row = {
+    ObjectId: obj.id ? String(obj.id) : "",
     GUID: "",
     GUID_IFC: "",
     GUID_MS: "",
@@ -465,7 +466,13 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       api.viewer.addOnSelectionChanged?.(handleSelectionChanged);
       listenerRegistered.current = true;
       addLog("✅ Auto-refresh aktiveeeritud", "success");
-      loadSelectionData();
+      
+      // Esimene laadimine viivitusega (API valmimisele)
+      const initialLoadTimer = setTimeout(() => {
+        loadSelectionData();
+      }, 500);
+
+      return () => clearTimeout(initialLoadTimer);
     } catch (err) {
       console.error("[AutoRefresh] setup error:", err);
     }
@@ -596,10 +603,17 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       let bBoxes: any[] = [];
       try {
         bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, objectIds);
+        if (!Array.isArray(bBoxes) || bBoxes.length === 0) {
+          throw new Error("No bounding boxes returned");
+        }
       } catch (err: any) {
+        addLog(`⚠️ Bounding boxes ei saadud: ${err?.message}`, "warn");
         bBoxes = objectIds.map((id) => ({
           id,
-          boundingBox: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } },
+          boundingBox: { 
+            min: { x: 0, y: 0, z: 0 }, 
+            max: { x: 1, y: 1, z: 1 } 
+          },
         }));
       }
 
@@ -617,6 +631,18 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           z: (bb.min.z + bb.max.z) / 2,
         };
 
+        const offset = 10; // mm
+        const startPos = { 
+          positionX: midPoint.x * 1000, 
+          positionY: midPoint.y * 1000, 
+          positionZ: (midPoint.z + offset) * 1000 
+        };
+        const endPos = {
+          positionX: midPoint.x * 1000,
+          positionY: midPoint.y * 1000,
+          positionZ: midPoint.z * 1000,
+        };
+
         const values: string[] = [];
         for (const field of selectedFields) {
           const value = row[field.key] || "";
@@ -629,8 +655,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
         markupsToCreate.push({
           text: values.join(settings.delimiter),
-          start: { positionX: midPoint.x * 1000, positionY: midPoint.y * 1000, positionZ: midPoint.z * 1000 },
-          end: { positionX: midPoint.x * 1000, positionY: midPoint.y * 1000, positionZ: midPoint.z * 1000 },
+          start: startPos,
+          end: endPos,
           color: MARKUP_COLOR,
         });
       }
@@ -641,13 +667,17 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       }
 
       const result = await api.markup?.addTextMarkup?.(markupsToCreate);
-      const createdIds: number[] = [];
+      let createdIds: number[] = [];
 
       if (Array.isArray(result)) {
         result.forEach((item: any) => {
           if (typeof item === "object" && item?.id) createdIds.push(Number(item.id));
           else if (typeof item === "number") createdIds.push(item);
         });
+      } else if (result?.ids && Array.isArray(result.ids)) {
+        createdIds = result.ids.map((id: any) => Number(id)).filter(Boolean);
+      } else if (typeof result === "number") {
+        createdIds = [result];
       }
 
       if (createdIds.length > 0) {
@@ -1102,6 +1132,16 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           }}>
             {t.preview}
           </label>
+          {selectedData.length > 1 && (
+            <div style={{
+              fontSize: 8,
+              color: "#d32f2f",
+              marginBottom: 4,
+              fontWeight: 500,
+            }}>
+              ⚠️ Eelvaade näitab ainult esimest objekti ({selectedData.length} valitud)
+            </div>
+          )}
           <div style={{
             fontSize: 9,
             color: previewMarkup ? "#333" : "#999",
