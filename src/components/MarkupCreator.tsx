@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { AlertCircle, Plus, Trash2, RefreshCw } from "lucide-react";
 
 export interface MarkupCreatorProps {
   api: any;
   allKeys: string[];
-  lastSelection: any[];
+  lastSelection: Array<{
+    modelId: string;
+    objectId: number;
+    name?: string;
+    type?: string;
+  }>;
   translations: any;
   styles: any;
   onMarkupAdded: (ids: number[]) => void;
@@ -17,6 +22,11 @@ interface PropertyField {
   label: string;
   selected: boolean;
 }
+
+const validateHex = (hex: string): string | null => {
+  const h = hex.replace(/^#/, "");
+  return /^[0-9A-Fa-f]{6}$/.test(h) ? h : null;
+};
 
 export default function MarkupCreator({
   api,
@@ -33,10 +43,27 @@ export default function MarkupCreator({
   const [markupColor, setMarkupColor] = useState("FF0000");
   const [delimiter, setDelimiter] = useState(" | ");
 
-  // ✅ FIXED: Discover available fields from selected objects - MATCHING AVASTA TAB LOGIC
+  // Cache for properties/metadata to avoid repeated API calls
+  const propsCache = useRef(new Map<string, any>());
+  const metadataCache = useRef(new Map<string, any>());
+
+  // Stale request guard
+  const requestIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Discover available fields (batched per modelId)
   useEffect(() => {
     const discoverFields = async () => {
-      if (lastSelection.length === 0) {
+      requestIdRef.current += 1;
+      const thisRequestId = requestIdRef.current;
+
+      if (!lastSelection || lastSelection.length === 0) {
         setFields([]);
         return;
       }
@@ -44,190 +71,215 @@ export default function MarkupCreator({
       setIsLoading(true);
       try {
         const fieldSet = new Set<string>();
-        const keyCounts: Record<string, number> = {};
 
-        // Loop through all selected objects
-        for (const selection of lastSelection) {
+        // Group objectIds by modelId for batch requests
+        const byModel = new Map<string, number[]>();
+        for (const sel of lastSelection) {
+          const arr = byModel.get(sel.modelId) || [];
+          arr.push(sel.objectId);
+          byModel.set(sel.modelId, arr);
+        }
+
+        // For each model, call getObjectProperties once (batch)
+        for (const [modelId, objectIds] of byModel.entries()) {
           try {
-            // ✅ CRITICAL: Use includeHidden: true to get ALL properties (like AVASTA does)
-            const props = await api.viewer?.getObjectProperties?.(
-              selection.modelId,
-              [selection.objectId],
+            const propsArray = await api.viewer?.getObjectProperties?.(
+              modelId,
+              objectIds,
               { includeHidden: true }
             );
 
-            console.log("Properties discovered:", props);
+            // propsArray is expected to be array aligned with objectIds
+            if (Array.isArray(propsArray)) {
+              propsArray.forEach((p: any, idx: number) => {
+                const objectId = objectIds[idx];
+                const cacheKey = `${modelId}:${objectId}`;
+                propsCache.current.set(cacheKey, p);
 
-            if (Array.isArray(props) && props[0]?.properties) {
-              // Flatten property sets like AVASTA does: "SetName" + "PropertyName" = "SetName.PropertyName"
-              props[0].properties.forEach((propSet: any) => {
-                const setName = propSet?.name || "Unknown";
-                if (Array.isArray(propSet?.properties)) {
-                  propSet.properties.forEach((prop: any) => {
-                    const propName = prop?.name || "Unknown";
-                    const key = `${setName}.${propName}`;
-                    fieldSet.add(key);
-                    keyCounts[key] = (keyCounts[key] || 0) + 1;
+                if (p?.properties && Array.isArray(p.properties)) {
+                  p.properties.forEach((propSet: any) => {
+                    const setName = propSet?.name || "Unknown";
+                    if (Array.isArray(propSet?.properties)) {
+                      propSet.properties.forEach((prop: any) => {
+                        const propName = prop?.name || "Unknown";
+                        const key = `${setName}.${propName}`;
+                        fieldSet.add(key);
+                      });
+                    }
                   });
                 }
               });
             }
-
-            // Add standard fields
-            if (selection.name) fieldSet.add("Name");
-            if (selection.type) fieldSet.add("Type");
-            if (selection.objectId) fieldSet.add("ObjectId");
-            
-            // Try to get metadata for additional context
-            try {
-              const metadata = await api.viewer?.getObjectMetadata?.(
-                selection.modelId,
-                selection.objectId
-              );
-              if (metadata?.properties) {
-                Object.entries(metadata.properties).forEach(([key, value]: any) => {
-                  if (typeof value === "string" || typeof value === "number") {
-                    fieldSet.add(`Metadata.${key}`);
-                  }
-                });
-              }
-            } catch (err) {
-              // Metadata not available, continue
-            }
-
           } catch (err: any) {
-            console.warn("Error discovering fields for object:", err);
+            console.warn("getObjectProperties batch error for model", modelId, err);
           }
         }
 
-        // Convert set to sorted array of PropertyField objects
+        // Add standard fields and try to collect metadata keys
+        for (const sel of lastSelection) {
+          if (sel.name) fieldSet.add("Name");
+          if (sel.type) fieldSet.add("Type");
+          if (sel.objectId !== undefined && sel.objectId !== null) fieldSet.add("ObjectId");
+
+          const metaCacheKey = `${sel.modelId}:${sel.objectId}`;
+          if (!metadataCache.current.has(metaCacheKey)) {
+            try {
+              const meta = await api.viewer?.getObjectMetadata?.(sel.modelId, sel.objectId);
+              if (meta) {
+                metadataCache.current.set(metaCacheKey, meta);
+                if (meta?.properties) {
+                  Object.entries(meta.properties).forEach(([k, v]: any) => {
+                    if (typeof v === "string" || typeof v === "number") {
+                      fieldSet.add(`Metadata.${k}`);
+                    }
+                  });
+                }
+              }
+            } catch (err) {
+              // ignore metadata errors
+            }
+          } else {
+            const meta = metadataCache.current.get(metaCacheKey);
+            if (meta?.properties) {
+              Object.entries(meta.properties).forEach(([k, v]: any) => {
+                if (typeof v === "string" || typeof v === "number") {
+                  fieldSet.add(`Metadata.${k}`);
+                }
+              });
+            }
+          }
+        }
+
+        // Stop if a newer request has started
+        if (requestIdRef.current !== thisRequestId) return;
+
+        // Convert to PropertyField[]
         const newFields = Array.from(fieldSet)
           .sort()
           .map((key) => ({
             key,
             label: key,
-            selected: false,
+            selected: ["Name", "Type", "ObjectId"].includes(key),
           }));
 
-        // Pre-select common fields for user convenience
-        newFields.forEach((f) => {
-          if (["Name", "Type", "ObjectId"].includes(f.key)) {
-            f.selected = true;
-          }
-        });
-
-        console.log("Discovered fields:", newFields.length, newFields);
-        setFields(newFields);
+        if (mountedRef.current) {
+          setFields(newFields);
+          console.log("Fields discovered:", newFields.length);
+        }
       } catch (err: any) {
-        console.error("Error in discoverFields:", err);
-        onError(`Field discovery error: ${err?.message || "unknown"}`);
+        console.error("discoverFields error:", err);
+        onError && onError(`Field discovery error: ${err?.message || "unknown"}`);
       } finally {
-        setIsLoading(false);
+        if (mountedRef.current) setIsLoading(false);
       }
     };
 
     discoverFields();
   }, [lastSelection, api, onError]);
 
-  const toggleField = (key: string) => {
+  const toggleField = useCallback((key: string) => {
     setFields((prev) =>
       prev.map((f) => (f.key === key ? { ...f, selected: !f.selected } : f))
     );
-  };
+  }, []);
 
-  const getPropertyValue = async (
-    modelId: string,
-    objectId: number,
-    fieldKey: string
-  ): Promise<string> => {
-    try {
-      // Handle standard fields first
-      if (fieldKey === "Name" || fieldKey === "Type" || fieldKey === "ObjectId") {
-        const sel = lastSelection.find((s) => s.objectId === objectId);
-        if (fieldKey === "ObjectId") return String(sel?.objectId || "");
-        return sel?.[fieldKey.toLowerCase()] || "";
+  const fetchObjectPropertiesIfNeeded = useCallback(
+    async (modelId: string, objectId: number) => {
+      const key = `${modelId}:${objectId}`;
+      if (propsCache.current.has(key)) return propsCache.current.get(key);
+
+      try {
+        const propsArr = await api.viewer?.getObjectProperties?.(modelId, [objectId], { includeHidden: true });
+        const p = Array.isArray(propsArr) ? propsArr[0] : propsArr;
+        propsCache.current.set(key, p);
+        return p;
+      } catch (err) {
+        console.warn("fetchObjectPropertiesIfNeeded error:", err);
+        return null;
       }
+    },
+    [api]
+  );
 
-      // Handle Metadata fields
-      if (fieldKey.startsWith("Metadata.")) {
-        const metaKey = fieldKey.replace("Metadata.", "");
-        try {
-          const metadata = await api.viewer?.getObjectMetadata?.(modelId, objectId);
-          if (metadata?.properties?.[metaKey]) {
-            return String(metadata.properties[metaKey]);
-          }
-        } catch (err) {
-          console.warn("Error getting metadata:", err);
+  const getPropertyValue = useCallback(
+    async (modelId: string, objectId: number, fieldKey: string): Promise<string> => {
+      try {
+        if (fieldKey === "Name" || fieldKey === "Type" || fieldKey === "ObjectId") {
+          const sel = lastSelection.find((s) => s.objectId === objectId);
+          if (fieldKey === "ObjectId") return String(sel?.objectId ?? "");
+          return String(sel?.[fieldKey.toLowerCase()] ?? "");
         }
+
+        if (fieldKey.startsWith("Metadata.")) {
+          const metaKey = fieldKey.replace("Metadata.", "");
+          const metaCacheKey = `${modelId}:${objectId}`;
+          let meta = metadataCache.current.get(metaCacheKey);
+          if (!meta) {
+            meta = await api.viewer?.getObjectMetadata?.(modelId, objectId);
+            if (meta) metadataCache.current.set(metaCacheKey, meta);
+          }
+          if (meta?.properties?.[metaKey]) {
+            return String(meta.properties[metaKey]);
+          }
+          return "";
+        }
+
+        // Handle "SetName.PropertyName" — split only at first dot
+        const dotIdx = fieldKey.indexOf(".");
+        if (dotIdx === -1) return "";
+        const setName = fieldKey.substring(0, dotIdx);
+        const propName = fieldKey.substring(dotIdx + 1);
+
+        const props = await fetchObjectPropertiesIfNeeded(modelId, objectId);
+        if (props?.properties && Array.isArray(props.properties)) {
+          const propSet = props.properties.find((p: any) => p?.name === setName);
+          if (propSet?.properties) {
+            const prop = propSet.properties.find((p: any) => p?.name === propName);
+            if (prop) {
+              const value = prop?.displayValue ?? prop?.value ?? "";
+              return String(value);
+            }
+          }
+        }
+
+        return "";
+      } catch (err) {
+        console.warn("getPropertyValue error:", err);
         return "";
       }
+    },
+    [lastSelection, fetchObjectPropertiesIfNeeded]
+  );
 
-      // Handle property set fields: "SetName.PropertyName"
-      const [setName, propName] = fieldKey.split(".");
-      if (!setName || !propName) return "";
+  const createMarkups = useCallback(
+    async () => {
+      const selectedFields = fields.filter((f) => f.selected);
 
-      // ✅ CRITICAL: Use includeHidden: true to match discovery
-      const props = await api.viewer?.getObjectProperties?.(
-        modelId,
-        [objectId],
-        { includeHidden: true }
-      );
-
-      if (Array.isArray(props) && props[0]?.properties) {
-        const propSet = props[0].properties.find(
-          (p: any) => p?.name === setName
-        );
-        if (propSet?.properties) {
-          const prop = propSet.properties.find((p: any) => p?.name === propName);
-          if (prop) {
-            // Prefer displayValue, fallback to value
-            const value = prop?.displayValue ?? prop?.value ?? "";
-            return String(value);
-          }
-        }
+      if (selectedFields.length === 0) {
+        onError("Vali vähemalt üks väli");
+        return;
       }
 
-      return "";
-    } catch (err) {
-      console.warn("Error getting property value:", err);
-      return "";
-    }
-  };
+      if (lastSelection.length === 0) {
+        onError("Vali objektid 3D vaates");
+        return;
+      }
 
-  const createMarkups = async () => {
-    const selectedFields = fields.filter((f) => f.selected);
+      setIsLoading(true);
+      try {
+        const markups: any[] = [];
 
-    if (selectedFields.length === 0) {
-      onError("Vali vähemalt üks väli");
-      return;
-    }
+        for (const selection of lastSelection) {
+          try {
+            const bbox = await api.viewer?.getObjectBoundingBox?.(
+              selection.modelId,
+              selection.objectId
+            );
 
-    if (lastSelection.length === 0) {
-      onError("Vali objektid 3D vaates");
-      return;
-    }
+            if (!bbox) continue;
 
-    setIsLoading(true);
-    try {
-      const markups: any[] = [];
-
-      for (const selection of lastSelection) {
-        try {
-          // Get bounding box for markup positioning
-          const bbox = await api.viewer?.getObjectBoundingBox?.(
-            selection.modelId,
-            selection.objectId
-          );
-
-          if (!bbox) {
-            console.warn("No bounding box for object:", selection.objectId);
-            continue;
-          }
-
-          // Collect all selected field values for this object
-          const values: string[] = [];
-          for (const field of selectedFields) {
-            try {
+            const values: string[] = [];
+            for (const field of selectedFields) {
               const value = await getPropertyValue(
                 selection.modelId,
                 selection.objectId,
@@ -236,79 +288,65 @@ export default function MarkupCreator({
               if (value && value.trim()) {
                 values.push(value);
               }
-            } catch (err) {
-              console.warn("Error getting field value:", field.key, err);
             }
+
+            if (values.length === 0) continue;
+
+            const text = values.join(delimiter);
+
+            const center = {
+              x: (bbox.min.x + bbox.max.x) / 2,
+              y: (bbox.min.y + bbox.max.y) / 2,
+              z: (bbox.min.z + bbox.max.z) / 2,
+            };
+
+            const offset = 0.5;
+            const start = { ...center };
+            const end = {
+              x: center.x + offset,
+              y: center.y + offset,
+              z: center.z,
+            };
+
+            const hex = validateHex(markupColor) || "FF0000";
+
+            markups.push({
+              text: text,
+              start: {
+                positionX: start.x * 1000,
+                positionY: start.y * 1000,
+                positionZ: start.z * 1000,
+              },
+              end: {
+                positionX: end.x * 1000,
+                positionY: end.y * 1000,
+                positionZ: end.z * 1000,
+              },
+              color: hex,
+            });
+          } catch (err: any) {
+            console.warn("Error processing object:", err);
           }
-
-          if (values.length === 0) {
-            console.warn("No values found for object:", selection.objectId);
-            continue;
-          }
-
-          // Join values with delimiter
-          const text = values.join(delimiter);
-
-          // Calculate markup position at object center
-          const center = {
-            x: (bbox.min.x + bbox.max.x) / 2,
-            y: (bbox.min.y + bbox.max.y) / 2,
-            z: (bbox.min.z + bbox.max.z) / 2,
-          };
-
-          // Small offset for better visibility
-          const offset = 0.5;
-          const start = { ...center };
-          const end = {
-            x: center.x + offset,
-            y: center.y + offset,
-            z: center.z,
-          };
-
-          // Create markup object for Productivity Tools API
-          markups.push({
-            text: text,
-            start: {
-              positionX: start.x * 1000,
-              positionY: start.y * 1000,
-              positionZ: start.z * 1000,
-            },
-            end: {
-              positionX: end.x * 1000,
-              positionY: end.y * 1000,
-              positionZ: end.z * 1000,
-            },
-            color: markupColor,
-          });
-
-          console.log("Markup created:", {
-            text,
-            color: markupColor,
-          });
-        } catch (err: any) {
-          console.warn("Error processing object:", selection.objectId, err);
         }
-      }
 
-      if (markups.length > 0) {
-        console.log("Adding markups:", markups.length);
-        // Use Productivity Tools API to add markups
-        const result = await api.markup?.addTextMarkup?.(markups);
-        const ids = Array.isArray(result)
-          ? result.map((m: any) => m.id).filter(Boolean)
-          : [];
-        console.log("Markups added, IDs:", ids);
-        onMarkupAdded(ids);
-      } else {
-        onError("Ei suutnud märgistusi luua - väljade väärtused puuduvad");
+        if (markups.length > 0) {
+          const result = await api.markup?.addTextMarkup?.(markups);
+          const ids = Array.isArray(result)
+            ? result.map((m: any) => m.id).filter(Boolean)
+            : [];
+          onMarkupAdded(ids);
+        } else {
+          onError("Ei suutnud märgistusi luua");
+        }
+      } catch (err: any) {
+        console.error("createMarkups error:", err);
+        onError(err?.message || "Tundmatu viga");
+      } finally {
+        setIsLoading(false);
       }
-    } catch (err: any) {
-      console.error("Markup creation error:", err);
-      onError(err?.message || "Tundmatu viga märgistuse loomisel");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    },
+    [fields, lastSelection, delimiter, markupColor, onMarkupAdded, onError, getPropertyValue]
+  );
 
   return (
     <div style={{ padding: 20, maxWidth: 800 }}>
@@ -336,9 +374,7 @@ export default function MarkupCreator({
                 #{i + 1} · {s.name || `Object ${s.objectId}`}
               </li>
             ))}
-            {lastSelection.length > 3 && (
-              <li>... ja veel {lastSelection.length - 3}</li>
-            )}
+            {lastSelection.length > 3 && <li>... ja veel {lastSelection.length - 3}</li>}
           </ul>
         )}
       </div>
@@ -358,9 +394,7 @@ export default function MarkupCreator({
           }}
         >
           {fields.length === 0 ? (
-            <p style={{ color: "#999" }}>
-              {isLoading ? "Tuvastan väljasid..." : "Välju ei leitud. Vali objektid."}
-            </p>
+            <p style={{ color: "#999" }}>{isLoading ? "Tuvastan väljasid..." : "Välju ei leitud. Vali objektid."}</p>
           ) : (
             fields.map((field) => (
               <label
@@ -397,58 +431,31 @@ export default function MarkupCreator({
         }}
       >
         <div>
-          <label
-            style={{
-              display: "block",
-              marginBottom: 8,
-              fontWeight: "bold",
-              fontSize: 13,
-            }}
-          >
-            Eraldaja
-          </label>
+          <label style={{ display: "block", marginBottom: 8, fontWeight: "bold", fontSize: 13 }}>Eraldaja</label>
           <input
             type="text"
             value={delimiter}
             onChange={(e) => setDelimiter(e.target.value)}
             placeholder=" | "
-            style={{
-              width: "100%",
-              padding: 8,
-              border: "1px solid #ccc",
-              borderRadius: 4,
-              fontSize: 12,
-            }}
+            style={{ width: "100%", padding: 8, border: "1px solid #ccc", borderRadius: 4, fontSize: 12 }}
           />
         </div>
         <div>
-          <label
-            style={{
-              display: "block",
-              marginBottom: 8,
-              fontWeight: "bold",
-              fontSize: 13,
-            }}
-          >
-            Värv (hex)
-          </label>
+          <label style={{ display: "block", marginBottom: 8, fontWeight: "bold", fontSize: 13 }}>Värv (hex)</label>
           <div style={{ display: "flex", gap: 8 }}>
             <input
               type="color"
-              value={"#" + markupColor}
-              onChange={(e) => setMarkupColor(e.target.value.substring(1))}
-              style={{
-                width: 50,
-                height: 36,
-                border: "none",
-                borderRadius: 4,
-                cursor: "pointer",
+              value={"#" + (validateHex(markupColor) ?? markupColor)}
+              onChange={(e) => {
+                const v = e.target.value.replace(/^#/, "");
+                setMarkupColor(v.toUpperCase());
               }}
+              style={{ width: 50, height: 36, border: "none", borderRadius: 4, cursor: "pointer" }}
             />
             <input
               type="text"
               value={markupColor}
-              onChange={(e) => setMarkupColor(e.target.value.toUpperCase())}
+              onChange={(e) => setMarkupColor(e.target.value.replace(/^#/, "").toUpperCase())}
               style={{
                 flex: 1,
                 padding: 8,
@@ -464,23 +471,16 @@ export default function MarkupCreator({
 
       <div style={{ marginTop: 20, display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button
+          type="button"
           onClick={createMarkups}
-          disabled={
-            isLoading ||
-            lastSelection.length === 0 ||
-            fields.filter((f) => f.selected).length === 0
-          }
+          disabled={isLoading || lastSelection.length === 0 || fields.filter((f) => f.selected).length === 0}
           style={{
             padding: "10px 20px",
-            backgroundColor:
-              isLoading || lastSelection.length === 0 ? "#ccc" : "#1976d2",
+            backgroundColor: isLoading || lastSelection.length === 0 ? "#ccc" : "#1976d2",
             color: "white",
             border: "none",
             borderRadius: 4,
-            cursor:
-              isLoading || lastSelection.length === 0
-                ? "not-allowed"
-                : "pointer",
+            cursor: isLoading || lastSelection.length === 0 ? "not-allowed" : "pointer",
             display: "flex",
             gap: 8,
             alignItems: "center",
@@ -491,10 +491,10 @@ export default function MarkupCreator({
           <Plus size={18} />
           {isLoading ? "Loon..." : "Loo märgistused"}
         </button>
+
         <button
-          onClick={() => {
-            setFields((prev) => prev.map((f) => ({ ...f, selected: false })));
-          }}
+          type="button"
+          onClick={() => setFields((prev) => prev.map((f) => ({ ...f, selected: false })))}
           style={{
             padding: "10px 20px",
             backgroundColor: "#757575",
@@ -511,7 +511,9 @@ export default function MarkupCreator({
           <RefreshCw size={18} />
           Tühjenda valik
         </button>
+
         <button
+          type="button"
           onClick={onRemoveMarkups}
           style={{
             padding: "10px 20px",
@@ -551,9 +553,7 @@ export default function MarkupCreator({
           <li>Klika "Loo märgistused"</li>
         </ol>
         <p style={{ marginTop: 10, color: "#666", fontSize: 12 }}>
-          💡 <strong>Tipp:</strong> Samad väljad mis näed AVASTA tabil on siin
-          valitavad. Iga valitud välja väärtus liitakse tekstmarupiga
-          eraldajaga.
+          💡 <strong>Tipp:</strong> Samad väljad mis näed AVASTA tabil on siin valitavad. Iga valitud välja väärtus liitakse tekstmarupiga eraldajaga.
         </p>
       </div>
     </div>
