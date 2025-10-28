@@ -26,17 +26,17 @@ interface Row {
 interface Settings {
   delimiter: string;
   selectedFields: string[];
-  autoRefresh: boolean;
+  autoRefreshEnabled: boolean;
 }
 
-const COMPONENT_VERSION = "8.2.1-AUTO";
+const COMPONENT_VERSION = "8.2 + AUTO";
 const BUILD_DATE = new Date().toISOString().split("T")[0];
 const MARKUP_COLOR = "FF0000";
 
 const DEFAULTS: Settings = {
   delimiter: " | ",
   selectedFields: [],
-  autoRefresh: true,
+  autoRefreshEnabled: true,
 };
 
 const translations = {
@@ -322,7 +322,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
   const mountedRef = useRef(true);
   const listenerRegistered = useRef(false);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSelectionTimeRef = useRef(0);
 
   const t = translations[language];
   const guideText = GUIDE_TEXT[language];
@@ -452,48 +452,64 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   // ✅ AUTO-REFRESH EVENT LISTENER
   useEffect(() => {
     if (!api?.viewer || listenerRegistered.current) return;
+    if (!settings.autoRefreshEnabled) return;
 
-    const handleSelectionChanged = () => {
-      // Debounce 200ms
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
+    const handleSelectionChanged = async () => {
+      // DEBOUNCE 200ms
+      const now = Date.now();
+      const timeSinceLastLoad = now - lastSelectionTimeRef.current;
+      
+      if (timeSinceLastLoad < 200) {
+        return;
       }
 
-      if (settings.autoRefresh) {
-        debounceTimerRef.current = setTimeout(() => {
-          addLog("🎯 Valik muutus – uuendan andmeid (AUTO)", "info");
-          loadSelectionData();
-        }, 200);
-      }
+      lastSelectionTimeRef.current = now;
+      addLog("🎯 Valik muutus – uuendan andmeid (AUTO)", "info");
+      await loadSelectionData();
     };
 
     try {
-      api.viewer.on("Viewer.SelectionChanged", handleSelectionChanged);
+      api.viewer.addOnSelectionChanged?.(handleSelectionChanged);
       listenerRegistered.current = true;
       addLog("✅ Auto-refresh aktiveeeritud", "success");
+      loadSelectionData();
     } catch (err) {
       console.error("[AutoRefresh] setup error:", err);
     }
 
     return () => {
       try {
-        api.viewer?.off?.("Viewer.SelectionChanged", handleSelectionChanged);
+        api.viewer.removeOnSelectionChanged?.(handleSelectionChanged);
       } catch {
         // Silent fail
       }
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
+      listenerRegistered.current = false;
     };
-  }, [api, settings.autoRefresh, addLog, loadSelectionData]);
+  }, [api, settings.autoRefreshEnabled, addLog, loadSelectionData]);
 
-  const getOrderedSelectedFields = () => {
-    return allFields.filter((f) => f.selected).sort((a, b) => {
-      const idxA = settings.selectedFields.indexOf(a.key);
-      const idxB = settings.selectedFields.indexOf(b.key);
-      return idxA - idxB;
-    });
-  };
+  const selectedCount = allFields.filter((f) => f.selected).length;
+
+  const getOrderedSelectedFields = useCallback(() => {
+    const selectedFields = allFields.filter((f) => f.selected);
+    if (selectedFields.length === 0) return [];
+
+    if (settings.selectedFields.length > 0) {
+      return settings.selectedFields
+        .map((key) => allFields.find((f) => f.key === key))
+        .filter((f) => f !== undefined) as PropertyField[];
+    }
+
+    return selectedFields;
+  }, [allFields, settings.selectedFields]);
+
+  const previewText = getOrderedSelectedFields()
+    .filter((f) => selectedData.length > 0 && selectedData[0][f.key])
+    .map((f) => selectedData[0][f.key])
+    .join(settings.delimiter);
+
+  useEffect(() => {
+    setPreviewMarkup(previewText);
+  }, [previewText]);
 
   const toggleField = (key: string) => {
     const current = settings.selectedFields || [];
@@ -517,9 +533,34 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     updateSettings({ selectedFields: newFields });
   };
 
-  const handleDragStart = (e: React.DragEvent, key: string) => {
-    setDraggedField(key);
-    e.dataTransfer.effectAllowed = "move";
+  const handleDragStart = (field: PropertyField) => {
+    setDraggedField(field.key);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (targetField: PropertyField) => {
+    if (!draggedField || draggedField === targetField.key) {
+      setDraggedField(null);
+      return;
+    }
+
+    const current = settings.selectedFields || [];
+    const dragIdx = current.indexOf(draggedField);
+    const targetIdx = current.indexOf(targetField.key);
+
+    if (dragIdx === -1 || targetIdx === -1) {
+      setDraggedField(null);
+      return;
+    }
+
+    const newFields = [...current];
+    [newFields[dragIdx], newFields[targetIdx]] = [newFields[targetIdx], newFields[dragIdx]];
+    updateSettings({ selectedFields: newFields });
+    setDraggedField(null);
   };
 
   const handleDragEnd = () => {
@@ -533,29 +574,24 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       if (!groups.has(groupName)) groups.set(groupName, []);
       groups.get(groupName)?.push(field);
     }
-    return Array.from(groups.entries());
+    return groups;
   }, [allFields]);
 
-  const previewText = getOrderedSelectedFields()
-    .filter((f) => selectedData.length > 0 && selectedData[0][f.key])
-    .map((f) => selectedData[0][f.key])
-    .join(settings.delimiter);
-
-  useEffect(() => {
-    setPreviewMarkup(previewText);
-  }, [previewText]);
-
-  const createMarkup = async () => {
-    if (!selectedData.length || !getOrderedSelectedFields().length) {
+  const createMarkups = async () => {
+    if (!selectedData.length) {
       addLog("❌ Andmeid ei ole", "error");
+      return;
+    }
+
+    const orderedFields = getOrderedSelectedFields();
+    if (orderedFields.length === 0) {
+      addLog("❌ Väljasid pole valitud", "error");
       return;
     }
 
     try {
       for (const row of selectedData) {
-        const markupText = getOrderedSelectedFields()
-          .map((f) => row[f.key] || "")
-          .join(settings.delimiter);
+        const markupText = orderedFields.map((f) => row[f.key] || "").join(settings.delimiter);
 
         if (markupText.trim()) {
           const modelId = row.ModelId;
@@ -574,7 +610,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     }
   };
 
-  const removeAllMarkups = async () => {
+  const handleRemoveAllMarkups = async () => {
     try {
       await api?.markup?.deleteAll?.();
       addLog("✅ Markupid kustutatud", "success");
@@ -597,129 +633,183 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       maxHeight: "100vh",
       overflowY: "auto",
     }}>
-      {/* HEADER */}
-      <div style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        borderBottom: "2px solid #0277bd",
-        paddingBottom: 6,
-      }}>
-        <h2 style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#0277bd" }}>
-          {t.markupGenerator}
-        </h2>
-        <div style={{ display: "flex", gap: 4 }}>
-          <button
-            onClick={loadSelectionData}
-            disabled={isLoading}
-            style={{
-              padding: "4px 8px",
-              backgroundColor: "#0277bd",
-              color: "white",
-              border: "none",
-              borderRadius: 3,
-              cursor: isLoading ? "not-allowed" : "pointer",
-              fontSize: 10,
-              opacity: isLoading ? 0.6 : 1,
-            }}
-          >
-            {isLoading ? t.loading : t.refresh}
-          </button>
-          <button
-            onClick={() => setShowGuide(!showGuide)}
-            style={{
-              padding: "4px 8px",
-              backgroundColor: "#f0f0f0",
-              border: "1px solid #d0d0d0",
-              borderRadius: 3,
-              cursor: "pointer",
-              fontSize: 10,
-            }}
-          >
-            {t.guide}
-          </button>
-        </div>
-      </div>
-
-      {/* GUIDE */}
+      {/* GUIDE SECTION */}
       {showGuide && (
         <div style={{
-          padding: 8,
+          padding: 10,
           backgroundColor: "#e3f2fd",
-          borderLeft: "3px solid #0277bd",
-          fontSize: 9,
+          borderLeft: "4px solid #1976d2",
+          borderRadius: 4,
+          fontSize: 10,
           whiteSpace: "pre-wrap",
           color: "#0277bd",
-          fontFamily: "system-ui",
         }}>
           {guideText}
+          <button
+            onClick={() => setShowGuide(false)}
+            style={{
+              marginTop: 10,
+              padding: "6px 12px",
+              backgroundColor: "#1976d2",
+              color: "white",
+              border: "none",
+              borderRadius: 4,
+              cursor: "pointer",
+              fontSize: 10,
+              fontWeight: 600,
+            }}
+          >
+            Sulge
+          </button>
         </div>
       )}
+
+      {/* HEADER WITH GUIDE BUTTON */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+      }}>
+        <div style={{
+          fontSize: 12,
+          color: selectedData.length > 0 ? "#2e7d32" : "#999",
+          fontWeight: 600,
+          flex: 1,
+          textAlign: "center" as const,
+        }}>
+          {selectedData.length > 0 
+            ? `✅ ${selectedData.length} objekti | Väljad: ${selectedCount}`
+            : "⚪ Vali objektid 3D vaates..."
+          }
+        </div>
+
+        <button
+          onClick={() => setShowGuide(!showGuide)}
+          style={{
+            padding: "4px 8px",
+            backgroundColor: showGuide ? "#1976d2" : "#e0e0e0",
+            color: showGuide ? "white" : "#333",
+            border: "none",
+            borderRadius: 4,
+            cursor: "pointer",
+            fontSize: 12,
+            fontWeight: 600,
+            minWidth: 32,
+            height: 32,
+          }}
+          title="Näita juhendit"
+        >
+          {t.guide}
+        </button>
+      </div>
 
       {/* AUTO-REFRESH TOGGLE */}
       <div style={{
         display: "flex",
         alignItems: "center",
         gap: 6,
-        padding: 6,
+        padding: 8,
         backgroundColor: "#e8f5e9",
-        borderRadius: 3,
+        borderRadius: 4,
+        marginBottom: 4,
       }}>
         <input
           type="checkbox"
-          checked={settings.autoRefresh ?? true}
-          onChange={(e) => updateSettings({ autoRefresh: e.target.checked })}
+          checked={settings.autoRefreshEnabled ?? true}
+          onChange={(e) => updateSettings({ autoRefreshEnabled: e.target.checked })}
           style={{ cursor: "pointer", width: 16, height: 16 }}
           title={t.autoRefreshTooltip}
         />
         <label
           style={{
             cursor: "pointer",
-            fontSize: 10,
+            fontSize: 11,
             fontWeight: 500,
             color: "#1b5e20",
             flex: 1,
           }}
           title={t.autoRefreshTooltip}
         >
-          {t.autoRefresh} {settings.autoRefresh ? "✅" : "❌"}
+          {t.autoRefresh} {settings.autoRefreshEnabled ? "✅" : "❌"}
         </label>
       </div>
 
-      {/* ACTION BUTTONS */}
-      <div style={{ display: "flex", gap: 4 }}>
+      {/* ACTION BUTTONS - COMPACT */}
+      <div style={{
+        display: "flex",
+        gap: 6,
+        marginBottom: 8,
+      } as any}>
         <button
-          onClick={createMarkup}
-          disabled={!selectedData.length || !getOrderedSelectedFields().length}
+          onClick={createMarkups}
+          disabled={isLoading}
           style={{
             flex: 1,
-            padding: 6,
-            backgroundColor: "#4caf50",
+            padding: "7px 10px",
+            backgroundColor: isLoading ? "#d0d0d0" : "#1976d2",
             color: "white",
             border: "none",
-            borderRadius: 3,
-            cursor: !selectedData.length ? "not-allowed" : "pointer",
-            fontSize: 10,
-            fontWeight: 500,
-            opacity: !selectedData.length ? 0.6 : 1,
+            borderRadius: 4,
+            cursor: isLoading ? "not-allowed" : "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+            transition: "background-color 0.2s",
           }}
+          onMouseOver={(e) => {
+            if (!isLoading) e.currentTarget.style.backgroundColor = "#1565c0";
+          }}
+          onMouseOut={(e) => {
+            if (!isLoading) e.currentTarget.style.backgroundColor = "#1976d2";
+          }}
+          title="Uuenda andmed ja loo markupid"
         >
-          {t.create}
+          {isLoading ? "..." : t.create}
         </button>
+
         <button
-          onClick={removeAllMarkups}
+          onClick={() => loadSelectionData()}
+          disabled={isLoading}
           style={{
-            padding: "6px 8px",
-            backgroundColor: "#f44336",
+            flex: 1,
+            padding: "7px 10px",
+            backgroundColor: isLoading ? "#d0d0d0" : "#43a047",
             color: "white",
             border: "none",
-            borderRadius: 3,
-            cursor: "pointer",
-            fontSize: 10,
-            fontWeight: 500,
+            borderRadius: 4,
+            cursor: isLoading ? "not-allowed" : "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+            transition: "background-color 0.2s",
           }}
+          onMouseOver={(e) => {
+            if (!isLoading) e.currentTarget.style.backgroundColor = "#388e3c";
+          }}
+          onMouseOut={(e) => {
+            if (!isLoading) e.currentTarget.style.backgroundColor = "#43a047";
+          }}
+          title="Uuenda kõik andmed"
         >
-          {t.removeAll}
+          {isLoading ? "..." : t.refresh}
+        </button>
+
+        <button
+          onClick={handleRemoveAllMarkups}
+          disabled={isLoading}
+          style={{
+            padding: "7px 10px",
+            backgroundColor: isLoading ? "#ccc" : "#d32f2f",
+            color: "white",
+            border: "none",
+            borderRadius: 4,
+            cursor: isLoading ? "not-allowed" : "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+            minWidth: 50,
+          }}
+          title="Kustuta kõik markupid"
+        >
+          {isLoading ? "..." : t.removeAll}
         </button>
       </div>
 
@@ -729,80 +819,180 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         borderRadius: 4,
         padding: 8,
         backgroundColor: "#ffffff",
-      }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: 10, fontWeight: 600, color: "#555" }}>
-          {t.properties}
-        </h4>
-        {selectedData.length === 0 ? (
-          <div style={{ fontSize: 9, color: "#999", fontStyle: "italic" }}>
-            {t.selectObjects}
-          </div>
-        ) : (
-          <div style={{ fontSize: 8, color: "#0066cc", marginBottom: 6 }}>
-            {t.objectsSelected.replace("{count}", String(selectedData.length)).replace("{fields}", String(getOrderedSelectedFields().length))}
-          </div>
-        )}
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+      } as any}>
+        <h3 style={{
+          margin: "0 0 8px 0",
+          fontSize: 12,
+          fontWeight: 600,
+          color: "#333",
+        }}>
+          {t.properties} ({selectedCount})
+        </h3>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {groupedFields.map(([groupName, fields]) => (
-            <div key={groupName}>
-              <div style={{
-                fontSize: 9,
-                fontWeight: 600,
-                color: "#555",
-                marginBottom: 4,
-                paddingLeft: 4,
-              }}>
-                {groupName}
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+          {allFields.length === 0 ? (
+            <p style={{ color: "#999", fontSize: 10, margin: 0 }}>{t.selectObjects}</p>
+          ) : (
+            Array.from(groupedFields.entries()).map(([groupName, groupFields]) => (
+              <div key={groupName} style={{ marginBottom: 8 }}>
+                <div style={{
+                  padding: "6px 8px",
+                  backgroundColor: "#f5f5f5",
+                  borderRadius: 3,
+                  marginBottom: 4,
+                  fontWeight: 600,
+                  fontSize: 10,
+                  color: "#333",
+                  border: "1px solid #e0e0e0",
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}>
+                  <span>{groupName}</span>
+                  <span style={{ fontWeight: 500, color: "#666", fontSize: 9 }}>
+                    {groupFields.filter((f) => f.selected).length}/{groupFields.length}
+                  </span>
+                </div>
+
+                <div style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 3,
+                  border: "1px solid #e6eaf0",
+                  borderRadius: 4,
+                  padding: 4,
+                  background: "#fff",
+                  maxHeight: 300,
+                  overflow: "auto",
+                }}>
+                  {groupFields.map((field) => {
+                    const orderedSelected = getOrderedSelectedFields();
+                    const fieldIdx = orderedSelected.findIndex((f) => f.key === field.key);
+                    const isFirst = fieldIdx === 0;
+                    const isLast = fieldIdx === orderedSelected.length - 1;
+                    const isInOrder = fieldIdx !== -1;
+
+                    return (
+                      <div
+                        key={field.key}
+                        draggable={field.selected}
+                        onDragStart={() => handleDragStart(field)}
+                        onDragOver={handleDragOver}
+                        onDrop={() => handleDrop(field)}
+                        onDragEnd={handleDragEnd}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 3,
+                          padding: 4,
+                          borderRadius: 3,
+                          border: field.selected ? "1px solid #1976d2" : draggedField === field.key ? "1px dashed #1976d2" : "1px solid #eef1f6",
+                          background: field.selected ? "#e3f2fd" : "#fff",
+                          opacity: field.hasData ? 1 : 0.6,
+                          cursor: field.selected ? "grab" : "default",
+                          transition: "all 0.15s",
+                        } as any}
+                      >
+                        <span style={{ fontSize: 9, color: field.selected ? "#1976d2" : "#ccc", userSelect: "none" }}>⋮⋮</span>
+
+                        <input
+                          type="checkbox"
+                          checked={field.selected}
+                          onChange={() => toggleField(field.key)}
+                          style={{
+                            cursor: "pointer",
+                            margin: 0,
+                            width: 14,
+                            height: 14,
+                          }}
+                        />
+
+                        <span style={{
+                          color: "#0066cc",
+                          fontSize: 9,
+                          fontWeight: 500,
+                          flex: 1,
+                          wordBreak: "break-word",
+                          lineHeight: "1.2",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}>
+                          {field.label}
+                        </span>
+
+                        <div style={{ display: "flex", gap: 2, visibility: isInOrder ? "visible" : "hidden" }}>
+                          {!isFirst && (
+                            <button
+                              onClick={() => moveField(field.key, "up")}
+                              title="Üles"
+                              style={{
+                                padding: "3px 5px",
+                                fontSize: 9,
+                                backgroundColor: "#f0f0f0",
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 2,
+                                cursor: "pointer",
+                                transition: "all 0.15s",
+                              }}
+                              onMouseOver={(e) => {
+                                e.currentTarget.style.backgroundColor = "#1976d2";
+                                e.currentTarget.style.color = "white";
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.backgroundColor = "#f0f0f0";
+                                e.currentTarget.style.color = "black";
+                              }}
+                            >
+                              ↑
+                            </button>
+                          )}
+                          {!isLast && (
+                            <button
+                              onClick={() => moveField(field.key, "down")}
+                              title="Alla"
+                              style={{
+                                padding: "3px 5px",
+                                fontSize: 9,
+                                backgroundColor: "#f0f0f0",
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 2,
+                                cursor: "pointer",
+                                transition: "all 0.15s",
+                              }}
+                              onMouseOver={(e) => {
+                                e.currentTarget.style.backgroundColor = "#1976d2";
+                                e.currentTarget.style.color = "white";
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.backgroundColor = "#f0f0f0";
+                                e.currentTarget.style.color = "black";
+                              }}
+                            >
+                              ↓
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {fields.map((field) => (
-                  <div
-                    key={field.key}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 3,
-                      padding: 4,
-                      borderRadius: 3,
-                      border: field.selected ? "1px solid #1976d2" : "1px solid #eef1f6",
-                      background: field.selected ? "#e3f2fd" : "#fff",
-                      opacity: field.hasData ? 1 : 0.6,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={field.selected}
-                      onChange={() => toggleField(field.key)}
-                      style={{
-                        cursor: "pointer",
-                        margin: 0,
-                        width: 14,
-                        height: 14,
-                      }}
-                    />
-                    <span style={{
-                      color: "#0066cc",
-                      fontSize: 9,
-                      fontWeight: 500,
-                      flex: 1,
-                    }}>
-                      {field.label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
 
-      {/* FOOTER */}
+      {/* FOOTER WITH SETTINGS */}
       <div style={{
         border: "1px solid #e0e0e0",
         borderRadius: 4,
         padding: 8,
         backgroundColor: "#ffffff",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
       }}>
         <div style={{ marginBottom: 6 }}>
           <label style={{
@@ -825,8 +1015,14 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
               borderRadius: 3,
               fontSize: 10,
               boxSizing: "border-box",
+              fontFamily: "system-ui",
             }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "#1976d2")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
           />
+          <div style={{ fontSize: 8, color: "#999", marginTop: 2, fontStyle: "italic" }}>
+            Andmete kihtide eraldaja (näit: " | " näitab kihid eraldatult, "\n" näitab real)
+          </div>
         </div>
 
         <div>
@@ -847,7 +1043,11 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             padding: 6,
             borderRadius: 3,
             border: "1px solid #e0e0e0",
+            wordBreak: "break-all",
             minHeight: 22,
+            maxHeight: 35,
+            overflowY: "auto",
+            lineHeight: "1.3",
           }}>
             {previewMarkup || t.noData}
           </div>
@@ -859,13 +1059,39 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             style={{
               padding: "4px 6px",
               backgroundColor: "#f5f5f5",
+              borderBottom: showDebugLog ? "1px solid #e0e0e0" : "none",
               cursor: "pointer",
               fontWeight: 600,
+              userSelect: "none",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
               fontSize: 9,
+              borderRadius: "3px 3px 0 0",
+              border: "1px solid #e0e0e0",
             }}
             onClick={() => setShowDebugLog(!showDebugLog)}
           >
-            {showDebugLog ? "▼" : "▶"} {t.log} ({logs.length})
+            <span>{showDebugLog ? "▼" : "▶"} {t.log} ({logs.length})</span>
+            {showDebugLog && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(logs.map((l) => `[${l.timestamp}] ${l.message}`).join("\n"));
+                  addLog("✅ Kopeeritud!", "success");
+                }}
+                style={{
+                  padding: "1px 4px",
+                  fontSize: 8,
+                  backgroundColor: "#e0e0e0",
+                  border: "none",
+                  borderRadius: 2,
+                  cursor: "pointer",
+                }}
+              >
+                📋
+              </button>
+            )}
           </div>
 
           {showDebugLog && (
@@ -876,6 +1102,9 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
               maxHeight: 80,
               fontSize: 8,
               fontFamily: "monospace",
+              borderRadius: "0 0 3px 3px",
+              border: "1px solid #e0e0e0",
+              borderTop: "none",
             }}>
               {logs.map((log, idx) => {
                 const colors: Record<string, string> = {
@@ -896,7 +1125,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </div>
       </div>
 
-      {/* VERSION */}
+      {/* VERSION FOOTER */}
       <div style={{
         textAlign: "center" as const,
         fontSize: 8,
