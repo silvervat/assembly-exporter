@@ -2241,7 +2241,7 @@ export default function AssemblyExporter({ api }: Props) {
         )}
         {tab === "markup" && (
           <Suspense fallback={<div>Loading...</div>}>
-            <MarkupAdvanced
+            <MarkupCreator
               api={api}
               allKeys={allKeys}
               lastSelection={lastSelection}
