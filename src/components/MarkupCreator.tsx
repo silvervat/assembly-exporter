@@ -336,6 +336,27 @@ const groupKeys = (keys: string[]) => {
 };
 
 export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
+  // ✅ NORDIC MINIMAL KUJUNDUS (HARDKODEERITUD)
+  const skin = {
+    surface: "#f5f5f7",
+    card: "#ffffff",
+    cardBorder: "#e5e5e7",
+    chipBg: "#f5f5f7",
+    chipBorder: "#d1d1d6",
+    text: "#1d1d1f",
+    textMuted: "#86868b",
+    primary: "#0071e3",
+    success: "#34c759",
+    danger: "#ff3b30",
+    shadowSm: "0 1px 3px rgba(0,0,0,0.08)",
+    shadowMd: "0 2px 8px rgba(0,0,0,0.12)",
+  };
+
+  const pad = (multiplier: number): number => 8 * multiplier;
+  const fs = (multiplier: number): number => 12 + multiplier * 2;
+  const radius = (multiplier?: number): string =>
+    multiplier ? `${4 * multiplier}px` : "4px";
+
   const [language] = useState<Language>("et");
   const [settings, updateSettings] = useSettings();
   const [allFields, setAllFields] = useState<PropertyField[]>([]);
@@ -822,42 +843,44 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
   return (
     <div style={{
-      fontFamily: "system-ui, -apple-system, sans-serif",
-      backgroundColor: "#fafbfc",
-      padding: 12,
-      borderRadius: 4,
+      fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+      backgroundColor: skin.surface,
+      padding: pad(1.5),
+      borderRadius: radius(0.6),
       display: "flex",
       flexDirection: "column",
-      gap: 8,
-      fontSize: 11,
-      color: "#333",
+      gap: pad(1),
+      fontSize: fs(0),
+      color: skin.text,
       maxHeight: "100vh",
       overflowY: "auto",
     }}>
       {/* GUIDE SECTION */}
       {showGuide && (
         <div style={{
-          padding: 10,
-          backgroundColor: "#e3f2fd",
-          borderLeft: "4px solid #1976d2",
-          borderRadius: 4,
-          fontSize: 10,
+          padding: pad(1.25),
+          backgroundColor: skin.card,
+          borderLeft: `4px solid ${skin.primary}`,
+          borderRadius: radius(),
+          fontSize: fs(-1),
           whiteSpace: "pre-wrap",
-          color: "#0277bd",
+          color: skin.text,
+          boxShadow: skin.shadowSm,
         }}>
           {guideText}
           <button
             onClick={() => setShowGuide(false)}
             style={{
-              marginTop: 10,
-              padding: "6px 12px",
-              backgroundColor: "#1976d2",
+              marginTop: pad(1.25),
+              padding: `${pad(0.75)}px ${pad(1.5)}px`,
+              backgroundColor: skin.primary,
               color: "white",
               border: "none",
-              borderRadius: 4,
+              borderRadius: radius(0.6),
               cursor: "pointer",
-              fontSize: 10,
+              fontSize: fs(-1),
               fontWeight: 600,
+              boxShadow: skin.shadowSm,
             }}
           >
             Sulge
@@ -870,12 +893,17 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 8,
+        padding: pad(1.25),
+        background: skin.card,
+        border: `1px solid ${skin.cardBorder}`,
+        borderRadius: radius(),
+        boxShadow: skin.shadowSm,
+        gap: pad(1),
       }}>
         <div style={{
-          fontSize: 12,
-          color: selectedData.length > 0 ? "#2e7d32" : "#999",
-          fontWeight: 600,
+          fontSize: fs(1),
+          color: selectedData.length > 0 ? skin.success : skin.textMuted,
+          fontWeight: 700,
           flex: 1,
           textAlign: "center" as const,
         }}>
@@ -888,16 +916,17 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         <button
           onClick={() => setShowGuide(!showGuide)}
           style={{
-            padding: "4px 8px",
-            backgroundColor: showGuide ? "#1976d2" : "#e0e0e0",
-            color: showGuide ? "white" : "#333",
-            border: "none",
-            borderRadius: 4,
+            padding: `${pad(0.5)}px ${pad(1)}px`,
+            backgroundColor: showGuide ? skin.primary : skin.chipBg,
+            color: showGuide ? "white" : skin.text,
+            border: `1px solid ${skin.chipBorder}`,
+            borderRadius: radius(0.6),
             cursor: "pointer",
-            fontSize: 12,
+            fontSize: fs(0),
             fontWeight: 600,
             minWidth: 32,
             height: 32,
+            boxShadow: showGuide ? skin.shadowSm : "none",
           }}
           title="Näita juhendit"
         >
