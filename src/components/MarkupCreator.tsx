@@ -1137,5 +1137,3 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     </div>
   );
 }
-
-export default MarkupCreator;
