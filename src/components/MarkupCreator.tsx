@@ -23,9 +23,13 @@ interface PropertyField {
   selected: boolean;
 }
 
-const validateHex = (hex: string): string | null => {
-  const h = hex.replace(/^#/, "");
-  return /^[0-9A-Fa-f]{6}$/.test(h) ? h : null;
+// Helper to validate and normalize hex color
+const normalizeColor = (color: string): string => {
+  let hex = color.replace(/^#/, "").toUpperCase();
+  if (hex.length === 6 && /^[0-9A-F]{6}$/.test(hex)) {
+    return hex;
+  }
+  return "FF0000";
 };
 
 export default function MarkupCreator({
@@ -42,14 +46,15 @@ export default function MarkupCreator({
   const [isLoading, setIsLoading] = useState(false);
   const [markupColor, setMarkupColor] = useState("FF0000");
   const [delimiter, setDelimiter] = useState(" | ");
+  const [markupIds, setMarkupIds] = useState<number[]>([]);
 
-  // Cache for properties/metadata to avoid repeated API calls
   const propsCache = useRef(new Map<string, any>());
   const metadataCache = useRef(new Map<string, any>());
+  const bboxCache = useRef(new Map<string, any>());
 
-  // Stale request guard
   const requestIdRef = useRef(0);
   const mountedRef = useRef(true);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -57,8 +62,14 @@ export default function MarkupCreator({
     };
   }, []);
 
-  // Discover available fields (batched per modelId)
+  // ✅ BATCH field discovery - grouped by modelId
   useEffect(() => {
+    // Ignore if already loading to prevent infinite loops
+    if (isLoading) {
+      console.log("Discovery already in progress, skipping...");
+      return;
+    }
+
     const discoverFields = async () => {
       requestIdRef.current += 1;
       const thisRequestId = requestIdRef.current;
@@ -83,13 +94,14 @@ export default function MarkupCreator({
         // For each model, call getObjectProperties once (batch)
         for (const [modelId, objectIds] of byModel.entries()) {
           try {
+            console.log(`Fetching properties for model ${modelId}, objects:`, objectIds);
+
             const propsArray = await api.viewer?.getObjectProperties?.(
               modelId,
               objectIds,
               { includeHidden: true }
             );
 
-            // propsArray is expected to be array aligned with objectIds
             if (Array.isArray(propsArray)) {
               propsArray.forEach((p: any, idx: number) => {
                 const objectId = objectIds[idx];
@@ -110,12 +122,15 @@ export default function MarkupCreator({
                 }
               });
             }
+
+            console.log(`Discovered ${fieldSet.size} unique fields from ${modelId}`);
           } catch (err: any) {
             console.warn("getObjectProperties batch error for model", modelId, err);
+            onError?.(`Error discovering properties for model ${modelId}: ${err?.message}`);
           }
         }
 
-        // Add standard fields and try to collect metadata keys
+        // Add standard fields and collect metadata keys
         for (const sel of lastSelection) {
           if (sel.name) fieldSet.add("Name");
           if (sel.type) fieldSet.add("Type");
@@ -136,7 +151,7 @@ export default function MarkupCreator({
                 }
               }
             } catch (err) {
-              // ignore metadata errors
+              console.warn("getObjectMetadata error:", err);
             }
           } else {
             const meta = metadataCache.current.get(metaCacheKey);
@@ -151,7 +166,10 @@ export default function MarkupCreator({
         }
 
         // Stop if a newer request has started
-        if (requestIdRef.current !== thisRequestId) return;
+        if (requestIdRef.current !== thisRequestId) {
+          console.log("Newer request started, discarding old results");
+          return;
+        }
 
         // Convert to PropertyField[]
         const newFields = Array.from(fieldSet)
@@ -164,18 +182,18 @@ export default function MarkupCreator({
 
         if (mountedRef.current) {
           setFields(newFields);
-          console.log("Fields discovered:", newFields.length);
+          console.log(`✅ Discovered ${newFields.length} fields total`);
         }
       } catch (err: any) {
         console.error("discoverFields error:", err);
-        onError && onError(`Field discovery error: ${err?.message || "unknown"}`);
+        onError?.(`Field discovery error: ${err?.message || "unknown"}`);
       } finally {
         if (mountedRef.current) setIsLoading(false);
       }
     };
 
     discoverFields();
-  }, [lastSelection, api, onError]);
+  }, [lastSelection, api]);
 
   const toggleField = useCallback((key: string) => {
     setFields((prev) =>
@@ -186,10 +204,16 @@ export default function MarkupCreator({
   const fetchObjectPropertiesIfNeeded = useCallback(
     async (modelId: string, objectId: number) => {
       const key = `${modelId}:${objectId}`;
-      if (propsCache.current.has(key)) return propsCache.current.get(key);
+      if (propsCache.current.has(key)) {
+        return propsCache.current.get(key);
+      }
 
       try {
-        const propsArr = await api.viewer?.getObjectProperties?.(modelId, [objectId], { includeHidden: true });
+        const propsArr = await api.viewer?.getObjectProperties?.(
+          modelId,
+          [objectId],
+          { includeHidden: true }
+        );
         const p = Array.isArray(propsArr) ? propsArr[0] : propsArr;
         propsCache.current.set(key, p);
         return p;
@@ -204,12 +228,14 @@ export default function MarkupCreator({
   const getPropertyValue = useCallback(
     async (modelId: string, objectId: number, fieldKey: string): Promise<string> => {
       try {
+        // Handle standard fields
         if (fieldKey === "Name" || fieldKey === "Type" || fieldKey === "ObjectId") {
-          const sel = lastSelection.find((s) => s.objectId === objectId);
+          const sel = lastSelection.find((s) => s.modelId === modelId && s.objectId === objectId);
           if (fieldKey === "ObjectId") return String(sel?.objectId ?? "");
           return String(sel?.[fieldKey.toLowerCase()] ?? "");
         }
 
+        // Handle Metadata fields
         if (fieldKey.startsWith("Metadata.")) {
           const metaKey = fieldKey.replace("Metadata.", "");
           const metaCacheKey = `${modelId}:${objectId}`;
@@ -244,11 +270,32 @@ export default function MarkupCreator({
 
         return "";
       } catch (err) {
-        console.warn("getPropertyValue error:", err);
+        console.warn("getPropertyValue error:", fieldKey, err);
         return "";
       }
     },
     [lastSelection, fetchObjectPropertiesIfNeeded]
+  );
+
+  const getObjectBoundingBox = useCallback(
+    async (modelId: string, objectId: number) => {
+      const key = `${modelId}:${objectId}`;
+      if (bboxCache.current.has(key)) {
+        return bboxCache.current.get(key);
+      }
+
+      try {
+        const bbox = await api.viewer?.getObjectBoundingBox?.(modelId, objectId);
+        if (bbox) {
+          bboxCache.current.set(key, bbox);
+          return bbox;
+        }
+      } catch (err) {
+        console.warn("getObjectBoundingBox error:", err);
+      }
+      return null;
+    },
+    [api]
   );
 
   const createMarkups = useCallback(
@@ -268,15 +315,16 @@ export default function MarkupCreator({
       setIsLoading(true);
       try {
         const markups: any[] = [];
+        const createdIds: number[] = [];
 
         for (const selection of lastSelection) {
           try {
-            const bbox = await api.viewer?.getObjectBoundingBox?.(
-              selection.modelId,
-              selection.objectId
-            );
+            const bbox = await getObjectBoundingBox(selection.modelId, selection.objectId);
 
-            if (!bbox) continue;
+            if (!bbox) {
+              console.warn("No bounding box for object:", selection.objectId);
+              continue;
+            }
 
             const values: string[] = [];
             for (const field of selectedFields) {
@@ -290,7 +338,10 @@ export default function MarkupCreator({
               }
             }
 
-            if (values.length === 0) continue;
+            if (values.length === 0) {
+              console.warn("No values found for object:", selection.objectId);
+              continue;
+            }
 
             const text = values.join(delimiter);
 
@@ -308,7 +359,7 @@ export default function MarkupCreator({
               z: center.z,
             };
 
-            const hex = validateHex(markupColor) || "FF0000";
+            const hexColor = normalizeColor(markupColor);
 
             markups.push({
               text: text,
@@ -322,31 +373,63 @@ export default function MarkupCreator({
                 positionY: end.y * 1000,
                 positionZ: end.z * 1000,
               },
-              color: hex,
+              color: hexColor,
             });
+
+            console.log("Markup prepared:", { text, color: hexColor, objectId: selection.objectId });
           } catch (err: any) {
-            console.warn("Error processing object:", err);
+            console.warn("Error processing object:", selection.objectId, err);
           }
         }
 
         if (markups.length > 0) {
+          console.log(`Adding ${markups.length} markups...`);
           const result = await api.markup?.addTextMarkup?.(markups);
-          const ids = Array.isArray(result)
-            ? result.map((m: any) => m.id).filter(Boolean)
-            : [];
-          onMarkupAdded(ids);
+
+          if (Array.isArray(result)) {
+            if (result.length > 0) {
+              if (typeof result[0] === "object" && result[0]?.id) {
+                createdIds.push(...result.map((m: any) => m.id).filter(Boolean));
+              } else if (typeof result[0] === "number") {
+                createdIds.push(...result);
+              }
+            }
+          } else if (result?.id) {
+            createdIds.push(result.id);
+          }
+
+          console.log("✅ Markups added, IDs:", createdIds);
+          setMarkupIds(createdIds);
+          onMarkupAdded?.(createdIds);
         } else {
-          onError("Ei suutnud märgistusi luua");
+          onError("Ei suutnud märgistusi luua - väljade väärtused puuduvad");
         }
       } catch (err: any) {
         console.error("createMarkups error:", err);
-        onError(err?.message || "Tundmatu viga");
+        onError?.(err?.message || "Tundmatu viga märgistuse loomisel");
       } finally {
         setIsLoading(false);
       }
     },
-    [fields, lastSelection, delimiter, markupColor, onMarkupAdded, onError, getPropertyValue]
+    [fields, lastSelection, delimiter, markupColor, onMarkupAdded, onError, getPropertyValue, getObjectBoundingBox]
   );
+
+  const handleRemoveMarkups = useCallback(async () => {
+    if (markupIds.length === 0) {
+      onError("Pole märgistusi kustutamiseks");
+      return;
+    }
+
+    try {
+      console.log("Removing markups:", markupIds);
+      await api.markup?.removeMarkups?.(markupIds);
+      setMarkupIds([]);
+      console.log("✅ Markups removed");
+    } catch (err: any) {
+      console.error("Error removing markups:", err);
+      onError?.(err?.message || "Viga märgistuste kustutamisel");
+    }
+  }, [markupIds, onError, api]);
 
   return (
     <div style={{ padding: 20, maxWidth: 800 }}>
@@ -445,7 +528,7 @@ export default function MarkupCreator({
           <div style={{ display: "flex", gap: 8 }}>
             <input
               type="color"
-              value={"#" + (validateHex(markupColor) ?? markupColor)}
+              value={"#" + normalizeColor(markupColor)}
               onChange={(e) => {
                 const v = e.target.value.replace(/^#/, "");
                 setMarkupColor(v.toUpperCase());
@@ -514,14 +597,15 @@ export default function MarkupCreator({
 
         <button
           type="button"
-          onClick={onRemoveMarkups}
+          onClick={handleRemoveMarkups}
+          disabled={markupIds.length === 0}
           style={{
             padding: "10px 20px",
-            backgroundColor: "#d32f2f",
+            backgroundColor: markupIds.length === 0 ? "#ccc" : "#d32f2f",
             color: "white",
             border: "none",
             borderRadius: 4,
-            cursor: "pointer",
+            cursor: markupIds.length === 0 ? "not-allowed" : "pointer",
             display: "flex",
             gap: 8,
             alignItems: "center",
@@ -529,7 +613,7 @@ export default function MarkupCreator({
           }}
         >
           <Trash2 size={18} />
-          Kustuta märgistused
+          Kustuta märgistused ({markupIds.length})
         </button>
       </div>
 
