@@ -25,19 +25,15 @@ interface Row {
 
 interface Settings {
   delimiter: string;
-  selectedFields: string[]; // ✅ Salvestatav väljude järjekord
+  selectedFields: string[];
 }
 
 const COMPONENT_VERSION = "7.8.1";
-const BUILD_DATE = new Date().toISOString().split('T')[0];
+const BUILD_DATE = new Date().toISOString().split("T")[0];
 const MARKUP_COLOR = "FF0000";
+const DEFAULTS: Settings = { delimiter: " | ", selectedFields: [] };
 
-const DEFAULTS: Settings = {
-  delimiter: " | ",
-  selectedFields: [],
-};
-
-function useSettings() {
+function useSettings(allFields: PropertyField[]) {
   const [settings, setSettings] = useState<Settings>(() => {
     try {
       const raw = window.localStorage?.getItem?.("markupCreatorSettings");
@@ -49,22 +45,26 @@ function useSettings() {
     }
   });
 
-  const update = useCallback((patch: Partial<Settings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
-      window.localStorage?.setItem?.("markupCreatorSettings", JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const update = useCallback(
+    (patch: Partial<Settings>) => {
+      setSettings((prev) => {
+        const next = { ...prev, ...patch };
+        if (next.selectedFields) {
+          const validKeys = new Set(allFields.map((f) => f.key));
+          next.selectedFields = next.selectedFields.filter((k) => validKeys.has(k));
+        }
+        window.localStorage?.setItem?.("markupCreatorSettings", JSON.stringify(next));
+        return next;
+      });
+    },
+    [allFields]
+  );
 
   return [settings, update] as const;
 }
 
 function sanitizeKey(s: string): string {
-  if (!s) return "";
-  return String(s)
-    .replace(/[\s\-_.+()[\]{}]/g, "")
-    .trim();
+  return !s ? "" : String(s).replace(/[\s\-_.+()[\]{}]/g, "").trim();
 }
 
 function classifyGuid(guid: string): "IFC" | "MS" | "OTHER" {
@@ -78,7 +78,7 @@ function classifyGuid(guid: string): "IFC" | "MS" | "OTHER" {
 async function getPresentationLayerString(api: any, modelId: string, runtimeId: number): Promise<string> {
   try {
     const layers = await api?.viewer?.getPresentationLayers?.(modelId, [runtimeId]);
-    if (Array.isArray(layers) && layers.length > 0 && Array.isArray(layers[0])) {
+    if (Array.isArray(layers) && layers[0] && Array.isArray(layers[0])) {
       return layers[0].map((l: any) => String(l?.name || l)).join(" | ");
     }
   } catch {}
@@ -90,10 +90,10 @@ async function getReferenceObjectInfo(api: any, modelId: string, runtimeId: numb
   try {
     const refObj = await api?.viewer?.getReferenceObject?.(modelId, runtimeId);
     if (!refObj) return result;
-    if (refObj?.file?.name) result.fileName = String(refObj.file.name);
-    if (refObj?.fileFormat) result.fileFormat = String(refObj.fileFormat);
-    if (refObj?.commonType) result.commonType = String(refObj.commonType);
-    if (refObj?.guid) {
+    result.fileName = String(refObj.file?.name || "");
+    result.fileFormat = String(refObj.fileFormat || "");
+    result.commonType = String(refObj.commonType || "");
+    if (refObj.guid) {
       const cls = classifyGuid(refObj.guid);
       if (cls === "IFC") result.guidIfc = refObj.guid;
       if (cls === "MS") result.guidMs = refObj.guid;
@@ -116,8 +116,9 @@ async function flattenProps(
     Project: String(projectName || ""),
     ModelId: String(modelId),
     FileName: modelNameById.get(modelId) || "",
-    Name: "",
-    Type: "Unknown",
+    Name: String(obj?.name || ""),
+    Type: String(obj?.type || "Unknown"),
+    ObjectId: String(obj?.id || ""), // Kriitiline: alati olemas
   };
 
   const propMap = new Map<string, string>();
@@ -131,35 +132,21 @@ async function flattenProps(
     const count = keyCounts.get(baseKey) || 0;
     if (count > 0) key = `${baseKey}_${count}`;
     keyCounts.set(baseKey, count + 1);
-    let v: unknown = val;
-    if (Array.isArray(v)) v = v.map((x) => (x == null ? "" : String(x))).join(" | ");
-    else if (typeof v === "object" && v !== null) v = JSON.stringify(v);
-    const s = v == null ? "" : String(v);
+    const s = val == null ? "" : Array.isArray(val) ? val.map(String).join(" | ") : String(val);
     propMap.set(key, s);
     out[key] = s;
   };
 
   if (Array.isArray(obj?.properties)) {
-    obj.properties.forEach((propSet: any) => {
-      const setName = propSet?.name || "Unknown";
-      const setProps = propSet?.properties || [];
-      if (Array.isArray(setProps)) {
-        setProps.forEach((prop: any) => {
-          const value = prop?.displayValue ?? prop?.value;
-          const name = prop?.name || "Unknown";
-          push(setName, name, value);
-        });
-      }
+    obj.properties.forEach((set: any) => {
+      const setName = set?.name || "Unknown";
+      (set?.properties || []).forEach((prop: any) => {
+        push(setName, prop?.name || "Unknown", prop?.displayValue ?? prop?.value);
+      });
     });
   }
 
-  if (obj?.id) out.ObjectId = String(obj.id);
-  if (obj?.name) out.Name = String(obj.name);
-  if (obj?.type) out.Type = String(obj.type);
-
-  let guidIfc = "";
-  let guidMs = "";
-
+  let guidIfc = "", guidMs = "";
   for (const [k, v] of propMap) {
     if (!/guid|globalid/i.test(k)) continue;
     const cls = classifyGuid(v);
@@ -168,39 +155,27 @@ async function flattenProps(
   }
 
   try {
-    const metaArr = await api?.viewer?.getObjectMetadata?.(modelId, [obj?.id]);
-    const metaOne = Array.isArray(metaArr) ? metaArr[0] : metaArr;
-    if (metaOne?.globalId) {
-      const g = String(metaOne.globalId);
-      out.GUID_MS = out.GUID_MS || g;
-      guidMs = guidMs || g;
-    }
+    const meta = await api?.viewer?.getObjectMetadata?.(modelId, [obj?.id]);
+    const g = String(meta?.[0]?.globalId || "");
+    if (g) { out.GUID_MS = g; guidMs = g; }
   } catch {}
 
   if (!guidIfc && obj.id) {
     try {
       const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
-      const externalId = externalIds[0];
-      if (externalId && classifyGuid(externalId) === "IFC") guidIfc = externalId;
+      if (externalIds[0] && classifyGuid(externalIds[0]) === "IFC") guidIfc = externalIds[0];
     } catch {}
   }
 
-  if (![...propMap.keys()].some((k) => k.toLowerCase().startsWith("presentation_layers."))) {
-    const rid = Number(obj?.id);
-    if (Number.isFinite(rid)) {
+  const rid = Number(obj?.id);
+  if (Number.isFinite(rid)) {
+    if (![...propMap.keys()].some(k => k.toLowerCase().startsWith("presentation_layers."))) {
       const layerStr = await getPresentationLayerString(api, modelId, rid);
-      if (layerStr) {
-        const key = "Presentation_Layers.Layer";
-        propMap.set(key, layerStr);
-        out[key] = layerStr;
-      }
+      if (layerStr) out["Presentation_Layers.Layer"] = layerStr;
     }
-  }
 
-  const hasRefBlock = [...propMap.keys()].some((k) => k.toLowerCase().startsWith("referenceobject."));
-  if (!hasRefBlock) {
-    const rid = Number(obj?.id);
-    if (Number.isFinite(rid)) {
+    const hasRef = [...propMap.keys()].some(k => k.toLowerCase().startsWith("referenceobject."));
+    if (!hasRef) {
       const ref = await getReferenceObjectInfo(api, modelId, rid);
       if (ref.fileName) out["ReferenceObject.File_Name"] = ref.fileName;
       if (ref.fileFormat) out["ReferenceObject.File_Format"] = ref.fileFormat;
@@ -213,13 +188,11 @@ async function flattenProps(
   out.GUID_IFC = guidIfc;
   out.GUID_MS = guidMs;
   out.GUID = guidIfc || guidMs || "";
-
   return out;
 }
 
 async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
-  const viewer: any = api?.viewer;
-  const mos = await viewer?.getObjects?.({ selected: true });
+  const mos = await api?.viewer?.getObjects?.({ selected: true });
   if (!Array.isArray(mos) || !mos.length) return [];
   return mos.map((mo: any) => ({ modelId: String(mo.modelId), objects: mo.objects || [] }));
 }
@@ -227,10 +200,8 @@ async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; ob
 async function buildModelNameMap(api: any, modelIds: string[]) {
   const map = new Map<string, string>();
   try {
-    const list: any[] = await api?.viewer?.getModels?.();
-    for (const m of list || []) {
-      if (m?.id && m?.name) map.set(String(m.id), String(m.name));
-    }
+    const list = await api?.viewer?.getModels?.();
+    for (const m of list || []) if (m?.id && m?.name) map.set(String(m.id), String(m.name));
   } catch {}
   for (const id of new Set(modelIds)) {
     if (map.has(id)) continue;
@@ -262,7 +233,6 @@ const groupKeys = (keys: string[]): Map<string, string[]> => {
     else if (key.startsWith("AssemblyBaseQuantities.")) group = "AssemblyBaseQuantities";
     else if (["GUID_IFC", "GUID_MS", "GUID", "ModelId", "Name", "Type", "ObjectId", "Project", "FileName"].includes(key))
       group = "Standard";
-
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group)!.push(key);
   });
@@ -270,851 +240,368 @@ const groupKeys = (keys: string[]): Map<string, string[]> => {
 };
 
 export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
-  const [settings, updateSettings] = useSettings(); // ✅ localStorage
   const [allFields, setAllFields] = useState<PropertyField[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [markupIds, setMarkupIds] = useState<number[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showDebugLog, setShowDebugLog] = useState(false);
-
-  const [selectedData, setSelectedData] = useState<Row[]>([]);
-  const [stats, setStats] = useState({ totalObjects: 0, totalKeys: 0, fieldsWithData: 0 });
   const [previewMarkup, setPreviewMarkup] = useState<string>("");
-  const [draggedField, setDraggedField] = useState<string | null>(null); // ✅ Drag-drop
+  const [draggedField, setDraggedField] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   const listenerRegistered = useRef(false);
 
+  const [settings, updateSettings] = useSettings(allFields);
+
   const addLog = useCallback((message: string, level: "info" | "success" | "warn" | "error" | "debug" = "info") => {
-    const now = new Date();
-    const timestamp = now.toLocaleTimeString("et-EE", {
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-    setLogs((prev) => {
-      const updated = [...prev, { timestamp, level, message }];
-      return updated.length > 500 ? updated.slice(-500) : updated;
-    });
+    const timestamp = new Date().toLocaleTimeString("et-EE", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setLogs((prev) => (prev.length > 500 ? prev.slice(-500) : [...prev, { timestamp, level, message }]));
     console.log(`[${timestamp}] [${level.toUpperCase()}] ${message}`);
   }, []);
 
-  // ✅ Laadi seaded
-  useEffect(() => {
-    addLog(`🚀 MarkupCreator v${COMPONENT_VERSION} laaditud`, "info");
-  }, [addLog]);
-
-  // ✅ REAL-TIME valimiste kuulamine
+  // ✅ Reaalajas valiku kuulamine + automaatne uuendamine
   useEffect(() => {
     if (!api?.viewer || listenerRegistered.current) return;
 
     const loadSelectionData = async () => {
       try {
         const selectedWithBasic = await getSelectedObjects(api);
-        if (!selectedWithBasic || selectedWithBasic.length === 0) {
-          setSelectedData([]);
+        if (!selectedWithBasic?.length) {
           setAllFields([]);
-          addLog("❌ Valitud objektid puuduvad", "warn");
+          setPreviewMarkup("");
+          addLog("⚠️ Valik tühi", "warn");
           return;
         }
 
         const projectName = await getProjectName(api);
         const modelIds = selectedWithBasic.map((s) => s.modelId);
         const nameMap = await buildModelNameMap(api, modelIds);
-
         const allRows: Row[] = [];
 
-        for (const selection of selectedWithBasic) {
-          const modelId = selection.modelId;
-          const objectRuntimeIds = selection.objects.map((o: any) => o?.id || o).filter(Boolean);
-          if (!objectRuntimeIds.length) continue;
-
+        for (const { modelId, objects } of selectedWithBasic) {
+          const ids = objects.map((o: any) => o?.id || o).filter(Boolean);
+          if (!ids.length) continue;
           try {
-            const fullObjects = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
-            const flattened = await Promise.all(
-              fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api))
-            );
+            const fullObjs = await api.viewer.getObjectProperties(modelId, ids, { includeHidden: true });
+            const flattened = await Promise.all(fullObjs.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api)));
             allRows.push(...flattened);
           } catch (err: any) {
-            addLog(`Viga: ${err?.message}`, "error");
+            addLog(`Viga: ${err.message}`, "error");
           }
         }
 
-        if (allRows.length === 0) {
-          addLog("❌ Andmeid ei leitud", "error");
+        if (!allRows.length) {
+          addLog("❌ Andmed puuduvad", "error");
           return;
         }
 
-        // ✅ Uuenda selectedData kohe!
-        setSelectedData(allRows);
-        addLog(`✅ Laaditud ${allRows.length} objekti`, "success");
-
-        // ✅ Väljad - järjekord salvestatud seadetes
-        const allKeys = Array.from(new Set(allRows.flatMap((r) => Object.keys(r)))).sort();
+        const allKeys = Array.from(new Set(allRows.flatMap(Object.keys))).sort();
         const groups = groupKeys(allKeys);
-        let groupOrder = ["Standard", "Tekla_Assembly", "Nordec_Dalux", "IfcElementAssembly", "AssemblyBaseQuantities", "Other"];
-
+        const groupOrder = ["Standard", "Tekla_Assembly", "Nordec_Dalux", "IfcElementAssembly", "AssemblyBaseQuantities", "Other"];
         const newFields: PropertyField[] = [];
         let fieldsWithData = 0;
 
         groupOrder.forEach((groupName) => {
-          const groupKeys = groups.get(groupName) || [];
-          groupKeys.forEach((key) => {
-            const hasData = allRows.some((row) => {
-              const val = row[key];
-              return val && val.trim() !== "";
-            });
-
+          (groups.get(groupName) || []).forEach((key) => {
+            const hasData = allRows.some((r) => r[key]?.trim());
             if (hasData) fieldsWithData++;
+            const isSelected = settings.selectedFields.length
+              ? settings.selectedFields.includes(key)
+              : key === "Tekla_Assembly.AssemblyCast_unit_Mark" && hasData;
 
-            // ✅ Smart default: 
-            // 1. Kui localStorage'ss on savedFields, kasuta neid
-            // 2. Muidu default: AINULT Tekla_Assembly.AssemblyCast_unit_Mark (ja ainult kui hasData!)
-            let isSelected = false;
-            
-            if (settings.selectedFields && settings.selectedFields.length > 0) {
-              // ✅ Restore saved selection
-              isSelected = settings.selectedFields.includes(key);
-            } else {
-              // ✅ Default: AINULT Tekla_Assembly.AssemblyCast_unit_Mark + hasData peab olema true
-              isSelected = key === "Tekla_Assembly.AssemblyCast_unit_Mark" && hasData;
-            }
-
-            newFields.push({
-              key,
-              label: key,
-              selected: isSelected,
-              group: groupName,
-              hasData,
-            });
+            newFields.push({ key, label: key, selected: isSelected, group: groupName, hasData });
           });
         });
 
-        setStats({
-          totalObjects: allRows.length,
-          totalKeys: allKeys.length,
-          fieldsWithData,
-        });
+        setAllFields(newFields);
+        addLog(`✅ ${allRows.length} objekti, ${newFields.filter(f => f.selected).length} välja`, "success");
 
-        if (mountedRef.current) {
-          setAllFields(newFields);
-          addLog(`✅ Väljad uuendatud: ${newFields.filter((f) => f.selected).length} valitud`, "success");
+        // Eelvaade
+        const selected = newFields.filter(f => f.selected);
+        if (selected.length) {
+          const row = allRows.find(r => selected.some(f => r[f.key]?.trim())) || allRows[0];
+          const values = selected.map(f => row[f.key] || "").filter(v => v.trim());
+          setPreviewMarkup(values.join(settings.delimiter));
+        } else {
+          setPreviewMarkup("");
         }
+
       } catch (err: any) {
-        addLog(`❌ Valimise laadimine ebaõnnestus: ${err?.message}`, "error");
+        addLog(`❌ Laadimine ebaõnnestus: ${err.message}`, "error");
       }
     };
 
-    const handleSelectionChanged = () => {
-      loadSelectionData();
-    };
-
-    api.viewer.addOnSelectionChanged?.(handleSelectionChanged);
+    const handleSelection = () => loadSelectionData();
+    api.viewer.addOnSelectionChanged?.(handleSelection);
     listenerRegistered.current = true;
     loadSelectionData();
 
     return () => {
-      api.viewer.removeOnSelectionChanged?.(handleSelectionChanged);
+      api.viewer.removeOnSelectionChanged?.(handleSelection);
       listenerRegistered.current = false;
     };
   }, [api, addLog, settings]);
 
-  // ✅ Hangi salvestatud või valitud väljad - ENNE updatePreview!
-  const getOrderedSelectedFields = useCallback(() => {
-    const selectedFields = allFields.filter((f) => f.selected);
-    if (selectedFields.length === 0) return [];
+  // ✅ Drag & Drop – kompaktne ja ilus
+  const selectedFields = useMemo(() => allFields.filter(f => f.selected), [allFields]);
+  const orderedFields = useMemo(() => {
+    if (!settings.selectedFields.length) return selectedFields;
+    return settings.selectedFields
+      .map(k => selectedFields.find(f => f.key === k))
+      .filter(Boolean) as PropertyField[];
+  }, [selectedFields, settings.selectedFields]);
 
-    // Kui järjekord salvestatud, kasuta seda järjekorda
-    if (settings.selectedFields.length > 0) {
-      return settings.selectedFields
-        .map((k) => selectedFields.find((f) => f.key === k))
-        .filter(Boolean) as PropertyField[];
-    }
-
-    // Muidu valitud väljad originaalses järjekorras
-    return selectedFields;
-  }, [allFields, settings.selectedFields]);
-
-  // ✅ Arvuta eelvaade - simplify dependencies!
-  const updatePreview = useCallback(() => {
-    const selectedFields = getOrderedSelectedFields();
-
-    if (selectedFields.length === 0 || selectedData.length === 0) {
-      setPreviewMarkup("");
-      return;
-    }
-
-    const firstRow = selectedData[0];
-    const values: string[] = [];
-
-    for (const field of selectedFields) {
-      const value = firstRow[field.key] || "";
-      if (value && String(value).trim()) {
-        values.push(String(value));
-      }
-    }
-
-    const preview = values.join(settings.delimiter);
-    setPreviewMarkup(preview);
-  }, [getOrderedSelectedFields, selectedData, settings.delimiter]);
-
-  useEffect(() => {
-    updatePreview();
-  }, [updatePreview]);
-
-  // ✅ Update preview kui valimised muutuvad
-  useEffect(() => {
-    updatePreview();
-  }, [selectedData, allFields]);
-
-  const handleDragStart = (field: PropertyField) => {
-    setDraggedField(field.key);
+  const handleDragStart = (e: React.DragEvent, key: string) => {
+    setDraggedField(key);
+    e.dataTransfer.effectAllowed = "move";
   };
 
-  const handleDrop = (targetField: PropertyField) => {
-    if (!draggedField || draggedField === targetField.key) {
-      setDraggedField(null);
-      return;
-    }
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
 
-    // ✅ Drag-drop ainult VALITUD väljadega
-    const orderedFields = getOrderedSelectedFields();
-    if (orderedFields.length === 0) {
-      setDraggedField(null);
-      return;
-    }
+  const handleDrop = (e: React.DragEvent, targetKey: string) => {
+    e.preventDefault();
+    if (!draggedField || draggedField === targetKey) return;
 
-    const draggedIdx = orderedFields.findIndex((f) => f.key === draggedField);
-    const targetIdx = orderedFields.findIndex((f) => f.key === targetField.key);
+    const newOrder = orderedFields.map(f => f.key);
+    const fromIdx = newOrder.indexOf(draggedField);
+    const toIdx = newOrder.indexOf(targetKey);
+    if (fromIdx === -1 || toIdx === -1) return;
 
-    if (draggedIdx === -1 || targetIdx === -1) {
-      setDraggedField(null);
-      return;
-    }
-
-    // Järjestuse array - ainult valitud väljad
-    const newOrder = orderedFields.map((f) => f.key);
-    const [moved] = newOrder.splice(draggedIdx, 1);
-    newOrder.splice(targetIdx, 0, moved);
-
+    newOrder.splice(fromIdx, 1);
+    newOrder.splice(toIdx, 0, draggedField);
     updateSettings({ selectedFields: newOrder });
     setDraggedField(null);
-    addLog(`✅ "${draggedField}" liigutatud järjestuses`, "success");
+    addLog(`✅ "${draggedField}" liigutatud`, "success");
   };
 
-  // ✅ Move up/down - ainult VALITUD väljadega
-  const moveField = (key: string, direction: "up" | "down") => {
-    const orderedFields = getOrderedSelectedFields();
-    if (orderedFields.length === 0) return;
-
-    const idx = orderedFields.findIndex((f) => f.key === key);
-
-    if (idx === -1) return;
-    if ((direction === "up" && idx === 0) || (direction === "down" && idx === orderedFields.length - 1)) return;
-
-    const newOrder = orderedFields.map((f) => f.key);
-    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
-    [newOrder[idx], newOrder[targetIdx]] = [newOrder[targetIdx], newOrder[idx]];
-
+  const moveField = (key: string, dir: "up" | "down") => {
+    const idx = orderedFields.findIndex(f => f.key === key);
+    if (idx === -1 || (dir === "up" && idx === 0) || (dir === "down" && idx === orderedFields.length - 1)) return;
+    const newOrder = orderedFields.map(f => f.key);
+    const target = dir === "up" ? idx - 1 : idx + 1;
+    [newOrder[idx], newOrder[target]] = [newOrder[target], newOrder[idx]];
     updateSettings({ selectedFields: newOrder });
-    addLog(
-      `✅ "${key}" liigutatud ${direction === "up" ? "üles ⬆️" : "alla ⬇️"}`,
-      "success"
-    );
   };
 
-  // ✅ Toggle field - salvesta settings'sse
   const toggleField = (key: string) => {
-    setAllFields((prev) => {
-      const updated = prev.map((f) => (f.key === key ? { ...f, selected: !f.selected } : f));
-      
-      // ✅ Salvesta selectedFields
-      const newSelected = updated.filter((f) => f.selected).map((f) => f.key);
-      updateSettings({ selectedFields: newSelected });
-      
-      return updated;
-    });
+    const updated = allFields.map(f => f.key === key ? { ...f, selected: !f.selected } : f);
+    const newSelected = updated.filter(f => f.selected).map(f => f.key);
+    updateSettings({ selectedFields: newSelected });
+    setAllFields(updated);
   };
 
-  // ✅ Kontroll enne LOO nuppu
+  // ✅ createMarkups – alati värske valik
   const createMarkups = useCallback(async () => {
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("🔍 KONTROLL - VALITUD VÄLJAD JA OBJEKTID", "info");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+    addLog("🔄 ALUSTAN VÄRSKE VALIKU KONTROLLI", "info");
 
-    // ✅ Hangi valitud väljad õiges järjekorras
-    const selectedFields = getOrderedSelectedFields();
-
-    if (selectedFields.length === 0) {
-      addLog("❌ VIGA: Valitud väljad puuduvad!", "error");
+    const fresh = await getSelectedObjects(api);
+    if (!fresh?.length) {
+      addLog("❌ Ühtegi objekti pole valitud", "error");
       return;
     }
 
-    addLog(`\n✅ 1. VALITUD VÄLJAD - JÄRJEKORD (${selectedFields.length}):`, "success");
-    selectedFields.forEach((f, idx) => {
-      addLog(`      ${idx + 1}. ${f.label}`, "debug");
-    });
+    const projectName = await getProjectName(api);
+    const modelIds = fresh.map(s => s.modelId);
+    const nameMap = await buildModelNameMap(api, modelIds);
+    const rows: Row[] = [];
 
-    if (selectedData.length === 0) {
-      addLog("❌ VIGA: Valitud objektid puuduvad!", "error");
-      return;
-    }
-
-    addLog(`\n✅ 2. VALITUD OBJEKTID 3D VAATES (${selectedData.length}):`, "success");
-    selectedData.slice(0, 5).forEach((row, idx) => {
-      const fieldValues = selectedFields.map((f) => row[f.key] || "-").join(" | ");
-      addLog(`      ${idx + 1}. ID ${row.ObjectId}: ${fieldValues}`, "debug");
-    });
-    if (selectedData.length > 5) {
-      addLog(`      ... ja ${selectedData.length - 5} veel`, "debug");
-    }
-
-    addLog(`\n✅ 3. EELVAADE - MARKUP TEKST:`, "success");
-    addLog(`      "${previewMarkup}"`, "debug");
-
-    addLog(`\n✅ KONTROLL LÕPETATUD - Looma markupeid ${selectedData.length} objektile!`, "success");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-
-    // ✅ Nüüd loe reaalselt markupid KÕIGILE VALITUD OBJEKTIDELE
-    setIsLoading(true);
-    try {
-      const markupsToCreate: any[] = [];
-      const modelId = selectedData[0]?.ModelId;
-
-      addLog("\n🔧 MARKUPITE LOOMINE", "info");
-
-      const objectIds = selectedData.map((row) => Number(row.ObjectId)).filter(Boolean);
-
-      let bBoxes: any[] = [];
+    for (const { modelId, objects } of fresh) {
+      const ids = objects.map((o: any) => o?.id || o).filter(Boolean);
+      if (!ids.length) continue;
       try {
-        bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, objectIds);
-        addLog(`✅ Saadud ${bBoxes.length} BBox-i (${objectIds.length} objektile)`, "success");
+        const objs = await api.viewer.getObjectProperties(modelId, ids, { includeHidden: true });
+        const flat = await Promise.all(objs.map(o => flattenProps(o, modelId, projectName, nameMap, api)));
+        rows.push(...flat);
       } catch (err: any) {
-        addLog(`⚠️ BBox viga: ${err?.message}`, "warn");
-        bBoxes = objectIds.map((id) => ({
-          id,
-          boundingBox: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } },
-        }));
+        addLog(`Viga: ${err.message}`, "error");
       }
+    }
 
-      let successCount = 0;
+    if (!rows.length) {
+      addLog("❌ Andmed puuduvad", "error");
+      return;
+    }
 
-      for (let idx = 0; idx < selectedData.length; idx++) {
-        const row = selectedData[idx];
-        const objectId = Number(row.ObjectId);
+    const selected = orderedFields;
+    if (!selected.length) {
+      addLog("❌ Valitud väljad puuduvad", "error");
+      return;
+    }
 
-        try {
-          const bBox = bBoxes.find((b) => b.id === objectId);
-          if (!bBox) {
-            addLog(`   ⚠️ ${idx + 1}. ID ${objectId}: BBox puudub`, "warn");
-            continue;
-          }
+    addLog(`✅ Loen ${rows.length} objektile markupid`, "success");
+    setIsLoading(true);
 
-          const bb = bBox.boundingBox;
-          const midPoint = {
-            x: (bb.min.x + bb.max.x) / 2,
-            y: (bb.min.y + bb.max.y) / 2,
-            z: (bb.min.z + bb.max.z) / 2,
-          };
+    try {
+      const markups: any[] = [];
+      const modelId = rows[0].ModelId;
+      const ids = rows.map(r => Number(r.ObjectId)).filter(Boolean);
+      const bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, ids).catch(() => []);
+      const bBoxMap = new Map(bBoxes.map((b: any) => [b.id, b]));
 
-          const point = {
-            positionX: midPoint.x * 1000,
-            positionY: midPoint.y * 1000,
-            positionZ: midPoint.z * 1000,
-          };
+      for (const row of rows) {
+        const values = selected.map(f => row[f.key] || "").filter(v => v.trim());
+        if (!values.length) continue;
 
-          const values: string[] = [];
-          for (const field of selectedFields) {
-            const value = row[field.key] || "";
-            if (value && String(value).trim()) {
-              values.push(String(value));
+        const bBox = bBoxMap.get(Number(row.ObjectId));
+        const mid = bBox?.boundingBox
+          ? {
+              x: (bBox.boundingBox.min.x + bBox.boundingBox.max.x) / 2,
+              y: (bBox.boundingBox.min.y + bBox.boundingBox.max.y) / 2,
+              z: (bBox.boundingBox.min.z + bBox.boundingBox.max.z) / 2,
             }
-          }
+          : { x: 0, y: 0, z: 0 };
 
-          if (values.length === 0) {
-            addLog(`   ⚠️ ${idx + 1}. ID ${objectId}: andmeid valitud väljadele pole`, "warn");
-            continue;
-          }
-
-          const text = values.join(settings.delimiter);
-
-          markupsToCreate.push({
-            text,
-            start: point,
-            end: point,
-            color: MARKUP_COLOR,
-          });
-
-          successCount++;
-
-          if (idx < 3) {
-            addLog(`   ✅ ${idx + 1}. ID ${objectId}: "${text.substring(0, 50)}"`, "debug");
-          }
-        } catch (err: any) {
-          addLog(`   ❌ ${idx + 1}. ID ${objectId}: ${err?.message}`, "error");
-        }
-      }
-
-      addLog(`\n📊 ETTEVALMISTUS VALMIS: ${successCount}/${selectedData.length} objektil on andmed`, "success");
-
-      if (markupsToCreate.length === 0) {
-        addLog("❌ Ühtegi märgupit ei saadud luua", "error");
-        return;
-      }
-
-      addLog(`\n📤 SAATMINE API-LE: ${markupsToCreate.length} märgupit`, "debug");
-
-      const result = await api.markup?.addTextMarkup?.(markupsToCreate);
-      const createdIds: number[] = [];
-
-      if (Array.isArray(result)) {
-        result.forEach((item: any) => {
-          if (typeof item === "object" && item?.id) {
-            createdIds.push(Number(item.id));
-          }
+        markups.push({
+          text: values.join(settings.delimiter),
+          start: { positionX: mid.x * 1000, positionY: mid.y * 1000, positionZ: mid.z * 1000 },
+          end: { positionX: mid.x * 1000, positionY: mid.y * 1000, positionZ: mid.z * 1000 },
+          color: MARKUP_COLOR,
         });
       }
 
-      if (createdIds.length > 0) {
-        setMarkupIds(createdIds);
-        addLog(`\n✅ MARKUPID LOODUD: ${createdIds.length} märgupit! 🎉`, "success");
+      if (!markups.length) {
+        addLog("❌ Ühtegi markupit ei loodud", "error");
+        return;
+      }
+
+      const result = await api.markup?.addTextMarkup?.(markups);
+      const ids = (Array.isArray(result) ? result : []).map((i: any) => i?.id).filter(Boolean);
+      if (ids.length) {
+        setMarkupIds(ids);
+        addLog(`✅ Loodi ${ids.length} markupit!`, "success");
       }
     } catch (err: any) {
-      addLog("❌ Viga", "error");
+      addLog(`❌ Viga: ${err.message}`, "error");
     } finally {
       setIsLoading(false);
-      addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
-  }, [getOrderedSelectedFields, selectedData, settings.delimiter, previewMarkup, api, addLog]);
+  }, [api, addLog, orderedFields, settings.delimiter]);
 
   const handleRemoveAllMarkups = useCallback(async () => {
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-    addLog("🗑️ KÕIGIDE MARKUPITE KUSTUTAMINE MUDELIS", "info");
-    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-
     setIsLoading(true);
     try {
-      addLog("🔍 Otsitakse kõik markupid mudelis...", "debug");
-
-      // ✅ Hangi kõik markupid
-      const allMarkups = await api.markup?.getTextMarkups?.();
-
-      if (!allMarkups || allMarkups.length === 0) {
-        addLog("ℹ️ Markupeid mudelis pole", "warn");
-        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-        setIsLoading(false);
-        return;
+      const all = await api.markup?.getTextMarkups?.();
+      const ids = (all || []).map((m: any) => m?.id).filter(Boolean);
+      if (ids.length) {
+        await api.markup?.removeMarkups?.(ids);
+        addLog(`✅ Kustutatud ${ids.length} markupit`, "success");
+        setMarkupIds([]);
+      } else {
+        addLog("ℹ️ Markupeid pole", "warn");
       }
-
-      const allIds = allMarkups.map((m: any) => m?.id).filter((id: any) => id != null);
-      addLog(`✅ Leitud ${allIds.length} märgupit:`, "success");
-      allIds.slice(0, 10).forEach((id: number, idx: number) => {
-        addLog(`   ${idx + 1}. ID: ${id}`, "debug");
-      });
-      if (allIds.length > 10) {
-        addLog(`   ... ja ${allIds.length - 10} veel`, "debug");
-      }
-
-      if (allIds.length === 0) {
-        addLog("ℹ️ ID-sid ei leitud", "warn");
-        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-        setIsLoading(false);
-        return;
-      }
-
-      addLog(`\n📤 Kustutatakse ${allIds.length} märgupit API-st...`, "debug");
-
-      const result = await api.markup?.removeMarkups?.(allIds);
-
-      addLog(`✅ API vastus: ${typeof result}`, "debug");
-      addLog(`\n✅ KUSTUTAMINE ÕNNESTUS! ${allIds.length} märgupit kustutatakse 🎉`, "success");
-
-      setMarkupIds([]);
     } catch (err: any) {
-      addLog(`❌ VIGA: ${err?.message}`, "error");
-      addLog(`\n💡 Võimalikud lahendused:`, "warn");
-      addLog(`   - Kontrollida kas API getTextMarkups on saadaval`, "debug");
-      addLog(`   - Kontrollida kas API removeMarkups on saadaval`, "debug");
-      addLog(`   - Proovida käsitsi markupite kustutamist Trimble'is`, "debug");
+      addLog(`❌ Viga: ${err.message}`, "error");
     } finally {
       setIsLoading(false);
-      addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
   }, [api, addLog]);
 
-  const groupedFields = useMemo(() => {
-    const groups = new Map<string, PropertyField[]>();
-    allFields.forEach((field) => {
-      const group = field.group || "Other";
-      if (!groups.has(group)) groups.set(group, []);
-      groups.get(group)!.push(field);
+  const grouped = useMemo(() => {
+    const g = new Map<string, PropertyField[]>();
+    allFields.forEach(f => {
+      const grp = f.group || "Other";
+      if (!g.has(grp)) g.set(grp, []);
+      g.get(grp)!.push(f);
     });
-    return groups;
+    return g;
   }, [allFields]);
 
-  const selectedCount = allFields.filter((f) => f.selected).length;
-
   return (
-    <div
-      style={{
-        padding: 12,
-        fontFamily: "system-ui, -apple-system, sans-serif",
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        backgroundColor: "#f5f5f5",
-      }}
-    >
-      {/* HEADER - Assembly Exporter stiil */}
-      <div style={{ marginBottom: 12, textAlign: "center", padding: "12px 12px 0 12px" }}>
+    <div style={{ padding: 12, fontFamily: "system-ui, -apple-system, sans-serif", display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#f5f5f5" }}>
+      <div style={{ marginBottom: 12, textAlign: "center" }}>
         <div style={{ fontSize: 13, color: "#333", fontWeight: 600 }}>
-          📊 Valitud: {selectedData.length} objekti | Väljad: {selectedCount}
+          Valitud: {allFields.length ? orderedFields.length : 0} välja
         </div>
       </div>
 
-      {/* SEADED PÄISES - Assembly Exporter stiil */}
-      <div style={{ border: "1px solid #e0e0e0", borderRadius: 6, padding: 12, backgroundColor: "#ffffff", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-        <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 600, color: "#333" }}>⚙️ Seaded</h3>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 6, color: "#555" }}>Eraldaja:</label>
+      <div style={{ border: "1px solid #e0e0e0", borderRadius: 6, padding: 12, backgroundColor: "#fff", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+        <h3 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "#333" }}>⚙️ Seaded</h3>
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 4, color: "#555" }}>Eraldaja:</label>
           <input
             type="text"
             value={settings.delimiter}
-            onChange={(e) => updateSettings({ delimiter: e.target.value })}
-            style={{
-              width: "100%",
-              padding: "8px 10px",
-              border: "1px solid #d0d0d0",
-              borderRadius: 4,
-              fontSize: 11,
-              boxSizing: "border-box",
-              fontFamily: "system-ui, -apple-system, sans-serif",
-              transition: "border-color 0.2s",
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = "#1976d2")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
+            onChange={e => updateSettings({ delimiter: e.target.value })}
+            style={{ width: "100%", padding: "6px 8px", border: "1px solid #d0d0d0", borderRadius: 4, fontSize: 11 }}
           />
         </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 6, color: "#555" }}>👁️ Eelvaade:</label>
-          <div
-            style={{
-              fontSize: 11,
-              color: previewMarkup ? "#333" : "#999",
-              fontFamily: "monospace",
-              backgroundColor: "#fafbfc",
-              padding: 10,
-              borderRadius: 4,
-              border: "1px solid #e0e0e0",
-              wordBreak: "break-all",
-              minHeight: 36,
-              maxHeight: 60,
-              overflowY: "auto",
-              lineHeight: "1.4",
-            }}
-          >
-            {previewMarkup || "(ei andmeid)"}
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, display: "block", marginBottom: 4, color: "#555" }}>Eelvaade:</label>
+          <div style={{ fontFamily: "monospace", fontSize: 11, backgroundColor: "#fafbfc", padding: 8, borderRadius: 4, border: "1px solid #e0e0e0", minHeight: 32, wordBreak: "break-all" }}>
+            {previewMarkup || "(vali objektid)"}
           </div>
         </div>
-
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={createMarkups}
-            disabled={isLoading || selectedData.length === 0 || selectedCount === 0}
-            style={{
-              flex: 1,
-              padding: "10px 12px",
-              backgroundColor: isLoading || selectedData.length === 0 || selectedCount === 0 ? "#d0d0d0" : "#1976d2",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor: isLoading || selectedData.length === 0 || selectedCount === 0 ? "not-allowed" : "pointer",
-              fontSize: 12,
-              fontWeight: 600,
-              transition: "background-color 0.2s",
-            }}
-            onMouseOver={(e) => {
-              if (!(isLoading || selectedData.length === 0 || selectedCount === 0)) {
-                e.currentTarget.style.backgroundColor = "#1565c0";
-              }
-            }}
-            onMouseOut={(e) => {
-              if (!(isLoading || selectedData.length === 0 || selectedCount === 0)) {
-                e.currentTarget.style.backgroundColor = "#1976d2";
-              }
-            }}
-          >
-            ➕ Loo
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={createMarkups} disabled={isLoading || !orderedFields.length} style={{ flex: 1, padding: "8px", backgroundColor: isLoading || !orderedFields.length ? "#ccc" : "#1976d2", color: "#fff", border: "none", borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
+            Loo
           </button>
-
-          <button
-            onClick={handleRemoveAllMarkups}
-            disabled={isLoading}
-            style={{
-              flex: 1,
-              padding: "6px 8px",
-              backgroundColor: isLoading ? "#ccc" : "#d32f2f",
-              color: "white",
-              border: "none",
-              borderRadius: 3,
-              cursor: isLoading ? "not-allowed" : "pointer",
-              fontSize: 9,
-              fontWeight: 600,
-            }}
-            title="Kustuta KÕik markupid mudelis"
-          >
-            🗑️ Kustuta kõik
+          <button onClick={handleRemoveAllMarkups} disabled={isLoading} style={{ padding: "6px 8px", backgroundColor: "#d32f2f", color: "#fff", border: "none", borderRadius: 3, fontSize: 9 }}>
+            Kustuta
           </button>
-        </div>
-
-        <div style={{ fontSize: 8, color: "#666", marginTop: 6, padding: 6, backgroundColor: "#f9f9f9", borderRadius: 2 }}>
-          ℹ️ Punane värviga. Järjekord muudatav: drag-drop või ↑↓ nupud
         </div>
       </div>
 
-      {/* ✅ VÄLJAD - Assembly Exporter stiil */}
-      <div
-        style={{
-          border: "1px solid #e0e0e0",
-          borderRadius: 6,
-          padding: 12,
-          backgroundColor: "#ffffff",
-          flex: 1,
-          minHeight: 0,
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          marginBottom: 12,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-        }}
-      >
-        <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 600, color: "#333" }}>
-          📋 Omadused ({selectedCount} valitud)
-        </h3>
-
-        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+      <div style={{ flex: 1, border: "1px solid #e0e0e0", borderRadius: 6, padding: 12, backgroundColor: "#fff", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+        <h3 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "#333" }}>Omadused</h3>
+        <div style={{ flex: 1, overflowY: "auto" }}>
           {allFields.length === 0 ? (
             <p style={{ color: "#999", fontSize: 11, margin: 0 }}>Vali objektid 3D vaates...</p>
           ) : (
-            Array.from(groupedFields.entries()).map(([groupName, groupFields]) => (
-              <div key={groupName} style={{ marginBottom: 12 }}>
-                <div
-                  style={{
-                    padding: "8px 10px",
-                    backgroundColor: "#f5f5f5",
-                    borderRadius: 4,
-                    marginBottom: 6,
-                    fontWeight: 600,
-                    fontSize: 11,
-                    color: "#333",
-                    border: "1px solid #e0e0e0",
-                    display: "flex",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <span>{groupName}</span>
-                  <span style={{ fontWeight: 500, color: "#666" }}>
-                    {groupFields.filter((f) => f.selected).length}/{groupFields.length}
-                  </span>
+            Array.from(grouped.entries()).map(([group, fields]) => (
+              <div key={group} style={{ marginBottom: 12 }}>
+                <div style={{ padding: "6px 8px", backgroundColor: "#f5f5f5", borderRadius: 4, fontWeight: 600, fontSize: 11, color: "#333", border: "1px solid #e0e0e0", display: "flex", justifyContent: "space-between" }}>
+                  <span>{group}</span>
+                  <span style={{ color: "#666" }}>{fields.filter(f => f.selected).length}/{fields.length}</span>
                 </div>
-
-                <div style={{ paddingLeft: 0 }}>
-                  {groupFields.map((field, idx) => {
-                    // ✅ Nooled ainult VALITUD väljadele, õiges järjekorras
-                    const orderedSelected = getOrderedSelectedFields();
-                    const fieldIdx = orderedSelected.findIndex((f) => f.key === field.key);
-                    const isFirst = fieldIdx === 0;
-                    const isLast = fieldIdx === orderedSelected.length - 1;
-                    const isInOrder = fieldIdx !== -1;  // Field on valitud
-
-                    return (
-                      <div
-                        key={field.key}
-                        draggable={field.selected}
-                        onDragStart={() => handleDragStart(field)}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={() => handleDrop(field)}
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          alignItems: "center",
-                          marginBottom: 6,
-                          padding: "8px 10px",
-                          borderRadius: 4,
-                          backgroundColor: field.selected ? "#e3f2fd" : "transparent",
-                          opacity: field.hasData ? 1 : 0.6,
-                          border: field.selected ? "1px solid #1976d2" : draggedField === field.key ? "1px dashed #1976d2" : "1px solid transparent",
-                          cursor: field.selected ? "grab" : "default",
-                          transition: "all 0.15s ease",
-                        }}
-                      >
-                        {/* ✅ Drag handle */}
-                        <span style={{ fontSize: 10, color: field.selected ? "#1976d2" : "#ccc", cursor: "grab", userSelect: "none" }}>⋮⋮</span>
-
-                        {/* Checkbox - suurem */}
-                        <input
-                          type="checkbox"
-                          checked={field.selected}
-                          onChange={() => toggleField(field.key)}
-                          style={{ cursor: "pointer", transform: "scale(1)", margin: 0, width: 16, height: 16 }}
-                        />
-
-                        {/* Label - SUUREM tekst (11px) */}
-                        <span style={{ color: "#0066cc", fontSize: 11, fontWeight: 500, flex: 1, wordBreak: "break-word", lineHeight: "1.3" }}>
-                          {field.label}
-                        </span>
-
-                        {/* ✅ Nooled üles/alla - ainult VALITUD väljadele */}
-                        <div style={{ display: "flex", gap: 4, visibility: isInOrder ? "visible" : "hidden" }}>
-                          {!isFirst && (
-                            <button
-                              onClick={() => moveField(field.key, "up")}
-                              title="Liiguta üles"
-                              style={{
-                                padding: "4px 6px",
-                                fontSize: 11,
-                                backgroundColor: "#f0f0f0",
-                                border: "1px solid #d0d0d0",
-                                borderRadius: 4,
-                                cursor: "pointer",
-                                transition: "all 0.15s",
-                                display: "flex",
-                                alignItems: "center",
-                              }}
-                              onMouseOver={(e) => {
-                                e.currentTarget.style.backgroundColor = "#1976d2";
-                                e.currentTarget.style.color = "white";
-                                e.currentTarget.style.borderColor = "#1976d2";
-                              }}
-                              onMouseOut={(e) => {
-                                e.currentTarget.style.backgroundColor = "#f0f0f0";
-                                e.currentTarget.style.color = "black";
-                                e.currentTarget.style.borderColor = "#d0d0d0";
-                              }}
-                            >
-                              ↑
-                            </button>
-                          )}
-                          {!isLast && (
-                            <button
-                              onClick={() => moveField(field.key, "down")}
-                              title="Liiguta alla"
-                              style={{
-                                padding: "4px 6px",
-                                fontSize: 11,
-                                backgroundColor: "#f0f0f0",
-                                border: "1px solid #d0d0d0",
-                                borderRadius: 4,
-                                cursor: "pointer",
-                                transition: "all 0.15s",
-                                display: "flex",
-                                alignItems: "center",
-                              }}
-                              onMouseOver={(e) => {
-                                e.currentTarget.style.backgroundColor = "#1976d2";
-                                e.currentTarget.style.color = "white";
-                                e.currentTarget.style.borderColor = "#1976d2";
-                              }}
-                              onMouseOut={(e) => {
-                                e.currentTarget.style.backgroundColor = "#f0f0f0";
-                                e.currentTarget.style.color = "black";
-                                e.currentTarget.style.borderColor = "#d0d0d0";
-                              }}
-                            >
-                              ↓
-                            </button>
-                          )}
+                {fields.map((f) => {
+                  const idx = orderedFields.findIndex(x => x.key === f.key);
+                  const isFirst = idx === 0;
+                  const isLast = idx === orderedFields.length - 1;
+                  return (
+                    <div
+                      key={f.key}
+                      draggable={f.selected}
+                      onDragStart={(e) => handleDragStart(e, f.key)}
+                      onDragOver={handleDragOver}
+                      onDrop={(e) => handleDrop(e, f.key)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", margin: "2px 0", borderRadius: 4,
+                        backgroundColor: f.selected ? "#e3f2fd" : "transparent",
+                        border: f.selected ? "1px solid #1976d2" : draggedField === f.key ? "1px dashed #1976d2" : "1px solid transparent",
+                        opacity: f.hasData ? 1 : 0.6,
+                        cursor: f.selected ? "grab" : "default",
+                      }}
+                    >
+                      <span style={{ fontSize: 10, color: f.selected ? "#1976d2" : "#ccc" }}>⋮⋮</span>
+                      <input type="checkbox" checked={f.selected} onChange={() => toggleField(f.key)} style={{ cursor: "pointer" }} />
+                      <span style={{ flex: 1, fontSize: 11, fontWeight: 500, color: "#0066cc" }}>{f.label}</span>
+                      {f.selected && (
+                        <div style={{ display: "flex", gap: 2 }}>
+                          {!isFirst && <button onClick={() => moveField(f.key, "up")} style={{ padding: "2px 6px", fontSize: 10, background: "#f0f0f0", border: "1px solid #d0d0d0", borderRadius: 3 }}>↑</button>}
+                          {!isLast && <button onClick={() => moveField(f.key, "down")} style={{ padding: "2px 6px", fontSize: 10, background: "#f0f0f0", border: "1px solid #d0d0d0", borderRadius: 3 }}>↓</button>}
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ))
           )}
         </div>
       </div>
 
-      {/* LOG - Assembly Exporter stiil */}
-      <div
-        style={{
-          backgroundColor: "#ffffff",
-          color: "#333",
-          border: "1px solid #e0e0e0",
-          borderRadius: 6,
-          overflow: "hidden",
-          fontFamily: "monospace",
-          fontSize: 10,
-          maxHeight: showDebugLog ? 140 : 28,
-          display: "flex",
-          flexDirection: "column",
-          transition: "max-height 0.2s",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-        }}
-      >
-        <div
-          style={{
-            padding: "8px 12px",
-            backgroundColor: "#f5f5f5",
-            borderBottom: showDebugLog ? "1px solid #e0e0e0" : "none",
-            cursor: "pointer",
-            fontWeight: 600,
-            userSelect: "none",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            fontSize: 11,
-          }}
-          onClick={() => setShowDebugLog(!showDebugLog)}
-        >
-          <span>{showDebugLog ? "▼" : "▶"} 📋 LOG ({logs.length})</span>
-          {showDebugLog && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const logText = logs.map((l) => `[${l.timestamp}] ${l.message}`).join("\n");
-                navigator.clipboard.writeText(logText);
-                addLog("✅ LOG kopeeritud lõikelauale", "success");
-              }}
-              style={{
-                padding: "2px 6px",
-                fontSize: 8,
-                backgroundColor: "#e0e0e0",
-                border: "none",
-                borderRadius: 2,
-                cursor: "pointer",
-              }}
-            >
-              📋 Kopeeri
-            </button>
-          )}
+      <div style={{ backgroundColor: "#fff", border: "1px solid #e0e0e0", borderRadius: 6, overflow: "hidden", fontFamily: "monospace", fontSize: 10, maxHeight: showDebugLog ? 120 : 28, transition: "max-height 0.2s" }}>
+        <div onClick={() => setShowDebugLog(!showDebugLog)} style={{ padding: "6px 10px", backgroundColor: "#f5f5f5", cursor: "pointer", fontWeight: 600, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11 }}>
+          <span>{showDebugLog ? "▼" : "▶"} LOG ({logs.length})</span>
+          {showDebugLog && <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(logs.map(l => `[${l.timestamp}] ${l.message}`).join("\n")); addLog("LOG kopeeritud", "success"); }} style={{ fontSize: 8, padding: "2px 6px", background: "#e0e0e0", border: "none", borderRadius: 2 }}>Kopeeri</button>}
         </div>
-
-        {showDebugLog && (
-          <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px", backgroundColor: "#fafafa" }}>
-            {logs.map((log, idx) => {
-              const colors: Record<string, string> = {
-                success: "#2e7d32",
-                error: "#c62828",
-                warn: "#f57f17",
-                info: "#0277bd",
-                debug: "#666666",
-              };
-              return (
-                <div key={idx} style={{ marginBottom: 1, color: colors[log.level] || "#333" }}>
-                  [{log.timestamp}] {log.message}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {showDebugLog && <div style={{ maxHeight: 100, overflowY: "auto", padding: "4px 8px", backgroundColor: "#fafafa" }}>
+          {logs.map((l, i) => <div key={i} style={{ color: { success: "#2e7d32", error: "#c62828", warn: "#f57f17", info: "#0277bd", debug: "#666" }[l.level] || "#333" }}>[{l.timestamp}] {l.message}</div>)}
+        </div>}
       </div>
 
-      {/* JALUS - versioon + kuupäev */}
-      <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid #e0e0e0", textAlign: "center", fontSize: 10, color: "#999", fontWeight: 500 }}>
+      <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid #e0e0e0", textAlign: "center", fontSize: 10, color: "#999" }}>
         MARKUP GENERATOR {COMPONENT_VERSION} • {BUILD_DATE}
       </div>
     </div>
