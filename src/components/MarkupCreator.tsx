@@ -39,29 +39,51 @@ export default function MarkupSimple({
 
     setIsLoading(true);
     try {
-      const markupIds: number[] = [];
+      // Trimble Connect API - createTextMarkups võtab objektide piirangukasti
+      const markups: any[] = [];
       
       for (const selection of lastSelection) {
-        const markupData = {
-          modelId: selection.modelId,
-          objectIds: [selection.objectId],
-          text: markupText,
-          backgroundColor: markupColor,
-        };
-
-        const result = await api.markup?.createMarkup?.(markupData);
-        if (result?.id) {
-          markupIds.push(result.id);
+        try {
+          // Get bounding box for each selected object
+          const bbox = await api.viewer?.getObjectBoundingBox?.(
+            selection.modelId,
+            selection.objectId
+          );
+          
+          if (bbox) {
+            // Calculate center and offset positions for markup
+            const center = {
+              x: (bbox.min.x + bbox.max.x) / 2,
+              y: (bbox.min.y + bbox.max.y) / 2,
+              z: (bbox.min.z + bbox.max.z) / 2,
+            };
+            
+            const offset = 1.0; // offset from center
+            const start = { ...center };
+            const end = { x: center.x + offset, y: center.y + offset, z: center.z };
+            
+            markups.push({
+              text: markupText,
+              start: start,
+              end: end,
+              color: markupColor,
+            });
+          }
+        } catch (err: any) {
+          console.warn("Error getting bbox for object:", err);
         }
       }
 
-      if (markupIds.length > 0) {
-        onMarkupAdded(markupIds);
+      if (markups.length > 0) {
+        // Use viewer API to create markups
+        await api.viewer?.createTextMarkups?.(markups);
+        onMarkupAdded(lastSelection.map((_: any, i: number) => i));
         setMarkupText("");
       } else {
-        onError("Ei sutnud märgistusi luua");
+        onError("Ei sutnud märgistusi luua - ei saa objekti piirankuid");
       }
     } catch (err: any) {
+      console.error("Markup error:", err);
       onError(err?.message || "Tundmatu viga");
     } finally {
       setIsLoading(false);
