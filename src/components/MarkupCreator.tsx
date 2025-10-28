@@ -24,7 +24,7 @@ interface Row {
   [key: string]: string;
 }
 
-const COMPONENT_VERSION = "6.3.0";
+const COMPONENT_VERSION = "6.4.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
 
 // ✅ Samad funktsioonid kui Assembly Exporter'is
@@ -486,46 +486,79 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     addLog("🔧 MARKUPITE LOOMINE", "info");
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
+    // ✅ PRE-CHECK 1: Valitud väljad
     const selectedFields = fields.filter((f) => f.selected);
-
     if (selectedFields.length === 0) {
-      addLog("❌ Valitud väljad puuduvad", "error");
+      addLog("❌ VIGA: Valitud väljad puuduvad!", "error");
+      addLog("   💡 Vali vähemalt üks väli (checkbox'id paremal)", "info");
       return;
     }
+    addLog(`\n✅ 1. Valitud väljad: ${selectedFields.length}`, "success");
+    selectedFields.forEach((f) => addLog(`      ☑ ${f.label}`, "debug"));
+
+    // ✅ PRE-CHECK 2: Valitud objektid (selectedData)
     if (selectedData.length === 0) {
-      addLog("❌ Valitud andmed puuduvad", "error");
+      addLog("❌ VIGA: Valitud objektid puuduvad!", "error");
+      addLog("   💡 Vali objektid 3D vaates", "info");
+      return;
+    }
+    addLog(`\n✅ 2. Valitud objektid 3D vaates: ${selectedData.length}`, "success");
+    selectedData.slice(0, 3).forEach((row, idx) => {
+      addLog(`      ${idx + 1}. ObjectId ${row.ObjectId}: ${row.Name || "?"}`, "debug");
+    });
+
+    // ✅ PRE-CHECK 3: Kontrolli kas valitud objektidel on ANDMEID valitud väljadele
+    addLog(`\n✅ 3. ANDMETE KONTROLLIMINE VALITUD VÄLJADELE:`, "debug");
+    let objectsWithData = 0;
+
+    for (const row of selectedData) {
+      const hasData = selectedFields.some((field) => {
+        const value = row[field.key];
+        return value && String(value).trim() !== "";
+      });
+
+      if (hasData) {
+        objectsWithData++;
+      } else {
+        addLog(`      ⚠️ ObjectId ${row.ObjectId}: Andmeid valitud väljadele pole`, "warn");
+      }
+    }
+
+    addLog(`   📊 Objektid andmetega: ${objectsWithData}/${selectedData.length}`, "success");
+
+    if (objectsWithData === 0) {
+      addLog("❌ VIGA: Ühelgi objektil pole andmeid valitud väljadele!", "error");
+      addLog("   💡 Vali teised väljad", "info");
       return;
     }
 
     setIsLoading(true);
-    addLog(`\n📍 Luues ${selectedData.length} märgupit...`, "info");
+    addLog(`\n📍 Luues markup-id: ${objectsWithData} objektile...`, "info");
 
     try {
       const markupsToCreate: any[] = [];
       const modelId = selectedData[0]?.ModelId;
 
-      // ✅ PRODUKTIIVSUSEST: Hangi KÕIK BBox-id KORRAGA
-      addLog("\n1️⃣ BBOXE HANKIMINE:", "debug");
+      // ✅ BBOXE HANKIMINE
+      addLog("\n🔍 1. BBOXE HANKIMINE:", "debug");
 
       const objectIds = selectedData.map((row) => Number(row.ObjectId)).filter(Boolean);
-      
+
       if (objectIds.length === 0) {
         addLog("❌ ObjectId-d puuduvad", "error");
         return;
       }
 
-      addLog(`   Hangin ${objectIds.length} BBox-i korraga...`, "debug");
+      addLog(`   Hangin ${objectIds.length} BBox-i...`, "debug");
 
       let bBoxes: any[] = [];
       try {
-        // ✅ ÕIGE API: getObjectBoundingBoxes (MASSIIV!)
         bBoxes = await api.viewer?.getObjectBoundingBoxes?.(modelId, objectIds);
         addLog(`   ✅ Saadud: ${bBoxes.length} BBox-i`, "success");
       } catch (err: any) {
         addLog(`   ⚠️ getObjectBoundingBoxes viga: ${err?.message}`, "warn");
         addLog(`   💡 Fallback: kasutame staatilist positsioonida`, "debug");
-        
-        // Fallback: lihtne fallback
+
         bBoxes = objectIds.map((id) => ({
           id,
           boundingBox: {
@@ -535,8 +568,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         }));
       }
 
-      // ✅ PRODUKTIIVSUSEST: Loome markup'id BBox-idest
-      addLog("\n2️⃣ MARKUP'IDE LOOMINE:", "debug");
+      // ✅ MARKUP'IDE LOOMINE
+      addLog("\n📝 2. MARKUP'IDE LOOMINE:", "debug");
 
       for (let idx = 0; idx < selectedData.length; idx++) {
         const row = selectedData[idx];
@@ -546,11 +579,11 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           // Leia vastav BBox
           const bBox = bBoxes.find((b) => b.id === objectId);
           if (!bBox) {
-            addLog(`   ⚠️ ${objectId}: BBox puudub`, "warn");
+            addLog(`      ⚠️ ${objectId}: BBox puudub`, "warn");
             continue;
           }
 
-          // ✅ PRODUKTIIVSUSEST: getMidPoint
+          // Midpoint
           const bb = bBox.boundingBox;
           const midPoint = {
             x: (bb.min.x + bb.max.x) / 2,
@@ -558,45 +591,43 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             z: (bb.min.z + bb.max.z) / 2,
           };
 
-          // ✅ PRODUKTIIVSUSEST: start JA end on SAMAD!
           const point = {
             positionX: midPoint.x * 1000,
             positionY: midPoint.y * 1000,
             positionZ: midPoint.z * 1000,
           };
 
-          // Koguma teksti
+          // Koguma teksti - AINULT valitud väljadest
           const values: string[] = [];
           for (const field of selectedFields) {
             const value = row[field.key] || "";
-            if (value && value.trim()) {
-              values.push(value);
+            if (value && String(value).trim()) {
+              values.push(String(value));
             }
           }
 
           if (values.length === 0) {
-            addLog(`   ⚠️ ${objectId}: Andmeid pole`, "warn");
+            addLog(`      ⚠️ ${objectId}: Andmeid pole`, "warn");
             continue;
           }
 
           const text = values.join(delimiter);
           const hexColor = normalizeColor(markupColor);
 
-          // ✅ TextMarkup struktuuri ÕIGESTI
           const markup = {
             text: text,
             start: point,
-            end: point, // ← SAMA!
+            end: point,
             color: hexColor,
           };
 
           markupsToCreate.push(markup);
 
           if (idx < 3) {
-            addLog(`   ✅ ${idx + 1}. "${text.substring(0, 40)}"`, "debug");
+            addLog(`      ✅ ${idx + 1}. ObjectId ${objectId}: "${text.substring(0, 40)}"`, "debug");
           }
         } catch (err: any) {
-          addLog(`   ❌ Objekti ${idx + 1}: ${err?.message}`, "error");
+          addLog(`      ❌ ObjectId ${objectId}: ${err?.message}`, "error");
         }
       }
 
@@ -607,15 +638,15 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         return;
       }
 
-      // ✅ PRODUKTIIVSUSEST: addTextMarkup tagastab OBJEKTIDE massiivi
-      addLog("\n3️⃣ SAATMINE API-LE:", "debug");
-      addLog(`   📤 Saadetak: ${markupsToCreate.length} märgupit`, "debug");
+      // ✅ SAATMINE API-LE
+      addLog("\n📤 3. SAATMINE API-LE:", "debug");
+      addLog(`   Saadetak: ${markupsToCreate.length} märgupit`, "debug");
 
       const result = await api.markup?.addTextMarkup?.(markupsToCreate);
 
       addLog(`   ✅ API vastus kätte`, "success");
 
-      // ✅ Parse vastused - koguvad .id omadust
+      // ✅ Parse vastused
       const createdIds: number[] = [];
 
       if (Array.isArray(result)) {
@@ -632,6 +663,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       if (createdIds.length > 0) {
         setMarkupIds(createdIds);
         addLog(`\n✅ MARKUPID LOODUD: ${createdIds.length} märgupit! 🎉`, "success");
+        addLog(`   IDs: ${createdIds.join(", ")}`, "debug");
       } else {
         addLog("⚠️ Vastus saadi, aga ID-sid ei leitud", "warn");
       }
@@ -644,17 +676,58 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   }, [fields, selectedData, delimiter, markupColor, addLog]);
 
   const handleRemoveMarkups = useCallback(async () => {
-    if (markupIds.length === 0) return;
+    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+    addLog("🗑️ MARKUPITE KUSTUTAMINE", "info");
+    addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
+
+    // ✅ PRE-CHECK
+    if (markupIds.length === 0) {
+      addLog("❌ VIGA: Markupid puuduvad!", "error");
+      addLog("   💡 Looge enne markupid nupuga ➕ LOO MÄRGUPID", "info");
+      return;
+    }
+
+    addLog(`\n✅ 1. Kustutamiseks valitud markupid: ${markupIds.length}`, "success");
+    markupIds.slice(0, 5).forEach((id, idx) => {
+      addLog(`      ${idx + 1}. ID: ${id}`, "debug");
+    });
 
     setIsLoading(true);
+
     try {
-      await api.markup?.removeMarkups?.(markupIds);
+      addLog(`\n✅ 2. API KUTSE: removeMarkups()`, "debug");
+      addLog(`   Saadetak: removeMarkups([${markupIds.join(", ")}])`, "debug");
+
+      // ✅ Kustuta markupid
+      const result = await api.markup?.removeMarkups?.(markupIds);
+
+      addLog(`   ✅ API vastus kätte`, "success");
+
+      // ✅ Kontrolli vastus
+      if (result === undefined || result === null) {
+        addLog(`   ℹ️ Vastus: undefined (normaalne - kustutamine õnnestus)`, "debug");
+      } else if (result === true || result === false) {
+        addLog(`   📊 Vastus: ${result}`, "debug");
+      } else {
+        addLog(`   📊 Vastus: ${JSON.stringify(result)}`, "debug");
+      }
+
+      // ✅ Tühjenda markupId-d
       setMarkupIds([]);
-      addLog("✅ Markupit kustutatud", "success");
+      addLog(`\n✅ 3. KUSTUTAMINE ÕNNESTUS! 🎉`, "success");
+      addLog(`   ${markupIds.length} märgupit kustutatud 3D mudelist`, "info");
     } catch (err: any) {
-      addLog("❌ Viga", "error", err?.message);
+      addLog(`❌ KUSTUTAMINE EBAÕNNESTUS!`, "error", err?.message);
+      addLog(`   💡 Kontrolli kas Trimble API removeMarkups() on saadaval`, "warn");
+      addLog(`   💡 Kontrolli kas markupId-d on õiged`, "warn");
+
+      // ✅ Kuva API struktuuri info
+      addLog(`\n📋 API DEBUG INFO:`, "debug");
+      addLog(`   api.markup: ${typeof api.markup}`, "debug");
+      addLog(`   api.markup.removeMarkups: ${typeof api.markup?.removeMarkups}`, "debug");
     } finally {
       setIsLoading(false);
+      addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
   }, [markupIds, api, addLog]);
 
