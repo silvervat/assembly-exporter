@@ -24,8 +24,9 @@ interface Row {
   [key: string]: string;
 }
 
-const COMPONENT_VERSION = "6.4.0";
+const COMPONENT_VERSION = "6.6.0";
 const BUILD_DATE = new Date().toISOString().split('T')[0];
+const MARKUP_COLOR = "FF0000"; // ✅ Fikseeritud punane
 
 // ✅ Samad funktsioonid kui Assembly Exporter'is
 
@@ -71,7 +72,6 @@ async function getReferenceObjectInfo(api: any, modelId: string, runtimeId: numb
   return result;
 }
 
-// ✅ flattenProps - Assembly Exporter loogika
 async function flattenProps(
   obj: any,
   modelId: string,
@@ -110,7 +110,6 @@ async function flattenProps(
     out[key] = s;
   };
 
-  // Property setid
   if (Array.isArray(obj?.properties)) {
     obj.properties.forEach((propSet: any) => {
       const setName = propSet?.name || "Unknown";
@@ -125,12 +124,10 @@ async function flattenProps(
     });
   }
 
-  // Standard väljad
   if (obj?.id) out.ObjectId = String(obj.id);
   if (obj?.name) out.Name = String(obj.name);
   if (obj?.type) out.Type = String(obj.type);
 
-  // GUIDid
   let guidIfc = "";
   let guidMs = "";
 
@@ -141,7 +138,6 @@ async function flattenProps(
     if (cls === "MS" && !guidMs) guidMs = v;
   }
 
-  // Metadata GUID_MS
   try {
     const metaArr = await api?.viewer?.getObjectMetadata?.(modelId, [obj?.id]);
     const metaOne = Array.isArray(metaArr) ? metaArr[0] : metaArr;
@@ -152,7 +148,6 @@ async function flattenProps(
     }
   } catch {}
 
-  // IFC GUID fallback
   if (!guidIfc && obj.id) {
     try {
       const externalIds = await api.viewer.convertToObjectIds(modelId, [obj.id]);
@@ -161,7 +156,6 @@ async function flattenProps(
     } catch {}
   }
 
-  // Presentation Layers
   if (![...propMap.keys()].some((k) => k.toLowerCase().startsWith("presentation_layers."))) {
     const rid = Number(obj?.id);
     if (Number.isFinite(rid)) {
@@ -174,7 +168,6 @@ async function flattenProps(
     }
   }
 
-  // Reference Object
   const hasRefBlock = [...propMap.keys()].some((k) => k.toLowerCase().startsWith("referenceobject."));
   if (!hasRefBlock) {
     const rid = Number(obj?.id);
@@ -195,7 +188,6 @@ async function flattenProps(
   return out;
 }
 
-// ✅ getSelectedObjects - Assembly Exporter loogika
 async function getSelectedObjects(api: any): Promise<Array<{ modelId: string; objects: any[] }>> {
   const viewer: any = api?.viewer;
   const mos = await viewer?.getObjects?.({ selected: true });
@@ -251,21 +243,14 @@ const groupKeys = (keys: string[]): Map<string, string[]> => {
   return groups;
 };
 
-const normalizeColor = (color: string): string => {
-  let hex = color.replace(/^#/, "").toUpperCase();
-  if (hex.length === 6 && /^[0-9A-F]{6}$/.test(hex)) return hex;
-  return "FF0000";
-};
-
 export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   const [fields, setFields] = useState<PropertyField[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [markupColor, setMarkupColor] = useState("FF0000");
   const [delimiter, setDelimiter] = useState(" | ");
   const [markupIds, setMarkupIds] = useState<number[]>([]);
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [showDebugLog, setShowDebugLog] = useState(true);
+  const [showDebugLog, setShowDebugLog] = useState(false); // ✅ Vaikimisi SULETUD
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const [selectedData, setSelectedData] = useState<Row[]>([]);
@@ -276,6 +261,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     groupsCount: 0,
     fieldsWithData: 0,
   });
+
+  const [previewMarkup, setPreviewMarkup] = useState<string>(""); // ✅ Eelvaade esimesest objektist
 
   const bboxCache = useRef(new Map<string, any>());
   const mountedRef = useRef(true);
@@ -303,9 +290,12 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     []
   );
 
+  // ✅ EI keri automaatselt
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+    if (showDebugLog && logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [showDebugLog]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -316,34 +306,23 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     };
   }, [addLog]);
 
-  // ✅ REAL-TIME: Kuula valimisi - Assembly Exporter loogika
+  // ✅ REAL-TIME: Kuula valimisi
   useEffect(() => {
     if (!api?.viewer || listenerRegistered.current) return;
 
     const loadSelectionData = async () => {
       try {
-        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-        addLog("🎯 REAL-TIME VALIMISE TUVASTAMINE", "info");
-        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-
-        // 1️⃣ Hangi valitud objektid
-        addLog("\n1️⃣ VALITUD OBJEKTIDE LEIDMINE:", "debug");
         const selectedWithBasic = await getSelectedObjects(api);
 
         if (!selectedWithBasic || selectedWithBasic.length === 0) {
           if (selectedIds.length > 0) {
-            addLog("⏳ Valik tühjaks - oodates uut valimist...", "info");
             setSelectedIds([]);
             setSelectedData([]);
             setFields([]);
+            setPreviewMarkup(""); // ✅ Tühjenda eelvaade
           }
           return;
         }
-
-        addLog(`   ✅ Leitud: ${selectedWithBasic.length} mudeli/mudeleid`, "success");
-
-        // 2️⃣ Hangi andmed Assembly Exporter loogikaga
-        addLog("\n2️⃣ ANDMETE HANKIMINE:", "debug");
 
         const projectName = await getProjectName(api);
         const modelIds = selectedWithBasic.map((s) => s.modelId);
@@ -358,13 +337,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
           if (!objectRuntimeIds.length) continue;
 
-          addLog(`   🔍 Mudel ${modelId}: ${objectRuntimeIds.length} objekti`, "debug");
-
           try {
-            // Hangi objektide andmed
             const fullObjects = await api.viewer.getObjectProperties(modelId, objectRuntimeIds, { includeHidden: true });
-
-            // Flatten properties
             const flattened = await Promise.all(
               fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api, addLog))
             );
@@ -374,25 +348,17 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
               const objId = Number(row.ObjectId);
               if (objId && !allIds.includes(objId)) allIds.push(objId);
             });
-
-            addLog(`      ✅ Laaditud: ${flattened.length} objekti`, "debug");
           } catch (err: any) {
-            addLog(`      ❌ Viga: ${err?.message}`, "error");
+            addLog(`Viga: ${err?.message}`, "error");
           }
         }
 
         if (allRows.length === 0) {
-          addLog("   ⚠️ Andmeid ei leitud", "warn");
           return;
         }
 
-        addLog(`\n   ✅ Kokku laaditud: ${allRows.length} objekti`, "success");
-
         setSelectedIds(allIds);
         setSelectedData(allRows);
-
-        // 3️⃣ Väljadega täitmine
-        addLog("\n3️⃣ VÄLJADEGA TÄITMINE:", "debug");
 
         const allKeys = Array.from(new Set(allRows.flatMap((r) => Object.keys(r)))).sort();
         const groups = groupKeys(allKeys);
@@ -428,10 +394,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           });
         });
 
-        addLog(`   ✅ Väljad loodud: ${newFields.length}`, "success");
-        addLog(`      Väljad andmetega: ${fieldsWithData}/${newFields.length}`, "debug");
-        addLog(`      Vaikimisi valitud: ${newFields.filter((f) => f.selected).length} välja`, "debug");
-
         setStats({
           totalObjects: allRows.length,
           totalKeys: allKeys.length,
@@ -442,16 +404,11 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         if (mountedRef.current) {
           setFields(newFields);
         }
-
-        addLog("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
-        addLog("✅ REAL-TIME LAADIMISE LÕPETATUD", "success", "Valmis märgupiteks!");
-        addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
       } catch (err: any) {
-        addLog("❌ REAL-TIME valimise laadimine ebaõnnestus", "error", err?.message);
+        addLog("REAL-TIME valimise laadimine ebaõnnestus", "error", err?.message);
       }
     };
 
-    // Kuula muutusi
     const handleSelectionChanged = () => {
       loadSelectionData();
     };
@@ -459,7 +416,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     api.viewer.addOnSelectionChanged?.(handleSelectionChanged);
     listenerRegistered.current = true;
 
-    // Kohe alguses
     loadSelectionData();
 
     return () => {
@@ -467,6 +423,33 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       listenerRegistered.current = false;
     };
   }, [api, addLog]);
+
+  // ✅ Arvuta eelvaade valitud väljadest
+  const updatePreview = useCallback(() => {
+    const selectedFields = fields.filter((f) => f.selected);
+    
+    if (selectedFields.length === 0 || selectedData.length === 0) {
+      setPreviewMarkup("");
+      return;
+    }
+
+    const firstRow = selectedData[0];
+    const values: string[] = [];
+
+    for (const field of selectedFields) {
+      const value = firstRow[field.key] || "";
+      if (value && String(value).trim()) {
+        values.push(String(value));
+      }
+    }
+
+    const preview = values.join(delimiter);
+    setPreviewMarkup(preview);
+  }, [fields, selectedData, delimiter]);
+
+  useEffect(() => {
+    updatePreview();
+  }, [updatePreview]);
 
   const toggleField = useCallback((key: string) => {
     setFields((prev) => prev.map((f) => (f.key === key ? { ...f, selected: !f.selected } : f)));
@@ -486,17 +469,16 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     addLog("🔧 MARKUPITE LOOMINE", "info");
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
-    // ✅ PRE-CHECK 1: Valitud väljad
     const selectedFields = fields.filter((f) => f.selected);
+
     if (selectedFields.length === 0) {
       addLog("❌ VIGA: Valitud väljad puuduvad!", "error");
-      addLog("   💡 Vali vähemalt üks väli (checkbox'id paremal)", "info");
+      addLog("   💡 Vali vähemalt üks väli (paremal menüüs)", "info");
       return;
     }
     addLog(`\n✅ 1. Valitud väljad: ${selectedFields.length}`, "success");
     selectedFields.forEach((f) => addLog(`      ☑ ${f.label}`, "debug"));
 
-    // ✅ PRE-CHECK 2: Valitud objektid (selectedData)
     if (selectedData.length === 0) {
       addLog("❌ VIGA: Valitud objektid puuduvad!", "error");
       addLog("   💡 Vali objektid 3D vaates", "info");
@@ -507,7 +489,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       addLog(`      ${idx + 1}. ObjectId ${row.ObjectId}: ${row.Name || "?"}`, "debug");
     });
 
-    // ✅ PRE-CHECK 3: Kontrolli kas valitud objektidel on ANDMEID valitud väljadele
     addLog(`\n✅ 3. ANDMETE KONTROLLIMINE VALITUD VÄLJADELE:`, "debug");
     let objectsWithData = 0;
 
@@ -539,7 +520,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       const markupsToCreate: any[] = [];
       const modelId = selectedData[0]?.ModelId;
 
-      // ✅ BBOXE HANKIMINE
       addLog("\n🔍 1. BBOXE HANKIMINE:", "debug");
 
       const objectIds = selectedData.map((row) => Number(row.ObjectId)).filter(Boolean);
@@ -568,7 +548,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         }));
       }
 
-      // ✅ MARKUP'IDE LOOMINE
       addLog("\n📝 2. MARKUP'IDE LOOMINE:", "debug");
 
       for (let idx = 0; idx < selectedData.length; idx++) {
@@ -576,14 +555,12 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         const objectId = Number(row.ObjectId);
 
         try {
-          // Leia vastav BBox
           const bBox = bBoxes.find((b) => b.id === objectId);
           if (!bBox) {
             addLog(`      ⚠️ ${objectId}: BBox puudub`, "warn");
             continue;
           }
 
-          // Midpoint
           const bb = bBox.boundingBox;
           const midPoint = {
             x: (bb.min.x + bb.max.x) / 2,
@@ -597,7 +574,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
             positionZ: midPoint.z * 1000,
           };
 
-          // Koguma teksti - AINULT valitud väljadest
           const values: string[] = [];
           for (const field of selectedFields) {
             const value = row[field.key] || "";
@@ -612,13 +588,12 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           }
 
           const text = values.join(delimiter);
-          const hexColor = normalizeColor(markupColor);
 
           const markup = {
             text: text,
             start: point,
             end: point,
-            color: hexColor,
+            color: MARKUP_COLOR,
           };
 
           markupsToCreate.push(markup);
@@ -638,7 +613,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         return;
       }
 
-      // ✅ SAATMINE API-LE
       addLog("\n📤 3. SAATMINE API-LE:", "debug");
       addLog(`   Saadetak: ${markupsToCreate.length} märgupit`, "debug");
 
@@ -646,7 +620,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
       addLog(`   ✅ API vastus kätte`, "success");
 
-      // ✅ Parse vastused
       const createdIds: number[] = [];
 
       if (Array.isArray(result)) {
@@ -673,14 +646,13 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       setIsLoading(false);
       addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     }
-  }, [fields, selectedData, delimiter, markupColor, addLog]);
+  }, [fields, selectedData, delimiter, addLog]);
 
   const handleRemoveMarkups = useCallback(async () => {
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
     addLog("🗑️ MARKUPITE KUSTUTAMINE", "info");
     addLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info");
 
-    // ✅ PRE-CHECK
     if (markupIds.length === 0) {
       addLog("❌ VIGA: Markupid puuduvad!", "error");
       addLog("   💡 Looge enne markupid nupuga ➕ LOO MÄRGUPID", "info");
@@ -698,12 +670,10 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       addLog(`\n✅ 2. API KUTSE: removeMarkups()`, "debug");
       addLog(`   Saadetak: removeMarkups([${markupIds.join(", ")}])`, "debug");
 
-      // ✅ Kustuta markupid
       const result = await api.markup?.removeMarkups?.(markupIds);
 
       addLog(`   ✅ API vastus kätte`, "success");
 
-      // ✅ Kontrolli vastus
       if (result === undefined || result === null) {
         addLog(`   ℹ️ Vastus: undefined (normaalne - kustutamine õnnestus)`, "debug");
       } else if (result === true || result === false) {
@@ -712,7 +682,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         addLog(`   📊 Vastus: ${JSON.stringify(result)}`, "debug");
       }
 
-      // ✅ Tühjenda markupId-d
       setMarkupIds([]);
       addLog(`\n✅ 3. KUSTUTAMINE ÕNNESTUS! 🎉`, "success");
       addLog(`   ${markupIds.length} märgupit kustutatud 3D mudelist`, "info");
@@ -721,7 +690,6 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       addLog(`   💡 Kontrolli kas Trimble API removeMarkups() on saadaval`, "warn");
       addLog(`   💡 Kontrolli kas markupId-d on õiged`, "warn");
 
-      // ✅ Kuva API struktuuri info
       addLog(`\n📋 API DEBUG INFO:`, "debug");
       addLog(`   api.markup: ${typeof api.markup}`, "debug");
       addLog(`   api.markup.removeMarkups: ${typeof api.markup?.removeMarkups}`, "debug");
@@ -744,7 +712,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   return (
     <div
       style={{
-        padding: 20,
+        padding: 12,
         fontFamily: "system-ui, -apple-system, sans-serif",
         display: "flex",
         flexDirection: "column",
@@ -753,138 +721,162 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         overflowY: "auto",
       }}
     >
-      <div style={{ marginBottom: 15 }}>
-        <h2 style={{ margin: "0 0 8px 0", fontSize: 16 }}>🎨 Märgupite Ehitaja v{COMPONENT_VERSION}</h2>
-        <div style={{ fontSize: 10, color: "#666" }}>
-          📊 Objektid: {stats.totalObjects} | Võtid: {stats.totalKeys} | Väljad andmetega: {stats.fieldsWithData}/{fields.length}
+      {/* HEADER */}
+      <div style={{ marginBottom: 8 }}>
+        <h2 style={{ margin: "0 0 4px 0", fontSize: 14, fontWeight: 700 }}>🎨 Märgupite Ehitaja v{COMPONENT_VERSION}</h2>
+        <div style={{ fontSize: 9, color: "#666" }}>
+          📊 Objektid: {stats.totalObjects} | Väljad: {stats.fieldsWithData}/{fields.length}
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 15, flex: 1, minHeight: 0 }}>
-        {/* VASAKPOOLNE */}
-        <div style={{ overflowY: "auto" }}>
-          <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 12, backgroundColor: "white", marginBottom: 12 }}>
-            <h3 style={{ margin: "0 0 8px 0", fontSize: 13 }}>⚙️ Seaded</h3>
+      {/* ✅ SEADED PÄISES */}
+      <div style={{ border: "1px solid #ddd", borderRadius: 4, padding: 10, backgroundColor: "white", marginBottom: 10 }}>
+        <h3 style={{ margin: "0 0 8px 0", fontSize: 11, fontWeight: 700 }}>⚙️ Seaded</h3>
 
-            <div style={{ marginBottom: 10 }}>
-              <label style={{ fontSize: 10, fontWeight: "bold", display: "block", marginBottom: 4 }}>Eraldaja:</label>
-              <input
-                type="text"
-                value={delimiter}
-                onChange={(e) => setDelimiter(e.target.value)}
-                style={{ width: "100%", padding: 6, border: "1px solid #ccc", borderRadius: 3, fontSize: 10, boxSizing: "border-box" }}
-              />
-            </div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ fontSize: 8, fontWeight: 600, display: "block", marginBottom: 3 }}>Eraldaja:</label>
+          <input
+            type="text"
+            value={delimiter}
+            onChange={(e) => setDelimiter(e.target.value)}
+            style={{ 
+              width: "100%", 
+              padding: 4, 
+              border: "1px solid #ccc", 
+              borderRadius: 3, 
+              fontSize: 9, 
+              boxSizing: "border-box" 
+            }}
+          />
+        </div>
 
-            <div style={{ marginBottom: 10 }}>
-              <label style={{ fontSize: 10, fontWeight: "bold", display: "block", marginBottom: 4 }}>Värv:</label>
-              <div style={{ display: "flex", gap: 6 }}>
-                <input
-                  type="color"
-                  value={"#" + normalizeColor(markupColor)}
-                  onChange={(e) => setMarkupColor(e.target.value.replace(/^#/, "").toUpperCase())}
-                  style={{ width: 30, height: 30, border: "1px solid #ccc", borderRadius: 3, cursor: "pointer" }}
-                />
-                <input
-                  type="text"
-                  value={markupColor}
-                  onChange={(e) => setMarkupColor(e.target.value.replace(/^#/, "").toUpperCase())}
-                  style={{ flex: 1, padding: 6, border: "1px solid #ccc", borderRadius: 3, fontSize: 10, boxSizing: "border-box", fontFamily: "monospace" }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={createMarkups}
-                disabled={isLoading || selectedData.length === 0 || fields.filter((f) => f.selected).length === 0}
-                style={{
-                  flex: 1,
-                  padding: "8px 10px",
-                  backgroundColor: isLoading || selectedData.length === 0 || fields.filter((f) => f.selected).length === 0 ? "#ccc" : "#1976d2",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 3,
-                  cursor: isLoading ? "not-allowed" : "pointer",
-                  fontSize: 11,
-                  fontWeight: "bold",
-                }}
-              >
-                ➕ Loo Märgupid
-              </button>
-
-              <button
-                onClick={handleRemoveMarkups}
-                disabled={markupIds.length === 0 || isLoading}
-                style={{
-                  flex: 1,
-                  padding: "8px 10px",
-                  backgroundColor: markupIds.length === 0 || isLoading ? "#ccc" : "#d32f2f",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 3,
-                  cursor: markupIds.length === 0 || isLoading ? "not-allowed" : "pointer",
-                  fontSize: 11,
-                }}
-              >
-                🗑️ Kustuta
-              </button>
-            </div>
+        {/* ✅ EELVAADE */}
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ fontSize: 8, fontWeight: 600, display: "block", marginBottom: 3 }}>👁️ Eelvaade:</label>
+          <div style={{ 
+            fontSize: 8, 
+            color: previewMarkup ? "#333" : "#999", 
+            fontFamily: "monospace",
+            backgroundColor: "#f9f9f9",
+            padding: 6,
+            borderRadius: 2,
+            border: "1px solid #ddd",
+            wordBreak: "break-all",
+            minHeight: 24,
+            maxHeight: 50,
+            overflowY: "auto"
+          }}>
+            {previewMarkup || "(ei andmeid)"}
           </div>
         </div>
 
-        {/* PAREMPOOLNE */}
-        <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 12, backgroundColor: "white", overflowY: "auto" }}>
-          <h3 style={{ margin: "0 0 10px 0", fontSize: 13 }}>📋 Omadused ({fields.length})</h3>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            onClick={createMarkups}
+            disabled={isLoading || selectedData.length === 0 || fields.filter((f) => f.selected).length === 0}
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              backgroundColor: isLoading || selectedData.length === 0 || fields.filter((f) => f.selected).length === 0 ? "#ccc" : "#1976d2",
+              color: "white",
+              border: "none",
+              borderRadius: 3,
+              cursor: isLoading ? "not-allowed" : "pointer",
+              fontSize: 9,
+              fontWeight: 600,
+            }}
+          >
+            ➕ Loo
+          </button>
 
+          <button
+            onClick={handleRemoveMarkups}
+            disabled={markupIds.length === 0 || isLoading}
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              backgroundColor: markupIds.length === 0 || isLoading ? "#ccc" : "#d32f2f",
+              color: "white",
+              border: "none",
+              borderRadius: 3,
+              cursor: markupIds.length === 0 || isLoading ? "not-allowed" : "pointer",
+              fontSize: 9,
+              fontWeight: 600,
+            }}
+          >
+            🗑️ Kustuta
+          </button>
+        </div>
+
+        <div style={{ fontSize: 8, color: "#666", marginTop: 6, padding: 6, backgroundColor: "#f9f9f9", borderRadius: 2 }}>
+          ℹ️ Punane värv | 1. detail: {selectedData[0]?.Name || "?"}
+        </div>
+      </div>
+
+      {/* ✅ OMADUSED ALL */}
+      <div style={{ 
+        border: "1px solid #ddd", 
+        borderRadius: 4, 
+        padding: 10, 
+        backgroundColor: "white", 
+        flex: 1,
+        minHeight: 0,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column"
+      }}>
+        <h3 style={{ margin: "0 0 8px 0", fontSize: 11, fontWeight: 700 }}>📋 Omadused ({fields.length})</h3>
+
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           {fields.length === 0 ? (
-            <p style={{ color: "#999", fontSize: 10 }}>Vali objektid 3D vaates...</p>
+            <p style={{ color: "#999", fontSize: 9, margin: 0 }}>Vali objektid 3D vaates...</p>
           ) : (
             Array.from(groupedFields.entries()).map(([groupName, groupFields]) => (
-              <div key={groupName} style={{ marginBottom: 10 }}>
+              <div key={groupName} style={{ marginBottom: 8 }}>
                 <div
                   style={{
-                    padding: 6,
-                    backgroundColor: "#f0f0f0",
+                    padding: "4px 6px",
+                    backgroundColor: "#e8e8e8",
                     borderRadius: 3,
-                    marginBottom: 4,
+                    marginBottom: 3,
                     cursor: "pointer",
-                    fontWeight: "bold",
-                    fontSize: 10,
+                    fontWeight: 600,
+                    fontSize: 9,
                     display: "flex",
                     justifyContent: "space-between",
+                    userSelect: "none",
                   }}
                   onClick={() => toggleGroup(groupName)}
                 >
                   <span>{groupName}</span>
-                  <span style={{ fontSize: 9, color: "#666" }}>
+                  <span style={{ fontSize: 8, color: "#666" }}>
                     {groupFields.filter((f) => f.selected).length}/{groupFields.length}
                   </span>
                 </div>
 
-                <div style={{ paddingLeft: 6 }}>
+                <div style={{ paddingLeft: 4 }}>
                   {groupFields.map((field) => (
                     <label
                       key={field.key}
                       style={{
                         display: "block",
-                        marginBottom: 4,
-                        padding: 4,
+                        marginBottom: 2,
+                        padding: "2px 4px",
                         borderRadius: 2,
                         backgroundColor: field.selected ? "#e3f2fd" : "transparent",
                         cursor: "pointer",
-                        fontSize: 10,
+                        fontSize: 8,
                         userSelect: "none",
-                        opacity: field.hasData ? 1 : 0.5,
+                        opacity: field.hasData ? 1 : 0.6,
                       }}
                     >
                       <input
                         type="checkbox"
                         checked={field.selected}
                         onChange={() => toggleField(field.key)}
-                        style={{ marginRight: 4, cursor: "pointer" }}
+                        style={{ marginRight: 3, cursor: "pointer", transform: "scale(0.8)" }}
                       />
-                      <code style={{ color: "#0066cc", fontSize: 9 }}>{field.label}</code>
+                      <code style={{ color: "#0066cc", fontSize: 8, fontWeight: 500 }}>{field.label}</code>
                     </label>
                   ))}
                 </div>
@@ -897,34 +889,39 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       {/* DEBUG LOG */}
       <div
         style={{
-          marginTop: 12,
+          marginTop: 10,
           backgroundColor: "#1a1a1a",
           color: "#00ff00",
-          border: "2px solid #00ff00",
-          borderRadius: 4,
+          border: "1px solid #00ff00",
+          borderRadius: 3,
           overflow: "hidden",
           fontFamily: "monospace",
           fontSize: 8,
-          maxHeight: 180,
+          maxHeight: showDebugLog ? 150 : 24,
           display: "flex",
           flexDirection: "column",
+          transition: "max-height 0.2s",
         }}
       >
         <div
           style={{
-            padding: "6px 10px",
+            padding: "4px 8px",
             backgroundColor: "#0a0a0a",
-            borderBottom: "2px solid #00ff00",
+            borderBottom: showDebugLog ? "1px solid #00ff00" : "none",
             cursor: "pointer",
             fontWeight: "bold",
+            userSelect: "none",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
           }}
           onClick={() => setShowDebugLog(!showDebugLog)}
         >
-          {showDebugLog ? "▼" : "▶"} 🔍 LOG ({logs.length})
+          <span>{showDebugLog ? "▼" : "▶"} 🔍 LOG ({logs.length})</span>
         </div>
 
         {showDebugLog && (
-          <div style={{ flex: 1, overflowY: "auto", padding: "6px 10px", backgroundColor: "#000" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px", backgroundColor: "#000" }}>
             {logs.map((log, idx) => {
               const colors: Record<string, string> = {
                 success: "#00ff00",
@@ -935,7 +932,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
               };
 
               return (
-                <div key={idx} style={{ marginBottom: 1, color: colors[log.level] || "#00ff00" }}>
+                <div key={idx} style={{ marginBottom: 0, color: colors[log.level] || "#00ff00" }}>
                   [{log.timestamp}] {log.message}
                 </div>
               );
