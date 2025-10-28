@@ -29,6 +29,7 @@ interface Settings {
 }
 
 const COMPONENT_VERSION = "7.3.1";
+const BUILD_DATE = new Date().toISOString().split('T')[0];
 const MARKUP_COLOR = "FF0000";
 
 const DEFAULTS: Settings = {
