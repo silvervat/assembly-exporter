@@ -576,16 +576,16 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
   // ✅ PERIOODILINE REFRESH - Iga 2 sekund kui auto on sees
   // Ei kontrollita selectedData.length - käivitub alati!
+  // Ei logita perioodilist uuendust, et ei tuleks liiga palju logi sõnumeid
   useEffect(() => {
     if (!settings.autoRefreshEnabled) return;
 
     const interval = setInterval(() => {
-      addLog("⏱️ Perioodiline uuendus (AUTO)", "info");
       loadSelectionData();
     }, 2000); // Iga 2 sekund
 
     return () => clearInterval(interval);
-  }, [settings.autoRefreshEnabled, loadSelectionData, addLog]);
+  }, [settings.autoRefreshEnabled, loadSelectionData]);
 
   const selectedCount = allFields.filter((f) => f.selected).length;
 
@@ -940,37 +940,29 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </button>
       </div>
 
-      {/* ✅ EELVAADE - PÄISES, LOE NUPU KOHAL */}
+      {/* ✅ EELVAADE - SUUREM, ILMA KASTITA, LIHTNE TEKST */}
       <div style={{
         marginBottom: 8,
-        padding: 8,
-        backgroundColor: "#f5f5f5",
-        borderRadius: 4,
-        border: "1px solid #e0e0e0",
+        paddingBottom: 12,
+        borderBottom: "1px solid #e0e0e0",
       }}>
         <label style={{
           fontSize: 10,
           fontWeight: 500,
           color: "#555",
           display: "block",
-          marginBottom: 4,
+          marginBottom: 6,
         }}>
           📋 Eelvaade:
         </label>
         <div style={{
-          fontSize: 9,
-          color: previewMarkup ? "#333" : "#999",
-          fontFamily: "monospace",
-          backgroundColor: "#fafbfc",
-          padding: 6,
-          borderRadius: 3,
-          border: "1px solid #e0e0e0",
-          wordBreak: "break-all",
-          minHeight: 20,
-          maxHeight: 30,
-          overflowY: "auto",
-          lineHeight: "1.3",
+          fontSize: 12,
+          color: previewMarkup ? "#1d1d1f" : "#ccc",
+          fontFamily: "system-ui",
+          wordBreak: "break-word",
+          lineHeight: "1.5",
           whiteSpace: settings.multilineEnabled ? "pre-wrap" : "normal",
+          minHeight: 24,
         }}>
           {previewMarkup || "Eelvaade ilmub siia..."}
         </div>
@@ -1075,6 +1067,8 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         backgroundColor: "#ffffff",
         flex: 1,
         minHeight: 0,
+        maxHeight: "40vh",
+        overflowY: "auto",
         display: "flex",
         flexDirection: "column",
         boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
@@ -1314,95 +1308,80 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
       }}>
         {/* ✅ DELIMITER + MULTILINE TOGGLE */}
         <div style={{ marginBottom: 8 }}>
-          <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-            <div style={{ flex: 1 }}>
-              <label style={{
+          <label style={{
+            fontSize: 10,
+            fontWeight: 500,
+            color: "#555",
+            display: "block",
+            marginBottom: 2,
+          }}>
+            {t.delimiter}
+          </label>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="text"
+              value={settings.delimiter}
+              onChange={(e) => updateSettings({ delimiter: e.target.value })}
+              disabled={settings.multilineEnabled}
+              style={{
+                flex: 1,
+                padding: "5px 8px",
+                border: "1px solid #d0d0d0",
+                borderRadius: 3,
                 fontSize: 10,
-                fontWeight: 500,
-                color: "#555",
-                display: "block",
-                marginBottom: 2,
-              }}>
-                {t.delimiter}
-              </label>
-              <input
-                type="text"
-                value={settings.delimiter}
-                onChange={(e) => updateSettings({ delimiter: e.target.value })}
-                disabled={settings.multilineEnabled}
-                style={{
-                  width: "100%",
-                  padding: "5px 8px",
-                  border: "1px solid #d0d0d0",
-                  borderRadius: 3,
-                  fontSize: 10,
-                  boxSizing: "border-box",
-                  fontFamily: "system-ui",
-                  backgroundColor: settings.multilineEnabled ? "#f0f0f0" : "#fff",
-                  opacity: settings.multilineEnabled ? 0.6 : 1,
-                  cursor: settings.multilineEnabled ? "not-allowed" : "text",
-                }}
-                onFocus={(e) => {
-                  if (!settings.multilineEnabled) {
-                    e.currentTarget.style.borderColor = "#1976d2";
-                  }
-                }}
-                onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
-              />
-              <div style={{ fontSize: 8, color: "#999", marginTop: 2, fontStyle: "italic" }}>
-                Andmete kihtide eraldaja (näit: " | " näitab kihid eraldatult)
-              </div>
-            </div>
+                boxSizing: "border-box",
+                fontFamily: "system-ui",
+                backgroundColor: settings.multilineEnabled ? "#f0f0f0" : "#fff",
+                opacity: settings.multilineEnabled ? 0.6 : 1,
+                cursor: settings.multilineEnabled ? "not-allowed" : "text",
+              }}
+              onFocus={(e) => {
+                if (!settings.multilineEnabled) {
+                  e.currentTarget.style.borderColor = "#1976d2";
+                }
+              }}
+              onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
+            />
 
-            {/* ✅ MULTILINE TOGGLE NUPP */}
-            <div style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 4,
-              paddingTop: 2,
-            }}>
-              <button
-                onClick={() => updateSettings({ multilineEnabled: !settings.multilineEnabled })}
-                title={t.multilineTooltip}
-                style={{
-                  padding: "6px 8px",
-                  backgroundColor: settings.multilineEnabled ? "#1976d2" : "#e0e0e0",
-                  color: settings.multilineEnabled ? "white" : "#333",
-                  border: `2px solid ${settings.multilineEnabled ? "#1565c0" : "#d0d0d0"}`,
-                  borderRadius: 4,
-                  cursor: "pointer",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  transition: "all 0.15s",
-                  minWidth: 50,
-                  textAlign: "center",
-                }}
-                onMouseOver={(e) => {
-                  if (!settings.multilineEnabled) {
-                    e.currentTarget.style.backgroundColor = "#f0f0f0";
-                    e.currentTarget.style.borderColor = "#1976d2";
-                  }
-                }}
-                onMouseOut={(e) => {
-                  if (!settings.multilineEnabled) {
-                    e.currentTarget.style.backgroundColor = "#e0e0e0";
-                    e.currentTarget.style.borderColor = "#d0d0d0";
-                  }
-                }}
-              >
-                ↵
-              </button>
-              <span style={{
-                fontSize: 8,
-                color: "#999",
+            {/* ✅ MULTILINE TOGGLE NUPP - SAMA KÕRGE KUI VÄLI */}
+            <button
+              onClick={() => updateSettings({ multilineEnabled: !settings.multilineEnabled })}
+              title={t.multilineTooltip}
+              style={{
+                padding: "5px 10px",
+                backgroundColor: settings.multilineEnabled ? "#1976d2" : "#e0e0e0",
+                color: settings.multilineEnabled ? "white" : "#333",
+                border: `1px solid ${settings.multilineEnabled ? "#1565c0" : "#d0d0d0"}`,
+                borderRadius: 3,
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 600,
+                transition: "all 0.15s",
+                minWidth: 45,
                 textAlign: "center",
-                maxWidth: 50,
-                fontWeight: 500,
-              }}>
-                {settings.multilineEnabled ? "✅ Real" : "Eraldajaga"}
-              </span>
-            </div>
+                height: "28px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              onMouseOver={(e) => {
+                if (!settings.multilineEnabled) {
+                  e.currentTarget.style.backgroundColor = "#f0f0f0";
+                  e.currentTarget.style.borderColor = "#1976d2";
+                }
+              }}
+              onMouseOut={(e) => {
+                if (!settings.multilineEnabled) {
+                  e.currentTarget.style.backgroundColor = "#e0e0e0";
+                  e.currentTarget.style.borderColor = "#d0d0d0";
+                }
+              }}
+            >
+              ↵
+            </button>
+          </div>
+          <div style={{ fontSize: 8, color: "#999", marginTop: 2, fontStyle: "italic" }}>
+            {settings.multilineEnabled ? "↵ Iga omadus oma real" : "Andmete kihtide eraldaja (näit: \" | \" näitab kihid eraldatult)"}
           </div>
         </div>
 
