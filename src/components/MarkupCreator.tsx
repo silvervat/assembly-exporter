@@ -28,6 +28,7 @@ interface Settings {
   selectedFields: string[];
   autoRefreshEnabled: boolean;
   markupColor?: string;
+  multilineEnabled?: boolean;
 }
 
 const COMPONENT_VERSION = "9.00";
@@ -39,6 +40,7 @@ const DEFAULTS: Settings = {
   selectedFields: [],  // ✅ Tühi - intelligent valitsus teeb tööd loadSelectionData-s
   autoRefreshEnabled: true,
   markupColor: "#FF0000",
+  multilineEnabled: false,
 };
 
 const translations = {
@@ -62,6 +64,8 @@ const translations = {
     objectsSelected: "✅ {count} objekti | Väljad: {fields}",
     autoRefresh: "🔄 Auto",
     autoRefreshTooltip: "Laadi andmed automaatselt valiku muutumisel",
+    multiline: "↵ Iga omadus real",
+    multilineTooltip: "Iga omadus oma real eraldaja asemel",
   },
   en: {
     selectObjects: "Select objects in 3D view...",
@@ -83,6 +87,8 @@ const translations = {
     objectsSelected: "✅ {count} objects | Fields: {fields}",
     autoRefresh: "🔄 Auto",
     autoRefreshTooltip: "Auto-load data when selection changes",
+    multiline: "↵ Each field per line",
+    multilineTooltip: "Each field on separate line instead of delimiter",
   },
 };
 
@@ -599,7 +605,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
   const previewText = getOrderedSelectedFields()
     .filter((f) => selectedData.length > 0 && selectedData[0][f.key])
     .map((f) => selectedData[0][f.key])
-    .join(settings.delimiter);
+    .join(settings.multilineEnabled ? "\n" : settings.delimiter);
 
   useEffect(() => {
     setPreviewMarkup(previewText);
@@ -770,7 +776,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
 
         // ✅ ÄRA SAADA color - Trimble API ei toeta
         markupsToCreate.push({
-          text: values.join(settings.delimiter),
+          text: values.join(settings.multilineEnabled ? "\n" : settings.delimiter),
           start: startPos,
           end: endPos,
         });
@@ -813,7 +819,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [getOrderedSelectedFields, selectedData, settings.delimiter, api, addLog, loadSelectionData]);
+  }, [getOrderedSelectedFields, selectedData, settings.delimiter, settings.multilineEnabled, api, addLog, loadSelectionData]);
 
   const handleRemoveAllMarkups = useCallback(async () => {
     setIsLoading(true);
@@ -934,7 +940,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         </button>
       </div>
 
-      {/* ✅ EELVAADE - PÄISES, LOO NUPU KOHAL */}
+      {/* ✅ EELVAADE - PÄISES, LOE NUPU KOHAL */}
       <div style={{
         marginBottom: 8,
         padding: 8,
@@ -964,6 +970,7 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
           maxHeight: 30,
           overflowY: "auto",
           lineHeight: "1.3",
+          whiteSpace: settings.multilineEnabled ? "pre-wrap" : "normal",
         }}>
           {previewMarkup || "Eelvaade ilmub siia..."}
         </div>
@@ -1305,34 +1312,97 @@ export default function MarkupCreator({ api, onError }: MarkupCreatorProps) {
         backgroundColor: "#ffffff",
         boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
       }}>
-        <div style={{ marginBottom: 6 }}>
-          <label style={{
-            fontSize: 10,
-            fontWeight: 500,
-            color: "#555",
-            display: "block",
-            marginBottom: 2,
-          }}>
-            {t.delimiter}
-          </label>
-          <input
-            type="text"
-            value={settings.delimiter}
-            onChange={(e) => updateSettings({ delimiter: e.target.value })}
-            style={{
-              width: "100%",
-              padding: "5px 8px",
-              border: "1px solid #d0d0d0",
-              borderRadius: 3,
-              fontSize: 10,
-              boxSizing: "border-box",
-              fontFamily: "system-ui",
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = "#1976d2")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
-          />
-          <div style={{ fontSize: 8, color: "#999", marginTop: 2, fontStyle: "italic" }}>
-            Andmete kihtide eraldaja (näit: " | " näitab kihid eraldatult, "\n" näitab real)
+        {/* ✅ DELIMITER + MULTILINE TOGGLE */}
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+            <div style={{ flex: 1 }}>
+              <label style={{
+                fontSize: 10,
+                fontWeight: 500,
+                color: "#555",
+                display: "block",
+                marginBottom: 2,
+              }}>
+                {t.delimiter}
+              </label>
+              <input
+                type="text"
+                value={settings.delimiter}
+                onChange={(e) => updateSettings({ delimiter: e.target.value })}
+                disabled={settings.multilineEnabled}
+                style={{
+                  width: "100%",
+                  padding: "5px 8px",
+                  border: "1px solid #d0d0d0",
+                  borderRadius: 3,
+                  fontSize: 10,
+                  boxSizing: "border-box",
+                  fontFamily: "system-ui",
+                  backgroundColor: settings.multilineEnabled ? "#f0f0f0" : "#fff",
+                  opacity: settings.multilineEnabled ? 0.6 : 1,
+                  cursor: settings.multilineEnabled ? "not-allowed" : "text",
+                }}
+                onFocus={(e) => {
+                  if (!settings.multilineEnabled) {
+                    e.currentTarget.style.borderColor = "#1976d2";
+                  }
+                }}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d0d0")}
+              />
+              <div style={{ fontSize: 8, color: "#999", marginTop: 2, fontStyle: "italic" }}>
+                Andmete kihtide eraldaja (näit: " | " näitab kihid eraldatult)
+              </div>
+            </div>
+
+            {/* ✅ MULTILINE TOGGLE NUPP */}
+            <div style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 4,
+              paddingTop: 2,
+            }}>
+              <button
+                onClick={() => updateSettings({ multilineEnabled: !settings.multilineEnabled })}
+                title={t.multilineTooltip}
+                style={{
+                  padding: "6px 8px",
+                  backgroundColor: settings.multilineEnabled ? "#1976d2" : "#e0e0e0",
+                  color: settings.multilineEnabled ? "white" : "#333",
+                  border: `2px solid ${settings.multilineEnabled ? "#1565c0" : "#d0d0d0"}`,
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  transition: "all 0.15s",
+                  minWidth: 50,
+                  textAlign: "center",
+                }}
+                onMouseOver={(e) => {
+                  if (!settings.multilineEnabled) {
+                    e.currentTarget.style.backgroundColor = "#f0f0f0";
+                    e.currentTarget.style.borderColor = "#1976d2";
+                  }
+                }}
+                onMouseOut={(e) => {
+                  if (!settings.multilineEnabled) {
+                    e.currentTarget.style.backgroundColor = "#e0e0e0";
+                    e.currentTarget.style.borderColor = "#d0d0d0";
+                  }
+                }}
+              >
+                ↵
+              </button>
+              <span style={{
+                fontSize: 8,
+                color: "#999",
+                textAlign: "center",
+                maxWidth: 50,
+                fontWeight: 500,
+              }}>
+                {settings.multilineEnabled ? "✅ Real" : "Eraldajaga"}
+              </span>
+            </div>
           </div>
         </div>
 
