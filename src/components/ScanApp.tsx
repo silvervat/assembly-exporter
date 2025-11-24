@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
-type Row = Record<string, string> & {
+type Row = Record<string, string | number | boolean | undefined> & {
   _confidence?: number;
   _warning?: string;
   _foundInModel?: boolean | null;
@@ -193,7 +193,7 @@ export default function ScanApp({ api, settings, onConfirm, translations, styles
   const [movedRowIdx, setMovedRowIdx] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
-  const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const t = translations || {};
   const c = parentStyles || {};
@@ -1910,7 +1910,7 @@ T5.11.MG2005\t2`;
                         <td key={key} style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, wordBreak: "break-word" }}>
                           <input
                             id={`input-${idx}-${colIdx}`}
-                            value={r[key] || ""}
+                            value={String(r[key] ?? "")}
                             onChange={(e) => changeCell(idx, key, e.target.value)}
                             onKeyDown={(e) => handleKeyDown(e, idx, colIdx)}
                             style={{

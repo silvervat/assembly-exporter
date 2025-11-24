@@ -577,7 +577,7 @@ async function flattenProps(
       logMessage("flattenProps: globalId puudub metadata's");
     }
   } catch (e) {
-    logMessage("flattenProps: getObjectMetadata viga: " + e.message);
+    logMessage("flattenProps: getObjectMetadata viga: " + (e instanceof Error ? e.message : String(e)));
   }
   // IFC GUID fallback (runtime->external)
   if (!guidIfc && obj.id) {
@@ -587,7 +587,7 @@ async function flattenProps(
       if (externalId && classifyGuid(externalId) === "IFC") guidIfc = externalId;
       logMessage(`flattenProps: Leidsin GUID_IFC fallback'ist: ${guidIfc}`);
     } catch (e) {
-      logMessage(`flattenProps: convertToObjectIds viga objId=${obj.id}: ${e.message}`);
+      logMessage(`flattenProps: convertToObjectIds viga objId=${obj.id}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   // Presentation Layers fallback
@@ -655,8 +655,8 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   return map;
 }
 // UUS: Funktsioon JSON-i parsimiseks ja veergude lisamiseks
-function parseJsonColumns(jsonData) {
-  const columns = jsonData.columns.map(col => sanitizeKey(col.field)); // Sanitize + -> .
+function parseJsonColumns(jsonData: { columns: Array<{ field: string }> }) {
+  const columns = jsonData.columns.map((col) => sanitizeKey(col.field)); // Sanitize + -> .
   return columns;
 }
 // ColorPicker komponent - 30 värvi 5×6 grid
@@ -1068,7 +1068,7 @@ export default function AssemblyExporter({ api }: Props) {
     try {
       api.viewer.on?.("selectionChanged", handleSelectionChange);
     } catch (e) {
-      logMessage("Selection listener setup failed: " + e.message);
+      logMessage("Selection listener setup failed: " + (e instanceof Error ? e.message : String(e)));
     }
     return () => {
       clearTimeout(selectionTimeout);
@@ -1152,7 +1152,7 @@ export default function AssemblyExporter({ api }: Props) {
             properties: fullProperties[idx]?.properties || obj.properties,
           }));
         } catch (e) {
-          logMessage(`getObjectProperties failed for model ${modelId}: ${e.message}`);
+          logMessage(`getObjectProperties failed for model ${modelId}: ${e instanceof Error ? e.message : String(e)}`);
         }
         const flattened = await Promise.all(fullObjects.map((o: any) => flattenProps(o, modelId, projectName, nameMap, api, logMessage)));
         out.push(...flattened);
@@ -1239,7 +1239,7 @@ export default function AssemblyExporter({ api }: Props) {
           logMessage(`getObjectProperties success for model ${modelId}`);
         } catch (e) {
           if (abortController.signal.aborted) return;
-          logMessage(`getObjectProperties failed for model ${modelId}: ${e.message}`);
+          logMessage(`getObjectProperties failed for model ${modelId}: ${e instanceof Error ? e.message : String(e)}`);
           fullProperties = mo.objects || [];
         }
         const matchIds: number[] = [];
@@ -1530,7 +1530,7 @@ export default function AssemblyExporter({ api }: Props) {
       );
       logMessage("Greyed out all models");
     } catch (e) {
-      logMessage("Grey out failed: " + e.message);
+      logMessage("Grey out failed: " + (e instanceof Error ? e.message : String(e)));
     }
   }, [api, logMessage]);
   const selectAndZoom = useCallback(async (modelId: string, ids: number[]) => {
@@ -2243,19 +2243,10 @@ export default function AssemblyExporter({ api }: Props) {
           <Suspense fallback={<div>Loading...</div>}>
             <MarkupCreator
               api={api}
-              allKeys={allKeys}
-              lastSelection={lastSelection}
-              translations={t}
-              styles={c}
-              onMarkupAdded={(ids: number[]) => {
-                setMarkupIds(ids);
-                setSearchMsg(t.markupAdded);
-              }}
               onError={(error: string) => {
                 setSearchMsg(t.markupError.replace("{error}", error));
                 logMessage(`Markup error: ${error}`);
               }}
-              onRemoveMarkups={() => removeMarkups(markupIds, api, logMessage)}
             />
           </Suspense>
         )}

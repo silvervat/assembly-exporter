@@ -14,7 +14,7 @@ export default function App() {
       try {
         const connected = await WorkspaceAPI.connect(
           window.parent,
-          (event, data) => {
+          (event: string, data: any) => {
             console.log("Workspace event:", event, data);
             
             // Handle important events
