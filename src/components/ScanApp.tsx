@@ -1910,7 +1910,7 @@ T5.11.MG2005\t2`;
                         <td key={key} style={{ padding: "4px 6px", borderBottom: `1px solid ${COLORS.borderLight}`, wordBreak: "break-word" }}>
                           <input
                             id={`input-${idx}-${colIdx}`}
-                            value={typeof r[key] === 'boolean' ? String(r[key]) : (r[key] || "")}
+                            value={String(r[key] ?? "")}
                             onChange={(e) => changeCell(idx, key, e.target.value)}
                             onKeyDown={(e) => handleKeyDown(e, idx, colIdx)}
                             style={{

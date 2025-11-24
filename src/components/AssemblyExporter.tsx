@@ -655,8 +655,8 @@ async function buildModelNameMap(api: any, modelIds: string[]) {
   return map;
 }
 // UUS: Funktsioon JSON-i parsimiseks ja veergude lisamiseks
-function parseJsonColumns(jsonData: any) {
-  const columns = jsonData.columns.map((col: any) => sanitizeKey(col.field)); // Sanitize + -> .
+function parseJsonColumns(jsonData: { columns: Array<{ field: string }> }) {
+  const columns = jsonData.columns.map((col) => sanitizeKey(col.field)); // Sanitize + -> .
   return columns;
 }
 // ColorPicker komponent - 30 värvi 5×6 grid
